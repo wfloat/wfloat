@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "target": "ES2020",
+        "rootDir": "src",
+        "module": "ESNext",
+        "outDir": "dist",
+        "declaration": true,
+        "declarationMap": true,
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+    },
+    "include": ["src"],
+    "exclude": ["src/worker/worker.ts", "src/wasm/sherpa-onnx-wasm-main-tts.js"]
+}

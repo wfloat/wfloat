@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+.DS_Store
+coverage/
+
+# Python
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# React Native / Android / iOS build artifacts
+.gradle/
+android/.cxx/
+android/build/
+ios/Pods/
+ios/build/
+packages/react-native-wfloat/lib/
+packages/react-native-wfloat/example/android/build/
+packages/react-native-wfloat/example/ios/build/
+
+# CMake / native builds
+out/
+cmake-build-*/
+
+# Local env files
+.env
+.env.*
