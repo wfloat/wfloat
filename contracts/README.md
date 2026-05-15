@@ -20,5 +20,6 @@ Current contract drafts:
 Current focus:
 
 - generic `TtsModel` contract with shared structured synthesis results
+- narrow offline `SttModel` contract with room for timestamps and segments
 - separate `synthesizeDialogue(...)` operation
 - no playback assumptions in the shared TTS result types

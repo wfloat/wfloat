@@ -1,25 +1,242 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wfloat Web Smoke Test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1e8;
+      --panel: #fffdf7;
+      --ink: #1a1a16;
+      --muted: #70695a;
+      --line: #d8cfbc;
+      --accent: #b54f2e;
+      --accent-2: #245f73;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background:
+        radial-gradient(circle at top right, rgba(181, 79, 46, 0.14), transparent 28%),
+        linear-gradient(180deg, #f7f3e8 0%, var(--bg) 100%);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+
+    main {
+      width: min(920px, calc(100vw - 32px));
+      margin: 32px auto;
+      padding: 24px;
+      background: color-mix(in srgb, var(--panel) 92%, white);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 18px 60px rgba(40, 31, 15, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      margin: 20px 0;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: white;
+      color: var(--ink);
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 132px;
+      resize: vertical;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 18px 0 20px;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 700;
+      color: white;
+      background: var(--accent);
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+
+    button.secondary {
+      background: var(--accent-2);
+    }
+
+    button.ghost {
+      background: #8a8374;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    button:not(:disabled):hover {
+      transform: translateY(-1px);
+    }
+
+    .status {
+      display: grid;
+      gap: 10px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.65);
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    progress {
+      width: 100%;
+      height: 12px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      border-radius: 16px;
+      background: #181714;
+      color: #ece6d8;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.9rem;
+      overflow: auto;
+      min-height: 220px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
 </head>
-
 <body>
-    hello
+  <main>
+    <h1>Wfloat Web Smoke Test</h1>
+    <p>
+      This page loads <code>wfloat/wfloat-tts</code> through the shared sherpa
+      speech runtime using a local asset API override.
+    </p>
 
-    <button id="generate">Generate</button>
-    <button id="play">Play</button>
-    <button id="pause">Pause</button>
+    <div class="grid">
+      <div class="field">
+        <label for="assetHost">Asset API Host</label>
+        <input id="assetHost" value="http://localhost:4000" />
+      </div>
+      <div class="field">
+        <label for="modelId">Model ID</label>
+        <input id="modelId" value="wfloat/wfloat-tts" />
+      </div>
+      <div class="field">
+        <label for="voice">Voice</label>
+        <input id="voice" value="narrator_woman" />
+      </div>
+      <div class="field">
+        <label for="emotion">Emotion</label>
+        <input id="emotion" value="neutral" />
+      </div>
+    </div>
 
-    <button id="testButton">Test</button>
-    
-    <button id="start">Start fake audio</button>
+    <div class="grid">
+      <div class="field">
+        <label for="speed">Speed</label>
+        <input id="speed" type="number" step="0.05" value="1" />
+      </div>
+      <div class="field">
+        <label for="intensity">Intensity</label>
+        <input id="intensity" type="number" min="0" max="1" step="0.05" value="0.5" />
+      </div>
+      <div class="field">
+        <label for="padding">Silence Padding Sec</label>
+        <input id="padding" type="number" min="0" step="0.05" value="0.1" />
+      </div>
+      <div class="field">
+        <label for="autoPlay">Auto Play</label>
+        <select id="autoPlay">
+          <option value="true" selected>true</option>
+          <option value="false">false</option>
+        </select>
+      </div>
+    </div>
 
-    <script type="module" src="app.js"></script>
+    <div class="field">
+      <label for="text">Text</label>
+      <textarea id="text">The signal is clean. Start the recording.</textarea>
+    </div>
+
+    <div class="actions">
+      <button id="load">Load Model</button>
+      <button id="generate" class="secondary" disabled>Synthesize</button>
+      <button id="play" class="ghost" disabled>Play</button>
+      <button id="pause" class="ghost" disabled>Pause</button>
+      <button id="stop" class="ghost" disabled>Stop</button>
+      <button id="clearLog" class="ghost">Clear Log</button>
+    </div>
+
+    <div class="status">
+      <div class="status-row">
+        <strong id="summary">Idle</strong>
+        <span id="timing">No result yet</span>
+      </div>
+      <progress id="progress" max="100" value="0"></progress>
+      <pre id="log"></pre>
+    </div>
+  </main>
+
+  <script type="module" src="app.js"></script>
 </body>
-
-
 </html>

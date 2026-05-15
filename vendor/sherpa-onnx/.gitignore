@@ -70,6 +70,7 @@ run-*.sh
 two-pass-*.sh
 build-*
 !build-wasm-simd-tts.sh
+!build-wasm-simd-speech.sh
 
 ## User settings
 xcuserdata/

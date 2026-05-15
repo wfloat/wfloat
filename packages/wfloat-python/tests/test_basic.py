@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 import wfloat
-from wfloat._assets import ModelAssets
+from wfloat import _core
+from wfloat._assets import ModelAssets, SttModelAssets
 from wfloat._cache import (
     CachedModelAssets,
     cache_model_assets,
@@ -20,6 +21,8 @@ from wfloat._cache import (
 from wfloat._model import Model
 from wfloat import _native
 from wfloat._results import Audio
+from wfloat._stt import SttModel
+from wfloat._stt_assets import cache_stt_model_assets
 
 
 def sha256_file(path: Path) -> str:
@@ -88,12 +91,17 @@ class TestWfloatSmoke(unittest.TestCase):
     def test_import_wfloat(self):
         self.assertTrue(hasattr(wfloat, "load"))
         self.assertTrue(hasattr(wfloat, "load_tts_model"))
+        self.assertTrue(hasattr(wfloat, "load_stt_model"))
+        self.assertTrue(hasattr(wfloat, "load_moonshine_tiny_en"))
+        self.assertTrue(hasattr(wfloat, "load_whisper_tiny_en"))
         self.assertTrue(hasattr(wfloat, "Model"))
         self.assertTrue(hasattr(wfloat, "TtsModel"))
+        self.assertTrue(hasattr(wfloat, "SttModel"))
         self.assertTrue(hasattr(wfloat, "Audio"))
         self.assertTrue(hasattr(wfloat, "AudioResult"))
         self.assertTrue(hasattr(wfloat, "GenerationResult"))
         self.assertTrue(hasattr(wfloat, "TtsSynthesisResult"))
+        self.assertTrue(hasattr(wfloat, "TranscriptionResult"))
         self.assertIn("narrator_woman", wfloat.SPEAKER_IDS)
 
     def test_create_native_tts_prefers_wfloat_core_when_available(self):
@@ -129,6 +137,258 @@ class TestWfloatSmoke(unittest.TestCase):
             )
 
         self.assertEqual(result[0], "tts")
+
+    def test_core_loader_uses_explicit_library_path(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"WFLOAT_CORE_LIBRARY": "/tmp/libwfloat-core.so"},
+            clear=False,
+        ):
+            candidates = list(_core._iter_candidate_library_paths())
+
+        self.assertEqual(candidates, [Path("/tmp/libwfloat-core.so")])
+
+    def test_stt_model_transcribe_uses_native_backend(self):
+        sentinel = wfloat.TranscriptionResult(
+            text="hello world",
+            model_id="openai/whisper-tiny-en",
+        )
+        native_stt = types.SimpleNamespace(
+            transcribe_result=mock.Mock(return_value=sentinel)
+        )
+        model = SttModel(model_id="openai/whisper-tiny-en", _native_stt=native_stt)
+
+        result = model.transcribe(audio=[0.1, -0.2], sample_rate=16000, language="en")
+
+        self.assertIs(result, sentinel)
+        native_stt.transcribe_result.assert_called_once()
+
+    def test_load_stt_model_wires_cache_and_core_loader(self):
+        fake_cached = types.SimpleNamespace(
+            model_name="openai/whisper-tiny-en",
+            family="whisper",
+            encoder_path=Path("/tmp/cache/encoder.onnx"),
+            decoder_path=Path("/tmp/cache/decoder.onnx"),
+            tokens_path=Path("/tmp/cache/tokens.txt"),
+            files={
+                "encoder": Path("/tmp/cache/encoder.onnx"),
+                "decoder": Path("/tmp/cache/decoder.onnx"),
+                "tokens": Path("/tmp/cache/tokens.txt"),
+            },
+            require=lambda key: {
+                "encoder": Path("/tmp/cache/encoder.onnx"),
+                "decoder": Path("/tmp/cache/decoder.onnx"),
+                "tokens": Path("/tmp/cache/tokens.txt"),
+            }[key],
+        )
+        fake_native = object()
+
+        with mock.patch(
+            "wfloat._stt_load.cache_stt_assets",
+            return_value=fake_cached,
+        ) as cache_mock, mock.patch(
+            "wfloat._stt_load.create_core_stt",
+            return_value=fake_native,
+        ) as create_mock:
+            model = wfloat.load_stt_model(
+                "openai/whisper-tiny-en",
+                family="whisper",
+                encoder="https://example.com/encoder.onnx",
+                decoder="https://example.com/decoder.onnx",
+                tokens="https://example.com/tokens.txt",
+                language="en",
+                task="transcribe",
+            )
+
+        self.assertIsInstance(model, SttModel)
+        self.assertEqual(model.model_id, "openai/whisper-tiny-en")
+        cache_mock.assert_called_once()
+        create_mock.assert_called_once_with(
+            model_name="openai/whisper-tiny-en",
+            family="whisper",
+            model_path=None,
+            preprocessor_path=None,
+            encoder_path=fake_cached.encoder_path,
+            decoder_path=fake_cached.decoder_path,
+            tokens_path=fake_cached.tokens_path,
+            joiner_path=None,
+            uncached_decoder_path=None,
+            cached_decoder_path=None,
+            language="en",
+            task="transcribe",
+            enable_token_timestamps=False,
+            enable_segment_timestamps=False,
+        )
+
+    def test_load_stt_model_manifest_path_does_not_require_family(self):
+        fake_assets = SttModelAssets(
+            family="whisper",
+            encoder="https://example.com/encoder.onnx",
+            encoder_checksum="abc",
+            decoder="https://example.com/decoder.onnx",
+            decoder_checksum="def",
+            tokens="https://example.com/tokens.txt",
+            tokens_checksum="ghi",
+        )
+        fake_cached = types.SimpleNamespace(
+            model_name="openai/whisper-tiny-en",
+            family="whisper",
+            files={
+                "encoder": Path("/tmp/cache/encoder.onnx"),
+                "decoder": Path("/tmp/cache/decoder.onnx"),
+                "tokens": Path("/tmp/cache/tokens.txt"),
+            },
+            require=lambda key: {
+                "encoder": Path("/tmp/cache/encoder.onnx"),
+                "decoder": Path("/tmp/cache/decoder.onnx"),
+                "tokens": Path("/tmp/cache/tokens.txt"),
+            }[key],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "cache"
+            with mock.patch(
+                "wfloat._stt_load.fetch_stt_assets",
+                return_value=fake_assets,
+            ) as fetch_mock, mock.patch(
+                "wfloat._stt_load.cache_stt_model_assets",
+                return_value=fake_cached,
+            ), mock.patch(
+                "wfloat._stt_load.create_core_stt",
+                return_value=object(),
+            ):
+                model = wfloat.load_stt_model(
+                    "openai/whisper-tiny-en",
+                    cache_dir=cache_dir,
+                )
+
+        self.assertIsInstance(model, SttModel)
+        fetch_mock.assert_called_once_with(
+            "openai/whisper-tiny-en",
+            family=None,
+            persistent_id=None,
+        )
+
+    def test_load_stt_model_requires_family_for_explicit_sources(self):
+        with self.assertRaisesRegex(ValueError, "family is required"):
+            wfloat.load_stt_model(
+                "openai/whisper-tiny-en",
+                encoder="https://example.com/encoder.onnx",
+                decoder="https://example.com/decoder.onnx",
+                tokens="https://example.com/tokens.txt",
+            )
+
+    def test_load_stt_model_uses_asset_manifest_when_sources_are_not_provided(self):
+        fake_assets = SttModelAssets(
+            family="whisper",
+            encoder="https://example.com/encoder.onnx",
+            encoder_checksum="abc",
+            decoder="https://example.com/decoder.onnx",
+            decoder_checksum="def",
+            tokens="https://example.com/tokens.txt",
+            tokens_checksum="ghi",
+            persistent_id="persist-456",
+        )
+        fake_cached = types.SimpleNamespace(
+            model_name="openai/whisper-tiny-en",
+            family="whisper",
+            files={
+                "encoder": Path("/tmp/cache/encoder.onnx"),
+                "decoder": Path("/tmp/cache/decoder.onnx"),
+                "tokens": Path("/tmp/cache/tokens.txt"),
+            },
+            require=lambda key: {
+                "encoder": Path("/tmp/cache/encoder.onnx"),
+                "decoder": Path("/tmp/cache/decoder.onnx"),
+                "tokens": Path("/tmp/cache/tokens.txt"),
+            }[key],
+        )
+        fake_native = object()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "cache"
+            save_persistent_id("persist-123", cache_dir)
+            with mock.patch(
+                "wfloat._stt_load.fetch_stt_assets",
+                return_value=fake_assets,
+            ) as fetch_mock, mock.patch(
+                "wfloat._stt_load.cache_stt_model_assets",
+                return_value=fake_cached,
+            ) as cache_mock, mock.patch(
+                "wfloat._stt_load.create_core_stt",
+                return_value=fake_native,
+            ) as create_mock:
+                model = wfloat.load_stt_model(
+                    "openai/whisper-tiny-en",
+                    family="whisper",
+                    cache_dir=cache_dir,
+                )
+            self.assertIsInstance(model, SttModel)
+            fetch_mock.assert_called_once_with(
+                "openai/whisper-tiny-en",
+                family="whisper",
+                persistent_id="persist-123",
+            )
+            cache_mock.assert_called_once_with(
+                "openai/whisper-tiny-en",
+                fake_assets,
+                cache_dir=cache_dir,
+                force_download=False,
+            )
+            create_mock.assert_called_once()
+            self.assertEqual(load_persistent_id(cache_dir), "persist-456")
+
+    def test_load_whisper_tiny_en_delegates_to_shared_loader(self):
+        sentinel = object()
+
+        with mock.patch(
+            "wfloat._stt_load.load_stt_model",
+            return_value=sentinel,
+        ) as load_mock:
+            result = wfloat.load_whisper_tiny_en(
+                encoder_url="https://example.com/encoder.onnx",
+                decoder_url="https://example.com/decoder.onnx",
+                tokens_url="https://example.com/tokens.txt",
+            )
+
+        self.assertIs(result, sentinel)
+        load_mock.assert_called_once()
+
+    def test_load_moonshine_tiny_en_delegates_to_shared_loader(self):
+        sentinel = object()
+
+        with mock.patch(
+            "wfloat._stt_load.load_stt_model",
+            return_value=sentinel,
+        ) as load_mock:
+            result = wfloat.load_moonshine_tiny_en(
+                preprocessor_url="https://example.com/preprocess.onnx",
+                encoder_url="https://example.com/encode.onnx",
+                uncached_decoder_url="https://example.com/uncached_decode.onnx",
+                cached_decoder_url="https://example.com/cached_decode.onnx",
+                tokens_url="https://example.com/tokens.txt",
+            )
+
+        self.assertIs(result, sentinel)
+        load_mock.assert_called_once()
+
+    def test_stt_assets_from_dict_supports_nested_files(self):
+        assets = SttModelAssets.from_dict(
+            {
+                "family": "whisper",
+                "files": {
+                    "encoder": {"url": "https://example.com/encoder.onnx", "checksum": "abc"},
+                    "decoder": {"url": "https://example.com/decoder.onnx"},
+                    "tokens": {"url": "https://example.com/tokens.txt"},
+                },
+                "persistent_id": "persist-789",
+            }
+        )
+
+        self.assertEqual(assets.family, "whisper")
+        self.assertEqual(assets.encoder, "https://example.com/encoder.onnx")
+        self.assertIsNone(assets.tokens_checksum)
+        self.assertEqual(assets.persistent_id, "persist-789")
 
     def test_audio_can_write_wave_bytes_without_numpy(self):
         audio = Audio(samples=[0.0, 0.5, -0.5], sample_rate=22050)
@@ -330,6 +590,41 @@ class TestWfloatSmoke(unittest.TestCase):
                 normalize_model_name("wfloat/wfloat-tts"),
                 "wfloat--wfloat-tts",
             )
+
+    def test_cache_stt_model_assets_downloads_from_local_urls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_dir = root / "source"
+            source_dir.mkdir()
+
+            encoder_file = source_dir / "encoder.onnx"
+            encoder_file.write_bytes(b"encoder-bytes")
+
+            decoder_file = source_dir / "decoder.onnx"
+            decoder_file.write_bytes(b"decoder-bytes")
+
+            tokens_file = source_dir / "tokens.txt"
+            tokens_file.write_text("token-bytes")
+
+            assets = SttModelAssets(
+                family="whisper",
+                encoder=encoder_file.as_uri(),
+                encoder_checksum=sha256_file(encoder_file),
+                decoder=decoder_file.as_uri(),
+                decoder_checksum=sha256_file(decoder_file),
+                tokens=tokens_file.as_uri(),
+                tokens_checksum=sha256_file(tokens_file),
+            )
+
+            cached = cache_stt_model_assets(
+                "openai/whisper-tiny-en",
+                assets,
+                cache_dir=root / "cache",
+            )
+
+            self.assertTrue(cached.require("encoder").is_file())
+            self.assertTrue(cached.require("decoder").is_file())
+            self.assertTrue(cached.require("tokens").is_file())
 
     def test_persistent_id_is_stored_and_loaded_best_effort(self):
         with tempfile.TemporaryDirectory() as tmpdir:

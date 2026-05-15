@@ -74,6 +74,43 @@ result.audio.save("dialogue.wav")
 The older `load(...)`, `generate(...)`, and `generate_dialogue(...)` names are
 still available as compatibility aliases.
 
+## Early STT Path In The Monorepo
+
+The monorepo now also has an early offline STT path through `wfloat-core`.
+The shared Python entrypoint is `load_stt_model(...)`, with
+`load_whisper_tiny_en(...)` as a convenience wrapper:
+
+```python
+import wfloat
+
+stt = wfloat.load_stt_model(
+    "openai/whisper-tiny-en",
+)
+
+result = stt.transcribe(audio="/path/to/audio.wav")
+print(result.text)
+```
+
+If you omit explicit asset URLs/paths, `load_stt_model(...)` is intended to use
+the Wfloat-controlled asset manifest flow, just like the TTS loader path.
+
+For local development you can still override assets explicitly when needed:
+
+```python
+stt = wfloat.load_stt_model(
+    "UsefulSensors/moonshine-tiny",
+    family="moonshine",
+    preprocessor="https://example.com/preprocess.onnx",
+    encoder="https://example.com/encode.onnx",
+    uncached_decoder="https://example.com/uncached_decode.onnx",
+    cached_decoder="https://example.com/cached_decode.onnx",
+    tokens="https://example.com/tokens.txt",
+)
+```
+
+That STT path is still an early monorepo development surface, not a polished
+public distribution story yet.
+
 You can also generate a WAV from the command line:
 
 ```bash
@@ -94,6 +131,19 @@ wfloat generate --help
 
 The first load downloads the model assets. After that, the package uses the
 cached local copy.
+
+## Native Backend During Monorepo Development
+
+Inside this monorepo, the Python package now prefers a built `wfloat-core`
+shared library when one is available. You can point it at an explicit build
+artifact with:
+
+```bash
+export WFLOAT_CORE_LIBRARY=/abs/path/to/libwfloat-core.so
+```
+
+If no shared library is available, the package falls back to the direct
+`sherpa_onnx` Python binding path.
 
 ## Speaker IDs
 

@@ -167,6 +167,7 @@ export class TtsModel {
     const response = await TtsWorkerBridge.loadModel(
       modelId,
       cachedPersistentId ?? undefined,
+      options.modelAssetHost,
       (message) => {
         options.onProgress?.(message.event as LoadModelProgressEvent);
       },

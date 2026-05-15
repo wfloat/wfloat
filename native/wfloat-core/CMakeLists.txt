@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.18)
 
 set(WFLOAT_CORE_PUBLIC_HEADERS
+    include/wfloat-core/wfloat_stt.h
     include/wfloat-core/wfloat_tts.h
 )
 
 set(WFLOAT_CORE_SOURCES
+    src/wfloat_stt.cc
     src/wfloat_tts.cc
 )
 
@@ -38,11 +40,13 @@ target_include_directories(wfloat-core-shared
 target_link_libraries(wfloat-core
     PUBLIC
         sherpa-onnx-core
+        sherpa-onnx-c-api
 )
 
 target_link_libraries(wfloat-core-shared
     PUBLIC
         sherpa-onnx-core
+        sherpa-onnx-c-api
 )
 
 set_target_properties(wfloat-core PROPERTIES

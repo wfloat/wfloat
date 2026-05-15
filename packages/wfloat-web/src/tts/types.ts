@@ -92,4 +92,5 @@ export type TtsDialogueOptions = {
 
 export type LoadTtsModelOptions = {
   onProgress?: (event: LoadModelProgressEvent) => void;
+  modelAssetHost?: string;
 };

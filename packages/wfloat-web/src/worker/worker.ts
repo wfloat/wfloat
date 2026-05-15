@@ -5,38 +5,59 @@ import {
   createOfflineTts,
   prepareWfloatText,
 } from "../wasm/sherpa-onnx-tts.js";
+import { OfflineRecognizer } from "../wasm/sherpa-onnx-asr.js";
 import { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "../tts/catalog.js";
 import type { TtsEmotion } from "../tts/types.js";
+import { fetchSttModelManifest, fetchTtsModelManifest } from "../modelManifest.js";
 // @ts-ignore
-import createSherpaModule from "../wasm/sherpa-onnx-wasm-main-tts.js";
+import createSherpaSpeechModule from "../wasm/sherpa-onnx-wasm-main-speech.js";
 import {
   ModelAssetsResponse,
   SpeechGenerateDialogueWorkerOptions,
   SpeechGenerateWorkerOptions,
+  SttModelAssetsResponse,
   WorkerRequest,
   WorkerResponse,
 } from "./workerTypes.js";
 import { computeStartTime } from "../util/schedulingUtil.js";
 
-let SherpaModuleInstancePromise: Promise<SherpaModule>;
+let SherpaSpeechModuleInstancePromise: Promise<SherpaModule>;
 let TTS: OfflineTts | null = null;
+let STT: OfflineRecognizer | null = null;
 // let CURRENT_GENERATE_ID: number | null = null;
 // let DO_EARLY_STOP: Boolean = false;
 let EARLY_STOP_MESSAGE_ID: number | null = null;
 
-let MODEL_ASSET_URLS: ModelAssetsResponse | null = null;
-// const REGISTRY_URL = "http://192.168.1.239:8000/assets"; // "http://localhost:8000/assets";
-// MODEL_ASSET_URLS = {
-//   model_onnx: "",
-//   model_tokens: "",
-//   wasm_binary: `${REGISTRY_URL}/sherpa-onnx-wasm-simd-tts/1.13.0/sherpa-onnx-wasm-main-tts.wasm`,
-//   wasm_data: `${REGISTRY_URL}/sherpa-onnx-wasm-simd-tts/1.13.0/sherpa-onnx-wasm-main-tts.data`,
-// };
+let TTS_MODEL_ASSET_URLS: ModelAssetsResponse | null = null;
+let STT_MODEL_ASSET_URLS: SttModelAssetsResponse | null = null;
+let STT_MODEL_ID: string | null = null;
+let INSTALLED_ESPEAK_ARCHIVE_URL: string | null = null;
+let SHERPA_SPEECH_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = null;
 
-const defaultModuleConfig: ModuleConfig = {
+const WEB_PLATFORM = "web";
+const WFLOAT_WEB_VERSION = "1.5.2";
+const SHERPA_ONNX_VERSION = "1.13.1";
+
+function assertPinnedSherpaRuntimeVersion(
+  runtimeVersion: string | undefined,
+  requestedVersion: string,
+  modelId: string,
+): void {
+  if (!runtimeVersion) {
+    throw new Error(`Model asset manifest for ${modelId} is missing runtime.version.`);
+  }
+
+  if (runtimeVersion !== requestedVersion) {
+    throw new Error(
+      `Model asset manifest for ${modelId} returned sherpa runtime ${runtimeVersion}, expected ${requestedVersion}.`,
+    );
+  }
+}
+
+const defaultSpeechModuleConfig: ModuleConfig = {
   locateFile: (path: string) => {
-    if (path.endsWith(".wasm")) return MODEL_ASSET_URLS!.wasm_binary;
-    if (path.endsWith(".data")) return MODEL_ASSET_URLS!.wasm_data;
+    if (path.endsWith(".wasm")) return SHERPA_SPEECH_RUNTIME_URLS!.wasm_binary;
+    if (path.endsWith(".data") && SHERPA_SPEECH_RUNTIME_URLS?.wasm_data) return SHERPA_SPEECH_RUNTIME_URLS.wasm_data;
     return path;
   },
   print: (text: string) => {}, //console.log(text),
@@ -48,37 +69,339 @@ async function getModelAssets(
   modelId: string,
   platform: string,
   version: string,
+  sherpaOnnxVersion: string,
+  modelAssetHost?: string,
   persistentId?: string,
 ): Promise<ModelAssetsResponse> {
-  const params = new URLSearchParams();
-  params.set("model_id", modelId);
-  params.set("platform", platform);
-  params.set("version", version);
-  if (persistentId) {
-    params.set("persistent_id", persistentId);
-  }
-
-  const HOST = "https://wfloat.com";
-  const response = await fetch(`${HOST}/api/model-assets?${params.toString()}`, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
+  const data = await fetchTtsModelManifest({
+    modelName: modelId,
+    platform,
+    version,
+    sherpaOnnxVersion,
+    modelAssetHost,
+    persistentId,
   });
 
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+  assertPinnedSherpaRuntimeVersion(data.runtime?.version, sherpaOnnxVersion, modelId);
+
+  if (
+    data.files?.model?.url &&
+    data.files?.tokens?.url &&
+    data.runtime?.wasm_binary?.url
+  ) {
+    return {
+      model_onnx: data.files.model.url,
+      model_tokens: data.files.tokens.url,
+      wasm_binary: data.runtime.wasm_binary.url,
+      wasm_data: data.runtime.wasm_data?.url,
+      espeak_data: data.files.espeak_data?.url,
+      persistent_id: data.persistent_id,
+    };
   }
 
-  const data: ModelAssetsResponse = await response.json();
-  return data;
+  throw new Error("Model asset manifest is missing required URLs.");
 }
 
-async function getSherpaModule() {
-  if (!SherpaModuleInstancePromise) {
-    SherpaModuleInstancePromise = createSherpaModule(defaultModuleConfig);
+async function getSttModelAssets(
+  modelId: string,
+  platform: string,
+  version: string,
+  sherpaOnnxVersion: string,
+  modelAssetHost?: string,
+  persistentId?: string,
+): Promise<SttModelAssetsResponse> {
+  const data = await fetchSttModelManifest({
+    modelName: modelId,
+    platform,
+    version,
+    sherpaOnnxVersion,
+    modelAssetHost,
+    persistentId,
+  });
+
+  assertPinnedSherpaRuntimeVersion(data.runtime?.version, sherpaOnnxVersion, modelId);
+
+  if (!data.family || !data.files?.tokens?.url || !data.runtime?.wasm_binary?.url) {
+    throw new Error("STT model asset manifest is missing required URLs.");
   }
-  return SherpaModuleInstancePromise;
+
+  const response: SttModelAssetsResponse = {
+    family: data.family,
+    tokens: data.files.tokens.url,
+    wasm_binary: data.runtime.wasm_binary.url,
+    wasm_data: data.runtime.wasm_data?.url,
+    persistent_id: data.persistent_id,
+  };
+
+  if (data.files.encoder?.url) response.encoder = data.files.encoder.url;
+  if (data.files.decoder?.url) response.decoder = data.files.decoder.url;
+  if (data.files.preprocessor?.url) response.preprocessor = data.files.preprocessor.url;
+  if (data.files.joiner?.url) response.joiner = data.files.joiner.url;
+  if (data.files.uncached_decoder?.url) response.uncached_decoder = data.files.uncached_decoder.url;
+  if (data.files.cached_decoder?.url) response.cached_decoder = data.files.cached_decoder.url;
+
+  return response;
+}
+
+function assertCompatibleSpeechRuntime(nextRuntime: {
+  wasm_binary: string;
+  wasm_data?: string;
+}): void {
+  if (!SHERPA_SPEECH_RUNTIME_URLS) {
+    SHERPA_SPEECH_RUNTIME_URLS = nextRuntime;
+    return;
+  }
+
+  if (
+    SHERPA_SPEECH_RUNTIME_URLS.wasm_binary !== nextRuntime.wasm_binary ||
+    SHERPA_SPEECH_RUNTIME_URLS.wasm_data !== nextRuntime.wasm_data
+  ) {
+    throw new Error("Attempted to reuse the shared sherpa speech module with a different runtime URL.");
+  }
+}
+
+async function getSherpaSpeechModule(runtime: {
+  wasm_binary: string;
+  wasm_data?: string;
+}) {
+  assertCompatibleSpeechRuntime(runtime);
+  if (!SherpaSpeechModuleInstancePromise) {
+    SherpaSpeechModuleInstancePromise = createSherpaSpeechModule(defaultSpeechModuleConfig);
+  }
+  return SherpaSpeechModuleInstancePromise;
+}
+
+function getFileNameFromUrl(url: string, label: string): string {
+  const name = new URL(url).pathname.split("/").pop();
+  if (!name) {
+    throw new Error(`Failed to determine filename for ${label}.`);
+  }
+  return name;
+}
+
+function pathDirname(path: string): string {
+  const normalizedPath = path.replace(/\/+/g, "/");
+  const lastSlashIndex = normalizedPath.lastIndexOf("/");
+  if (lastSlashIndex <= 0) {
+    return "/";
+  }
+  return normalizedPath.slice(0, lastSlashIndex);
+}
+
+function pathBasename(path: string): string {
+  const normalizedPath = path.replace(/\/+/g, "/");
+  const lastSlashIndex = normalizedPath.lastIndexOf("/");
+  return lastSlashIndex === -1 ? normalizedPath : normalizedPath.slice(lastSlashIndex + 1);
+}
+
+function fsPathExists(module: SherpaModule, path: string): boolean {
+  try {
+    module.FS.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureModuleDirectory(module: SherpaModule, path: string): void {
+  if (!path || path === "/") {
+    return;
+  }
+
+  if (fsPathExists(module, path)) {
+    return;
+  }
+
+  const parent = pathDirname(path);
+  if (parent !== path) {
+    ensureModuleDirectory(module, parent);
+  }
+
+  if (!fsPathExists(module, path)) {
+    module.FS.mkdir(path);
+  }
+}
+
+function removeModulePathRecursive(module: SherpaModule, path: string): void {
+  if (!fsPathExists(module, path)) {
+    return;
+  }
+
+  const stat = module.FS.stat(path);
+  const mode = stat.mode as number;
+  const isDirectory = typeof module.FS.isDir === "function" ? module.FS.isDir(mode) : false;
+
+  if (!isDirectory) {
+    module.FS.unlink(path);
+    return;
+  }
+
+  const entries = module.FS.readdir(path).filter((entry: string) => entry !== "." && entry !== "..");
+  for (const entry of entries) {
+    const childPath = path === "/" ? `/${entry}` : `${path}/${entry}`;
+    removeModulePathRecursive(module, childPath);
+  }
+
+  module.FS.rmdir(path);
+}
+
+function readUint16LE(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readUint32LE(bytes: Uint8Array, offset: number): number {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+function decodeZipFileName(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+function sanitizeZipEntryPath(entryName: string): string {
+  const normalized = entryName.replace(/\\/g, "/").replace(/^\/+/, "");
+  const segments = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+
+  if (segments.length === 0) {
+    return "";
+  }
+
+  for (const segment of segments) {
+    if (segment === "..") {
+      throw new Error(`Invalid zip entry path: ${entryName}`);
+    }
+  }
+
+  return segments.join("/");
+}
+
+function installStoredZipArchive(module: SherpaModule, archiveBytes: Uint8Array, destinationRoot: string): void {
+  ensureModuleDirectory(module, destinationRoot);
+
+  let offset = 0;
+  while (offset + 4 <= archiveBytes.length) {
+    const signature = readUint32LE(archiveBytes, offset);
+    if (signature !== 0x04034b50) {
+      break;
+    }
+
+    if (offset + 30 > archiveBytes.length) {
+      throw new Error("Invalid zip archive header.");
+    }
+
+    const generalPurposeBitFlag = readUint16LE(archiveBytes, offset + 6);
+    const compressionMethod = readUint16LE(archiveBytes, offset + 8);
+    const compressedSize = readUint32LE(archiveBytes, offset + 18);
+    const uncompressedSize = readUint32LE(archiveBytes, offset + 22);
+    const fileNameLength = readUint16LE(archiveBytes, offset + 26);
+    const extraFieldLength = readUint16LE(archiveBytes, offset + 28);
+
+    if ((generalPurposeBitFlag & 0x0008) !== 0) {
+      throw new Error("Zip archives using data descriptors are not supported.");
+    }
+
+    if (compressionMethod !== 0) {
+      throw new Error("Compressed zip entries are not supported for web espeak staging.");
+    }
+
+    const fileNameOffset = offset + 30;
+    const fileDataOffset = fileNameOffset + fileNameLength + extraFieldLength;
+    const fileDataEnd = fileDataOffset + compressedSize;
+
+    if (fileDataEnd > archiveBytes.length) {
+      throw new Error("Zip entry extends beyond archive length.");
+    }
+
+    const rawFileName = decodeZipFileName(
+      archiveBytes.subarray(fileNameOffset, fileNameOffset + fileNameLength),
+    );
+    const relativePath = sanitizeZipEntryPath(rawFileName);
+
+    if (relativePath) {
+      const destinationPath = `${destinationRoot}/${relativePath}`;
+      const isDirectory = rawFileName.endsWith("/");
+
+      if (isDirectory) {
+        ensureModuleDirectory(module, destinationPath);
+      } else {
+        ensureModuleDirectory(module, pathDirname(destinationPath));
+        const fileBytes = archiveBytes.slice(fileDataOffset, fileDataOffset + uncompressedSize);
+        module.FS.writeFile(destinationPath, fileBytes);
+      }
+    }
+
+    offset = fileDataEnd;
+  }
+}
+
+async function installEspeakArchiveFromUrl(module: SherpaModule, archiveUrl: string): Promise<void> {
+  if (INSTALLED_ESPEAK_ARCHIVE_URL === archiveUrl && fsPathExists(module, "/espeak-ng-data")) {
+    return;
+  }
+
+  const response = await fetch(archiveUrl);
+  if (!response.ok) {
+    throw new Error("Failed to fetch espeak-ng-data archive.");
+  }
+
+  const archiveBytes = new Uint8Array(await response.arrayBuffer());
+  if (fsPathExists(module, "/espeak-ng-data")) {
+    removeModulePathRecursive(module, "/espeak-ng-data");
+  }
+
+  installStoredZipArchive(module, archiveBytes, "/");
+
+  if (!fsPathExists(module, "/espeak-ng-data")) {
+    const fallbackName = pathBasename(new URL(archiveUrl).pathname).replace(/\.zip$/i, "");
+    if (fsPathExists(module, `/${fallbackName}/espeak-ng-data`)) {
+      module.FS.rename(`/${fallbackName}/espeak-ng-data`, "/espeak-ng-data");
+      if (fsPathExists(module, `/${fallbackName}`)) {
+        removeModulePathRecursive(module, `/${fallbackName}`);
+      }
+    }
+  }
+
+  if (!fsPathExists(module, "/espeak-ng-data")) {
+    throw new Error("Unable to locate extracted espeak-ng-data directory.");
+  }
+
+  INSTALLED_ESPEAK_ARCHIVE_URL = archiveUrl;
+}
+
+async function writeModuleFileFromUrl(
+  module: SherpaModule,
+  remoteUrl: string,
+  targetName: string,
+): Promise<void> {
+  const response = await fetch(remoteUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${targetName}.`);
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  module.FS.writeFile(`/${targetName}`, bytes);
+}
+
+function coerceNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => (typeof item === "number" && Number.isFinite(item) ? item : null))
+    .filter((item): item is number => item !== null);
+}
+
+function coerceStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 function postResponse(message: WorkerResponse, transfer: Transferable[] = []): void {
@@ -90,13 +413,19 @@ function postResponse(message: WorkerResponse, transfer: Transferable[] = []): v
 async function handleLoadSpeechModel(
   id: number,
   modelId: string,
+  modelAssetHost?: string,
   persistentId?: string,
 ): Promise<void> {
-  const PLATFORM = "web";
-  const VERSION = "1.5.2";
-  MODEL_ASSET_URLS = await getModelAssets(modelId, PLATFORM, VERSION, persistentId);
-  const MODEL_NAME = new URL(MODEL_ASSET_URLS!.model_onnx).pathname.split("/").pop();
-  const TOKENS_NAME = new URL(MODEL_ASSET_URLS!.model_tokens).pathname.split("/").pop();
+  TTS_MODEL_ASSET_URLS = await getModelAssets(
+    modelId,
+    WEB_PLATFORM,
+    WFLOAT_WEB_VERSION,
+    SHERPA_ONNX_VERSION,
+    modelAssetHost,
+    persistentId,
+  );
+  const MODEL_NAME = new URL(TTS_MODEL_ASSET_URLS!.model_onnx).pathname.split("/").pop();
+  const TOKENS_NAME = new URL(TTS_MODEL_ASSET_URLS!.model_tokens).pathname.split("/").pop();
 
   if (TTS) {
     TTS.free();
@@ -104,12 +433,15 @@ async function handleLoadSpeechModel(
   }
 
   let isSherpaModuleResolved = false;
-  const sherpaModulePromise = getSherpaModule().then((module) => {
+  const sherpaModulePromise = getSherpaSpeechModule({
+    wasm_binary: TTS_MODEL_ASSET_URLS.wasm_binary,
+    wasm_data: TTS_MODEL_ASSET_URLS.wasm_data,
+  }).then((module) => {
     isSherpaModuleResolved = true;
     return module;
   });
 
-  const response = await fetch(MODEL_ASSET_URLS.model_onnx);
+  const response = await fetch(TTS_MODEL_ASSET_URLS.model_onnx);
   if (!response.ok || !response.body) {
     throw new Error("Failed to fetch model.onnx");
   }
@@ -176,12 +508,16 @@ async function handleLoadSpeechModel(
   // }
   // pendingModelChunks = [];
 
-  const tokensResponse = await fetch(MODEL_ASSET_URLS.model_tokens);
+  const tokensResponse = await fetch(TTS_MODEL_ASSET_URLS.model_tokens);
   if (!tokensResponse.ok) {
     throw new Error("Failed to fetch tokens.txt");
   }
   const tokensText = await tokensResponse.text();
   sherpaModule.FS.writeFile(`/${TOKENS_NAME}`, tokensText);
+
+  if (TTS_MODEL_ASSET_URLS.espeak_data) {
+    await installEspeakArchiveFromUrl(sherpaModule, TTS_MODEL_ASSET_URLS.espeak_data);
+  }
 
   // console.log(sherpaModule.FS.readdir("/"));
 
@@ -216,8 +552,202 @@ async function handleLoadSpeechModel(
     id,
     type: "speech-load-model-done",
     sampleRate: TTS.sampleRate,
-    persistentId: MODEL_ASSET_URLS.persistent_id,
+    persistentId: TTS_MODEL_ASSET_URLS.persistent_id,
   });
+}
+
+function buildSttRecognizerConfig(options: {
+  family: string;
+  files: SttModelAssetsResponse;
+  language?: string;
+  task?: "transcribe" | "translate";
+}) {
+  const tokens = `/${getFileNameFromUrl(options.files.tokens, "tokens")}`;
+
+  if (options.family === "whisper") {
+    if (!options.files.encoder || !options.files.decoder) {
+      throw new Error("Whisper STT manifest is missing encoder or decoder.");
+    }
+
+    return {
+      modelConfig: {
+        whisper: {
+          encoder: `/${getFileNameFromUrl(options.files.encoder, "encoder")}`,
+          decoder: `/${getFileNameFromUrl(options.files.decoder, "decoder")}`,
+          language: options.language || "en",
+          task: options.task || "transcribe",
+          tailPaddings: -1,
+        },
+        tokens,
+        modelType: "whisper",
+        provider: "cpu",
+        numThreads: 1,
+        debug: 0,
+      },
+      decodingMethod: "greedy_search",
+      maxActivePaths: 4,
+    };
+  }
+
+  if (options.family === "moonshine") {
+    if (
+      !options.files.preprocessor ||
+      !options.files.encoder ||
+      !options.files.uncached_decoder ||
+      !options.files.cached_decoder
+    ) {
+      throw new Error("Moonshine STT manifest is missing required files.");
+    }
+
+    return {
+      modelConfig: {
+        moonshine: {
+          preprocessor: `/${getFileNameFromUrl(options.files.preprocessor, "preprocessor")}`,
+          encoder: `/${getFileNameFromUrl(options.files.encoder, "encoder")}`,
+          uncachedDecoder: `/${getFileNameFromUrl(options.files.uncached_decoder, "uncached decoder")}`,
+          cachedDecoder: `/${getFileNameFromUrl(options.files.cached_decoder, "cached decoder")}`,
+        },
+        tokens,
+        provider: "cpu",
+        numThreads: 1,
+        debug: 0,
+      },
+      decodingMethod: "greedy_search",
+      maxActivePaths: 4,
+    };
+  }
+
+  throw new Error(`Unsupported STT family: ${options.family}`);
+}
+
+async function handleLoadSttModel(
+  id: number,
+  options: Extract<WorkerRequest, { type: "stt-load-model" }>,
+): Promise<void> {
+  STT_MODEL_ASSET_URLS = await getSttModelAssets(
+    options.modelId,
+    WEB_PLATFORM,
+    WFLOAT_WEB_VERSION,
+    SHERPA_ONNX_VERSION,
+    options.modelAssetHost,
+    options.persistentId,
+  );
+  STT_MODEL_ID = options.modelId;
+
+  if (STT) {
+    STT.free();
+    STT = null;
+  }
+
+  const sherpaModule = await getSherpaSpeechModule({
+    wasm_binary: STT_MODEL_ASSET_URLS.wasm_binary,
+    wasm_data: STT_MODEL_ASSET_URLS.wasm_data,
+  });
+  const fileEntries = [
+    ["tokens", STT_MODEL_ASSET_URLS.tokens],
+    ["encoder", STT_MODEL_ASSET_URLS.encoder],
+    ["decoder", STT_MODEL_ASSET_URLS.decoder],
+    ["preprocessor", STT_MODEL_ASSET_URLS.preprocessor],
+    ["joiner", STT_MODEL_ASSET_URLS.joiner],
+    ["uncached_decoder", STT_MODEL_ASSET_URLS.uncached_decoder],
+    ["cached_decoder", STT_MODEL_ASSET_URLS.cached_decoder],
+  ].filter((entry): entry is [string, string] => typeof entry[1] === "string");
+
+  const totalFiles = Math.max(fileEntries.length, 1);
+  let completedFiles = 0;
+  for (const [label, remoteUrl] of fileEntries) {
+    const targetName = getFileNameFromUrl(remoteUrl, label);
+    await writeModuleFileFromUrl(sherpaModule, remoteUrl, targetName);
+    completedFiles += 1;
+    postResponse({
+      id,
+      type: "stt-load-model-progress",
+      event: {
+        status: "downloading",
+        progress: completedFiles / totalFiles,
+      },
+    });
+  }
+
+  postResponse({
+    id,
+    type: "stt-load-model-progress",
+    event: { status: "loading" },
+  });
+
+  STT = new OfflineRecognizer(
+    buildSttRecognizerConfig({
+      family: STT_MODEL_ASSET_URLS.family,
+      files: STT_MODEL_ASSET_URLS,
+      language: options.language,
+      task: options.task,
+    }),
+    sherpaModule,
+  );
+
+  postResponse({
+    id,
+    type: "stt-load-model-done",
+    family: STT_MODEL_ASSET_URLS.family,
+    persistentId: STT_MODEL_ASSET_URLS.persistent_id,
+  });
+}
+
+async function handleSttTranscribe(
+  id: number,
+  samples: Float32Array,
+  sampleRate: number,
+): Promise<void> {
+  if (!STT || !STT_MODEL_ASSET_URLS || !STT_MODEL_ID) {
+    throw new Error("STT model is not loaded. Call loadSttModel(...) first.");
+  }
+
+  const stream = STT.createStream();
+  try {
+    stream.acceptWaveform(sampleRate, samples);
+    STT.decode(stream);
+    const rawResult = STT.getResult(stream) as Record<string, unknown>;
+
+    const tokens = coerceStringArray(rawResult.tokens);
+    const timestamps = coerceNumberArray(rawResult.timestamps);
+    const durations = coerceNumberArray(rawResult.durations);
+    const confidences = coerceNumberArray(rawResult.ys_log_probs);
+    const segmentTexts = coerceStringArray(rawResult.segment_texts);
+    const segmentTimestamps = coerceNumberArray(rawResult.segment_timestamps);
+    const segmentDurations = coerceNumberArray(rawResult.segment_durations);
+
+    postResponse({
+      id,
+      type: "stt-transcribe-done",
+      result: {
+        text: typeof rawResult.text === "string" ? rawResult.text : "",
+        modelId: STT_MODEL_ID,
+        language: typeof rawResult.lang === "string" ? rawResult.lang : "",
+        emotion: typeof rawResult.emotion === "string" ? rawResult.emotion : "",
+        event: typeof rawResult.event === "string" ? rawResult.event : "",
+        json: JSON.stringify(rawResult),
+        tokens:
+          tokens.length > 0
+            ? tokens.map((text, index) => ({
+                text,
+                startSec: timestamps[index] ?? 0,
+                durationSec: durations[index] ?? 0,
+                confidence: confidences[index] ?? 0,
+              }))
+            : undefined,
+        segments:
+          segmentTexts.length > 0
+            ? segmentTexts.map((text, index) => ({
+                text,
+                startSec: segmentTimestamps[index] ?? 0,
+                durationSec: segmentDurations[index] ?? 0,
+              }))
+            : undefined,
+      },
+    });
+  } finally {
+    stream.free();
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -231,7 +761,10 @@ async function handleSpeechGenerate(
   options: SpeechGenerateWorkerOptions,
 ): Promise<void> {
   // this.status = "generating";
-  const sherpaModule = await getSherpaModule();
+  const sherpaModule = await getSherpaSpeechModule({
+    wasm_binary: TTS_MODEL_ASSET_URLS!.wasm_binary,
+    wasm_data: TTS_MODEL_ASSET_URLS!.wasm_data,
+  });
 
   if (!TTS) {
     throw new Error("TTS model is not loaded. Call loadTtsModel(...) first.");
@@ -379,7 +912,10 @@ async function handleSpeechGenerateDialogue(
   options: SpeechGenerateDialogueWorkerOptions,
 ): Promise<void> {
   // this.status = "generating";
-  const sherpaModule = await getSherpaModule();
+  const sherpaModule = await getSherpaSpeechModule({
+    wasm_binary: TTS_MODEL_ASSET_URLS!.wasm_binary,
+    wasm_data: TTS_MODEL_ASSET_URLS!.wasm_data,
+  });
 
   if (!TTS) {
     throw new Error("TTS model is not loaded. Call loadTtsModel(...) first.");
@@ -574,7 +1110,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
   try {
     if (message.type === "speech-load-model") {
-      await handleLoadSpeechModel(message.id, message.modelId, message.persistentId);
+      await handleLoadSpeechModel(message.id, message.modelId, message.modelAssetHost, message.persistentId);
       return;
     }
 
@@ -594,6 +1130,16 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       console.log(`MESSAGE RECEIVED speech-terminate-early ${message.id}`);
       // DO_EARLY_STOP = true;
       EARLY_STOP_MESSAGE_ID = message.id;
+      return;
+    }
+
+    if (message.type === "stt-load-model") {
+      await handleLoadSttModel(message.id, message);
+      return;
+    }
+
+    if (message.type === "stt-transcribe") {
+      await handleSttTranscribe(message.id, message.samples, message.sampleRate);
       return;
     }
   } catch (error) {

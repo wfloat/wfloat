@@ -8,9 +8,21 @@ from ._constants import (
     DEFAULT_PROVIDER,
     DEFAULT_SPEED,
 )
-from ._results import Audio, GenerationResult, Timeline, TimelineChunk
+from ._results import (
+    Audio,
+    GenerationResult,
+    Timeline,
+    TimelineChunk,
+    TranscriptionResult,
+    TranscriptionSegment,
+    TranscriptionToken,
+)
 
 WFLOAT_TTS_FAMILY_WFLOAT_EXPRESSIVE = 1
+WFLOAT_STT_FAMILY_WHISPER = 1
+WFLOAT_STT_FAMILY_MOONSHINE = 2
+WFLOAT_STT_FAMILY_PARAKEET_CTC = 3
+WFLOAT_STT_FAMILY_PARAKEET_TDT = 4
 WFLOAT_STATUS_OK = 0
 
 
@@ -147,6 +159,91 @@ class _WfloatTtsModelConfig(ctypes.Structure):
     ]
 
 
+class _WfloatSttToken(ctypes.Structure):
+    _fields_ = [
+        ("text", ctypes.c_char_p),
+        ("start_sec", ctypes.c_float),
+        ("duration_sec", ctypes.c_float),
+        ("confidence", ctypes.c_float),
+    ]
+
+
+class _WfloatSttSegment(ctypes.Structure):
+    _fields_ = [
+        ("text", ctypes.c_char_p),
+        ("start_sec", ctypes.c_float),
+        ("duration_sec", ctypes.c_float),
+    ]
+
+
+class _WfloatSttTranscriptionResult(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("text", ctypes.c_char_p),
+        ("language", ctypes.c_char_p),
+        ("emotion", ctypes.c_char_p),
+        ("event", ctypes.c_char_p),
+        ("json", ctypes.c_char_p),
+        ("tokens", ctypes.POINTER(_WfloatSttToken)),
+        ("token_count", ctypes.c_size_t),
+        ("segments", ctypes.POINTER(_WfloatSttSegment)),
+        ("segment_count", ctypes.c_size_t),
+    ]
+
+
+class _WfloatSttModelInfo(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("backend", ctypes.c_char_p),
+        ("family", ctypes.c_char_p),
+        ("feature_flags", ctypes.c_uint64),
+        ("sample_rate", ctypes.c_int32),
+        ("supports_language_override", ctypes.c_int32),
+    ]
+
+
+class _WfloatSttModelConfig(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("family", ctypes.c_int32),
+        ("model_path", ctypes.c_char_p),
+        ("tokens_path", ctypes.c_char_p),
+        ("preprocessor_path", ctypes.c_char_p),
+        ("encoder_path", ctypes.c_char_p),
+        ("decoder_path", ctypes.c_char_p),
+        ("joiner_path", ctypes.c_char_p),
+        ("uncached_decoder_path", ctypes.c_char_p),
+        ("cached_decoder_path", ctypes.c_char_p),
+        ("provider", ctypes.c_char_p),
+        ("language", ctypes.c_char_p),
+        ("task", ctypes.c_char_p),
+        ("hotwords_file", ctypes.c_char_p),
+        ("rule_fsts", ctypes.c_char_p),
+        ("rule_fars", ctypes.c_char_p),
+        ("sample_rate", ctypes.c_int32),
+        ("feat_dim", ctypes.c_int32),
+        ("num_threads", ctypes.c_int32),
+        ("debug", ctypes.c_int32),
+        ("max_active_paths", ctypes.c_int32),
+        ("tail_paddings", ctypes.c_int32),
+        ("enable_token_timestamps", ctypes.c_int32),
+        ("enable_segment_timestamps", ctypes.c_int32),
+        ("hotwords_score", ctypes.c_float),
+        ("blank_penalty", ctypes.c_float),
+    ]
+
+
+class _WfloatSttTranscribeOptions(ctypes.Structure):
+    _fields_ = [
+        ("samples", ctypes.POINTER(ctypes.c_float)),
+        ("sample_count", ctypes.c_size_t),
+        ("sample_rate", ctypes.c_int32),
+        ("language", ctypes.c_char_p),
+        ("task", ctypes.c_char_p),
+        ("hotwords", ctypes.c_char_p),
+    ]
+
+
 class _CoreLibraryError(ImportError):
     pass
 
@@ -231,6 +328,33 @@ def _prepare_library(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(_WfloatTtsSynthesisResult)
     ]
     lib.wfloat_tts_synthesis_result_destroy.restype = None
+
+    lib.wfloat_stt_model_create.argtypes = [
+        ctypes.POINTER(_WfloatSttModelConfig),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.wfloat_stt_model_create.restype = ctypes.c_int32
+
+    lib.wfloat_stt_model_destroy.argtypes = [ctypes.c_void_p]
+    lib.wfloat_stt_model_destroy.restype = None
+
+    lib.wfloat_stt_model_get_info.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WfloatSttModelInfo),
+    ]
+    lib.wfloat_stt_model_get_info.restype = ctypes.c_int32
+
+    lib.wfloat_stt_model_transcribe.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WfloatSttTranscribeOptions),
+        ctypes.POINTER(ctypes.POINTER(_WfloatSttTranscriptionResult)),
+    ]
+    lib.wfloat_stt_model_transcribe.restype = ctypes.c_int32
+
+    lib.wfloat_stt_transcription_result_destroy.argtypes = [
+        ctypes.POINTER(_WfloatSttTranscriptionResult)
+    ]
+    lib.wfloat_stt_transcription_result_destroy.restype = None
 
     return lib
 
@@ -560,4 +684,242 @@ def create_core_tts(
         model_path=model_path,
         tokens_path=tokens_path,
         espeak_data_dir=espeak_data_dir,
+    )
+
+
+class CoreStt:
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        family: int,
+        model_path: Optional[Path],
+        tokens_path: Path,
+        preprocessor_path: Optional[Path] = None,
+        encoder_path: Optional[Path] = None,
+        decoder_path: Optional[Path] = None,
+        joiner_path: Optional[Path] = None,
+        uncached_decoder_path: Optional[Path] = None,
+        cached_decoder_path: Optional[Path] = None,
+        language: Optional[str] = None,
+        task: Optional[str] = None,
+        enable_token_timestamps: bool = False,
+        enable_segment_timestamps: bool = False,
+    ) -> None:
+        self._lib = _prepare_library(_load_core_library())
+        self._model = ctypes.c_void_p()
+
+        self._config_bytes = {
+            "model_id": model_id.encode("utf-8"),
+            "model_path": None if model_path is None else str(model_path).encode("utf-8"),
+            "tokens_path": str(tokens_path).encode("utf-8"),
+            "preprocessor_path": None
+            if preprocessor_path is None
+            else str(preprocessor_path).encode("utf-8"),
+            "encoder_path": None if encoder_path is None else str(encoder_path).encode("utf-8"),
+            "decoder_path": None if decoder_path is None else str(decoder_path).encode("utf-8"),
+            "joiner_path": None if joiner_path is None else str(joiner_path).encode("utf-8"),
+            "uncached_decoder_path": None
+            if uncached_decoder_path is None
+            else str(uncached_decoder_path).encode("utf-8"),
+            "cached_decoder_path": None
+            if cached_decoder_path is None
+            else str(cached_decoder_path).encode("utf-8"),
+            "provider": DEFAULT_PROVIDER.encode("utf-8"),
+            "language": None if language is None else language.encode("utf-8"),
+            "task": None if task is None else task.encode("utf-8"),
+        }
+
+        config = _WfloatSttModelConfig(
+            model_id=self._config_bytes["model_id"],
+            family=family,
+            model_path=self._config_bytes["model_path"],
+            tokens_path=self._config_bytes["tokens_path"],
+            preprocessor_path=self._config_bytes["preprocessor_path"],
+            encoder_path=self._config_bytes["encoder_path"],
+            decoder_path=self._config_bytes["decoder_path"],
+            joiner_path=self._config_bytes["joiner_path"],
+            uncached_decoder_path=self._config_bytes["uncached_decoder_path"],
+            cached_decoder_path=self._config_bytes["cached_decoder_path"],
+            provider=self._config_bytes["provider"],
+            language=self._config_bytes["language"],
+            task=self._config_bytes["task"],
+            hotwords_file=None,
+            rule_fsts=None,
+            rule_fars=None,
+            sample_rate=16000,
+            feat_dim=80,
+            num_threads=1,
+            debug=0,
+            max_active_paths=4,
+            tail_paddings=0,
+            enable_token_timestamps=1 if enable_token_timestamps else 0,
+            enable_segment_timestamps=1 if enable_segment_timestamps else 0,
+            hotwords_score=1.5,
+            blank_penalty=0.0,
+        )
+
+        status = self._lib.wfloat_stt_model_create(
+            ctypes.byref(config),
+            ctypes.byref(self._model),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core STT model creation failed with status {status}.")
+
+        info = _WfloatSttModelInfo()
+        status = self._lib.wfloat_stt_model_get_info(self._model, ctypes.byref(info))
+        if status != WFLOAT_STATUS_OK:
+            self.close()
+            raise RuntimeError(f"wfloat-core STT model info failed with status {status}.")
+
+        self.sample_rate = int(info.sample_rate)
+        self.supports_language_override = bool(info.supports_language_override)
+
+    def close(self) -> None:
+        if self._model and self._model.value:
+            self._lib.wfloat_stt_model_destroy(self._model)
+            self._model = ctypes.c_void_p()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def transcribe_result(
+        self,
+        *,
+        model_id: str,
+        samples: Sequence[float],
+        sample_rate: int,
+        language: Optional[str] = None,
+        task: Optional[str] = None,
+        hotwords: Optional[str] = None,
+    ) -> TranscriptionResult:
+        sample_values = [float(sample) for sample in samples]
+        sample_array = (ctypes.c_float * len(sample_values))(*sample_values)
+        language_bytes = None if language is None else language.encode("utf-8")
+        task_bytes = None if task is None else task.encode("utf-8")
+        hotwords_bytes = None if hotwords is None else hotwords.encode("utf-8")
+
+        options = _WfloatSttTranscribeOptions(
+            samples=sample_array,
+            sample_count=len(sample_values),
+            sample_rate=int(sample_rate),
+            language=language_bytes,
+            task=task_bytes,
+            hotwords=hotwords_bytes,
+        )
+
+        result_ptr = ctypes.POINTER(_WfloatSttTranscriptionResult)()
+        status = self._lib.wfloat_stt_model_transcribe(
+            self._model,
+            ctypes.byref(options),
+            ctypes.byref(result_ptr),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core transcribe failed with status {status}.")
+
+        try:
+            result = result_ptr.contents
+            tokens = [
+                TranscriptionToken(
+                    text=_decode(result.tokens[index].text),
+                    start_sec=float(result.tokens[index].start_sec),
+                    duration_sec=float(result.tokens[index].duration_sec),
+                    confidence=float(result.tokens[index].confidence),
+                )
+                for index in range(int(result.token_count))
+            ]
+            segments = [
+                TranscriptionSegment(
+                    text=_decode(result.segments[index].text),
+                    start_sec=float(result.segments[index].start_sec),
+                    duration_sec=float(result.segments[index].duration_sec),
+                )
+                for index in range(int(result.segment_count))
+            ]
+
+            return TranscriptionResult(
+                text=_decode(result.text),
+                model_id=_decode(result.model_id) or model_id,
+                language=_decode(result.language),
+                emotion=_decode(result.emotion),
+                event=_decode(result.event),
+                json=_decode(result.json),
+                tokens=tokens or None,
+                segments=segments or None,
+            )
+        finally:
+            self._lib.wfloat_stt_transcription_result_destroy(result_ptr)
+
+
+def create_core_stt_whisper(
+    *,
+    model_name: str,
+    encoder_path: Path,
+    decoder_path: Path,
+    tokens_path: Path,
+    language: Optional[str] = None,
+    task: Optional[str] = None,
+    enable_token_timestamps: bool = False,
+    enable_segment_timestamps: bool = False,
+):
+    return CoreStt(
+        model_id=model_name,
+        family=WFLOAT_STT_FAMILY_WHISPER,
+        model_path=None,
+        tokens_path=tokens_path,
+        encoder_path=encoder_path,
+        decoder_path=decoder_path,
+        language=language,
+        task=task,
+        enable_token_timestamps=enable_token_timestamps,
+        enable_segment_timestamps=enable_segment_timestamps,
+    )
+
+
+def create_core_stt(
+    *,
+    model_name: str,
+    family: str,
+    model_path: Optional[Path],
+    tokens_path: Path,
+    preprocessor_path: Optional[Path] = None,
+    encoder_path: Optional[Path] = None,
+    decoder_path: Optional[Path] = None,
+    joiner_path: Optional[Path] = None,
+    uncached_decoder_path: Optional[Path] = None,
+    cached_decoder_path: Optional[Path] = None,
+    language: Optional[str] = None,
+    task: Optional[str] = None,
+    enable_token_timestamps: bool = False,
+    enable_segment_timestamps: bool = False,
+):
+    normalized_family = family.strip().lower().replace("_", "-")
+    family_map = {
+        "whisper": WFLOAT_STT_FAMILY_WHISPER,
+        "moonshine": WFLOAT_STT_FAMILY_MOONSHINE,
+        "parakeet-ctc": WFLOAT_STT_FAMILY_PARAKEET_CTC,
+        "parakeet-tdt": WFLOAT_STT_FAMILY_PARAKEET_TDT,
+    }
+    family_value = family_map.get(normalized_family)
+    if family_value is None:
+        raise ValueError(f"Unsupported STT family: {family}")
+
+    return CoreStt(
+        model_id=model_name,
+        family=family_value,
+        model_path=model_path,
+        tokens_path=tokens_path,
+        preprocessor_path=preprocessor_path,
+        encoder_path=encoder_path,
+        decoder_path=decoder_path,
+        joiner_path=joiner_path,
+        uncached_decoder_path=uncached_decoder_path,
+        cached_decoder_path=cached_decoder_path,
+        language=language,
+        task=task,
+        enable_token_timestamps=enable_token_timestamps,
+        enable_segment_timestamps=enable_segment_timestamps,
     )

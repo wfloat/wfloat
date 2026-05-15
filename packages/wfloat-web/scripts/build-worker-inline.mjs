@@ -1,4 +1,3 @@
-// scripts/build-worker-inline.mjs
 import { build } from "esbuild";
 import { readFile, writeFile } from "fs/promises";
 import { resolve } from "path";
@@ -11,35 +10,26 @@ const outfile = resolve(__dirname, "../dist/worker/worker-bundled.js");
 const finalOutfile = resolve(__dirname, "../dist/worker/worker-inline.js");
 
 async function run() {
-    // 1. Bundle worker into a single JS file
-    await build({
-        entryPoints: [entry],
-        outfile,
-        bundle: true,
-        platform: "browser",
-        format: "esm",
-        target: "es2020",
-        sourcemap: false,
-        minify: true,
-        treeShaking: true,
-    });
+  await build({
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: "browser",
+    format: "esm",
+    target: "es2020",
+    sourcemap: false,
+    minify: true,
+    treeShaking: true,
+  });
 
-    // 2. Read bundled output
-    const bundledCode = await readFile(outfile, "utf8");
+  const bundledCode = await readFile(outfile, "utf8");
+  const wrapped = `// Auto-generated. Do not edit.\nexport default ${JSON.stringify(bundledCode)};\n`;
 
-    // 3. Convert to JS module exporting string
-    const escaped = JSON.stringify(bundledCode);
-
-    const wrapped = `// Auto-generated. Do not edit.
-export default ${escaped};
-`;
-
-    await writeFile(finalOutfile, wrapped, "utf8");
-
-    console.log("✓ worker-inline.js generated");
+  await writeFile(finalOutfile, wrapped, "utf8");
+  console.log("Copied bundled worker into dist/worker/worker-inline.js");
 }
 
-run().catch((err) => {
-    console.error(err);
-    process.exit(1);
+run().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });

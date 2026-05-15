@@ -46,7 +46,9 @@ The first concrete shared contract should be generic TTS orchestration above
 
 Current draft native surface:
 
+- [include/wfloat-core/wfloat_stt.h](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/include/wfloat-core/wfloat_stt.h:1)
 - [include/wfloat-core/wfloat_tts.h](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/include/wfloat-core/wfloat_tts.h:1)
+- [src/wfloat_stt.cc](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/src/wfloat_stt.cc:1)
 - [src/wfloat_tts.cc](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/src/wfloat_tts.cc:1)
 - [CMakeLists.txt](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/CMakeLists.txt:1)
 
@@ -71,3 +73,7 @@ The native build now defines both:
 
 The shared target exists so wrappers such as Python can load the ABI through
 `ctypes` without inventing a wrapper-specific native build.
+
+On Linux, the top-level build now enables PIC for the vendored native graph so
+`wfloat-core-shared` can link against static backend libraries without forcing
+the entire sherpa dependency stack into shared-library mode.

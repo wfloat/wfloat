@@ -1,10 +1,24 @@
-import type { LoadModelProgressEvent, TtsEmotion } from "../tts/types";
+import type { TranscriptionResult } from "../stt/types.js";
+import type { LoadModelProgressEvent, TtsEmotion } from "../tts/types.js";
 
 export type WorkerRequestTemplate =
-  | { type: "speech-load-model"; modelId: string; persistentId?: string }
+  | { type: "speech-load-model"; modelId: string; persistentId?: string; modelAssetHost?: string }
   | { type: "speech-generate"; options: SpeechGenerateWorkerOptions }
   | { type: "speech-generate-dialogue"; options: SpeechGenerateDialogueWorkerOptions }
-  | { type: "speech-terminate-early" };
+  | { type: "speech-terminate-early" }
+  | {
+      type: "stt-load-model";
+      modelId: string;
+      persistentId?: string;
+      modelAssetHost?: string;
+      language?: string;
+      task?: "transcribe" | "translate";
+    }
+  | {
+      type: "stt-transcribe";
+      samples: Float32Array;
+      sampleRate: number;
+    };
 
 export type WorkerRequest = WorkerRequestTemplate & { id: number };
 
@@ -27,7 +41,23 @@ export type WorkerResponse =
       textHighlightSegment?: number;
       text: string;
     }
-  | { id: number; type: "speech-terminate-early-done" };
+  | { id: number; type: "speech-terminate-early-done" }
+  | {
+      id: number;
+      type: "stt-load-model-progress";
+      event: LoadModelProgressEvent;
+    }
+  | {
+      id: number;
+      type: "stt-load-model-done";
+      family: string;
+      persistentId?: string;
+    }
+  | {
+      id: number;
+      type: "stt-transcribe-done";
+      result: TranscriptionResult;
+    };
 
 export type SpeechGenerateWorkerOptions = {
   voiceId?: string | number;
@@ -63,6 +93,21 @@ export type ModelAssetsResponse = {
   model_onnx: string;
   model_tokens: string;
   wasm_binary: string;
-  wasm_data: string;
+  wasm_data?: string;
+  espeak_data?: string;
+  persistent_id?: string;
+};
+
+export type SttModelAssetsResponse = {
+  family: string;
+  tokens: string;
+  wasm_binary: string;
+  wasm_data?: string;
+  encoder?: string;
+  decoder?: string;
+  preprocessor?: string;
+  joiner?: string;
+  uncached_decoder?: string;
+  cached_decoder?: string;
   persistent_id?: string;
 };

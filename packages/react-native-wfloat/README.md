@@ -26,13 +26,13 @@ React Native autolinking handles Android integration after the package is instal
 
 ## Quick start
 
-Your `modelId` is the **Model Credential** shown in your Wfloat account after
-[sign up](https://wfloat.com/).
+Your `modelId` is the Wfloat model identifier you want to load, for example
+`wfloat/wfloat-tts`.
 
 ```tsx
 import { loadTtsModel } from '@wfloat/react-native-wfloat';
 
-const modelId = 'your-model-credential';
+const modelId = 'wfloat/wfloat-tts';
 
 const tts = await loadTtsModel(modelId, {
   onProgress(event) {

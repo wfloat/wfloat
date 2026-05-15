@@ -98,3 +98,30 @@ class GenerationResult:
 
 
 TtsSynthesisResult = GenerationResult
+
+
+@dataclass
+class TranscriptionToken:
+    text: str
+    start_sec: float
+    duration_sec: float
+    confidence: float = 0.0
+
+
+@dataclass
+class TranscriptionSegment:
+    text: str
+    start_sec: float
+    duration_sec: float
+
+
+@dataclass
+class TranscriptionResult:
+    text: str
+    model_id: str
+    language: str = ""
+    emotion: str = ""
+    event: str = ""
+    json: str = ""
+    tokens: Optional[List[TranscriptionToken]] = None
+    segments: Optional[List[TranscriptionSegment]] = None
