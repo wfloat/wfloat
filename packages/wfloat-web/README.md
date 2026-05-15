@@ -173,6 +173,13 @@ The smoke page exercises:
 - `espeak-ng-data` zip staging
 - model download
 - browser TTS synthesis and playback controls
+- optional browser STT loading and transcription from an uploaded audio file
+
+Current note: the local STT smoke path depends on the asset API returning the
+uploaded Whisper tiny English files now stored at:
+- `models/openai/whisper-tiny-en/tiny.en-encoder.int8.onnx`
+- `models/openai/whisper-tiny-en/tiny.en-decoder.int8.onnx`
+- `models/openai/whisper-tiny-en/tiny.en-tokens.txt`
 
 ## Browser note
 

@@ -378,12 +378,42 @@ async function writeModuleFileFromUrl(
   targetName: string,
 ): Promise<void> {
   const response = await fetch(remoteUrl);
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     throw new Error(`Failed to fetch ${targetName}.`);
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  module.FS.writeFile(`/${targetName}`, bytes);
+  const targetPath = `/${targetName}`;
+  const reader = response.body.getReader();
+  let fileStream: ReturnType<SherpaModule["FS"]["open"]> | null = null;
+  let writePosition = 0;
+
+  try {
+    fileStream = module.FS.open(targetPath, "w+");
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!value || value.length === 0) {
+        continue;
+      }
+
+      module.FS.write(fileStream, value, 0, value.length, writePosition);
+      writePosition += value.length;
+    }
+  } catch (error) {
+    if (fsPathExists(module, targetPath)) {
+      module.FS.unlink(targetPath);
+    }
+    throw error;
+  } finally {
+    if (fileStream) {
+      module.FS.close(fileStream);
+    }
+    reader.releaseLock();
+  }
 }
 
 function coerceNumberArray(value: unknown): number[] {

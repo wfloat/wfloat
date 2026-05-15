@@ -12,6 +12,48 @@
 
 extern "C" {
 
+static_assert(sizeof(SherpaOnnxOfflineTransducerModelConfig) == 3 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineParaformerModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineZipformerCtcModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineWenetCtcModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineOmnilingualAsrCtcModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineMedAsrCtcModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineFunASRNanoModelConfig) == 13 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineDolphinModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineNemoEncDecCtcModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineWhisperModelConfig) == 7 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineFireRedAsrModelConfig) == 2 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineMoonshineModelConfig) == 4 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineTdnnModelConfig) == 4, "");
+static_assert(sizeof(SherpaOnnxOfflineSenseVoiceModelConfig) == 3 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineCanaryModelConfig) == 5 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineLMConfig) == 2 * 4, "");
+
+static_assert(sizeof(SherpaOnnxOfflineModelConfig) ==
+                  sizeof(SherpaOnnxOfflineTransducerModelConfig) +
+                      sizeof(SherpaOnnxOfflineParaformerModelConfig) +
+                      sizeof(SherpaOnnxOfflineNemoEncDecCtcModelConfig) +
+                      sizeof(SherpaOnnxOfflineWhisperModelConfig) +
+                      sizeof(SherpaOnnxOfflineTdnnModelConfig) + 8 * 4 +
+                      sizeof(SherpaOnnxOfflineSenseVoiceModelConfig) +
+                      sizeof(SherpaOnnxOfflineMoonshineModelConfig) +
+                      sizeof(SherpaOnnxOfflineFireRedAsrModelConfig) +
+                      sizeof(SherpaOnnxOfflineDolphinModelConfig) +
+                      sizeof(SherpaOnnxOfflineZipformerCtcModelConfig) +
+                      sizeof(SherpaOnnxOfflineCanaryModelConfig) +
+                      sizeof(SherpaOnnxOfflineWenetCtcModelConfig) +
+                      sizeof(SherpaOnnxOfflineOmnilingualAsrCtcModelConfig) +
+                      sizeof(SherpaOnnxOfflineMedAsrCtcModelConfig) +
+                      sizeof(SherpaOnnxOfflineFunASRNanoModelConfig),
+              "");
+static_assert(sizeof(SherpaOnnxFeatureConfig) == 2 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineRecognizerConfig) ==
+                  sizeof(SherpaOnnxFeatureConfig) +
+                      sizeof(SherpaOnnxOfflineLMConfig) +
+                      sizeof(SherpaOnnxOfflineModelConfig) + 7 * 4 +
+                      sizeof(SherpaOnnxHomophoneReplacerConfig),
+              "");
+
 void PrintOfflineTtsConfig(SherpaOnnxOfflineTtsConfig *tts_config) {
   auto tts_model_config = &tts_config->model;
   auto vits_model_config = &tts_model_config->vits;

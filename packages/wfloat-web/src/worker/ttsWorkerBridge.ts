@@ -58,7 +58,15 @@ export class TtsWorkerBridge {
     };
 
     this.worker.onerror = (event: ErrorEvent) => {
-      const error = new Error(event.message || "Worker error");
+      const details = [
+        event.message || "Worker error",
+        event.filename ? `file=${event.filename}` : "",
+        typeof event.lineno === "number" && event.lineno > 0 ? `line=${event.lineno}` : "",
+        typeof event.colno === "number" && event.colno > 0 ? `col=${event.colno}` : "",
+      ]
+        .filter((value) => value.length > 0)
+        .join(" ");
+      const error = new Error(details || "Worker error");
       for (const [id, pendingRequest] of this.pending.entries()) {
         this.pending.delete(id);
         pendingRequest.reject(error);

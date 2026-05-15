@@ -23,7 +23,7 @@
     "esbuild": "^0.20.0"
   },
   "scripts": {
-    "build": "tsc && node scripts/build-worker-inline.mjs && bash scripts/copy-runtime-assets.sh"
+    "build": "node scripts/clean-dist.mjs && tsc && node scripts/build-worker-inline.mjs && bash scripts/copy-runtime-assets.sh"
   },
   "author": "",
   "license": "MIT"

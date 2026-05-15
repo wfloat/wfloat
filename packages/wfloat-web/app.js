@@ -1,4 +1,4 @@
-import { loadTtsModel } from "./dist/index.js";
+import { loadSttModel, loadTtsModel } from "./dist/index.js";
 
 const elements = {
   assetHost: document.getElementById("assetHost"),
@@ -16,6 +16,16 @@ const elements = {
   progress: document.getElementById("progress"),
   speed: document.getElementById("speed"),
   stop: document.getElementById("stop"),
+  sttAudio: document.getElementById("sttAudio"),
+  sttLanguage: document.getElementById("sttLanguage"),
+  sttModelId: document.getElementById("sttModelId"),
+  sttProgress: document.getElementById("sttProgress"),
+  sttSummary: document.getElementById("sttSummary"),
+  sttTask: document.getElementById("sttTask"),
+  sttTiming: document.getElementById("sttTiming"),
+  transcript: document.getElementById("transcript"),
+  transcribe: document.getElementById("transcribe"),
+  loadStt: document.getElementById("loadStt"),
   summary: document.getElementById("summary"),
   text: document.getElementById("text"),
   timing: document.getElementById("timing"),
@@ -23,13 +33,30 @@ const elements = {
 };
 
 let ttsModel = null;
+let sttModel = null;
 let lastResult = null;
+
+function formatError(error) {
+  if (error instanceof Error) {
+    return error.stack || `${error.name}: ${error.message}`;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
+}
 
 function appendLog(message, payload) {
   const lines = [`[${new Date().toLocaleTimeString()}] ${message}`];
 
   if (payload !== undefined) {
-    lines.push(typeof payload === "string" ? payload : JSON.stringify(payload, null, 2));
+    lines.push(typeof payload === "string" ? payload : formatError(payload));
   }
 
   elements.log.textContent = `${lines.join("\n")}\n\n${elements.log.textContent}`.trim();
@@ -49,6 +76,11 @@ function setButtons({ loaded, busy }) {
   elements.play.disabled = !loaded;
   elements.pause.disabled = !loaded;
   elements.stop.disabled = !loaded;
+}
+
+function setSttButtons({ loaded, busy }) {
+  elements.loadStt.disabled = busy;
+  elements.transcribe.disabled = !loaded || busy;
 }
 
 function readSynthesisOptions() {
@@ -99,7 +131,7 @@ async function loadModel() {
     ttsModel = null;
     setSummary("Model load failed");
     setButtons({ loaded: false, busy: false });
-    appendLog("Load failed", String(error));
+    appendLog("Load failed", error);
     throw error;
   }
 }
@@ -145,10 +177,103 @@ async function synthesize() {
     });
   } catch (error) {
     setSummary("Synthesis failed");
-    appendLog("Synthesis failed", String(error));
+    appendLog("Synthesis failed", error);
     throw error;
   } finally {
     setButtons({ loaded: Boolean(ttsModel), busy: false });
+  }
+}
+
+async function loadStt() {
+  setSttButtons({ loaded: false, busy: true });
+  elements.sttSummary.textContent = "Loading STT model";
+  elements.sttProgress.value = 0;
+
+  const modelId = elements.sttModelId.value.trim();
+  const modelAssetHost = elements.assetHost.value.trim();
+  const language = elements.sttLanguage.value.trim() || undefined;
+  const task = elements.sttTask.value;
+
+  appendLog("Loading STT model", { language, modelAssetHost, modelId, task });
+
+  try {
+    sttModel = await loadSttModel(modelId, {
+      language,
+      modelAssetHost,
+      task,
+      onProgress(event) {
+        if (event.status === "downloading") {
+          elements.sttSummary.textContent = `Downloading model ${Math.round(event.progress * 100)}%`;
+          elements.sttProgress.value = event.progress * 100;
+        } else if (event.status === "loading") {
+          elements.sttSummary.textContent = "Initializing runtime";
+          elements.sttProgress.value = 100;
+        } else if (event.status === "completed") {
+          elements.sttSummary.textContent = "Model ready";
+          elements.sttProgress.value = 100;
+        }
+
+        appendLog("STT load progress", event);
+      },
+    });
+
+    elements.sttSummary.textContent = "Model ready";
+    setSttButtons({ loaded: true, busy: false });
+    appendLog("STT model loaded");
+  } catch (error) {
+    sttModel = null;
+    elements.sttSummary.textContent = "STT load failed";
+    setSttButtons({ loaded: false, busy: false });
+    appendLog("STT load failed", error);
+    throw error;
+  }
+}
+
+async function transcribe() {
+  if (!sttModel) {
+    appendLog("Cannot transcribe before loading the STT model");
+    return;
+  }
+
+  const file = elements.sttAudio.files?.[0];
+  if (!file) {
+    appendLog("Cannot transcribe without choosing an audio file");
+    return;
+  }
+
+  setSttButtons({ loaded: true, busy: true });
+  elements.sttSummary.textContent = "Transcribing";
+  elements.sttProgress.value = 0;
+  elements.transcript.textContent = "";
+
+  const startedAt = performance.now();
+  appendLog("STT transcription request", {
+    modelId: elements.sttModelId.value.trim(),
+    name: file.name,
+    size: file.size,
+    type: file.type,
+  });
+
+  try {
+    const result = await sttModel.transcribe({ audio: file });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    elements.sttSummary.textContent = "Transcription complete";
+    elements.sttTiming.textContent = `${elapsedMs} ms`;
+    elements.sttProgress.value = 100;
+    elements.transcript.textContent = result.text || "(empty transcript)";
+    appendLog("STT result", {
+      language: result.language,
+      modelId: result.modelId,
+      text: result.text,
+      tokens: result.tokens?.length ?? 0,
+      segments: result.segments?.length ?? 0,
+    });
+  } catch (error) {
+    elements.sttSummary.textContent = "Transcription failed";
+    appendLog("STT transcription failed", error);
+    throw error;
+  } finally {
+    setSttButtons({ loaded: Boolean(sttModel), busy: false });
   }
 }
 
@@ -163,7 +288,7 @@ function safeCall(name, fn) {
       await fn();
       appendLog(name);
     } catch (error) {
-      appendLog(`${name} failed`, String(error));
+      appendLog(`${name} failed`, error);
       throw error;
     }
   };
@@ -175,6 +300,12 @@ elements.load.addEventListener("click", () => {
 
 elements.generate.addEventListener("click", () => {
   synthesize().catch(() => {});
+});
+elements.loadStt.addEventListener("click", () => {
+  loadStt().catch(() => {});
+});
+elements.transcribe.addEventListener("click", () => {
+  transcribe().catch(() => {});
 });
 
 elements.play.addEventListener("click", safeCall("play", () => ttsModel.play()));
@@ -189,5 +320,7 @@ elements.clearLog.addEventListener("click", () => {
 appendLog("Smoke page ready", {
   modelAssetHost: elements.assetHost.value,
   modelId: elements.modelId.value,
+  sttModelId: elements.sttModelId.value,
 });
 setButtons({ loaded: false, busy: false });
+setSttButtons({ loaded: false, busy: false });
