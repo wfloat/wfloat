@@ -5,6 +5,7 @@
 #import <math.h>
 #import <sherpa-onnx/c-api/c-api.h>
 #import <string.h>
+#include <vector>
 
 typedef NS_ENUM(NSInteger, WfloatLoadModelDownloadPhase) {
   WfloatLoadModelDownloadPhaseNone = 0,
@@ -75,9 +76,13 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 
 @interface Wfloat () <NSURLSessionDownloadDelegate>
 @property (nonatomic, assign) const SherpaOnnxOfflineTts *tts;
+@property (nonatomic, assign) const SherpaOnnxOfflineRecognizer *offlineRecognizer;
+@property (nonatomic, assign) const SherpaOnnxOnlineRecognizer *onlineRecognizer;
 @property (nonatomic, copy) NSString *loadedModelPath;
 @property (nonatomic, copy) NSString *loadedTokensPath;
 @property (nonatomic, copy) NSString *loadedDataDir;
+@property (nonatomic, copy) NSString *loadedSttModelId;
+@property (nonatomic, copy) NSString *loadedSttFamily;
 @property (strong, nonatomic) NSURLSession *loadModelSession;
 @property (nonatomic, copy) RCTPromiseResolveBlock loadModelResolve;
 @property (nonatomic, copy) RCTPromiseRejectBlock loadModelReject;
@@ -99,6 +104,9 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 @property (nonatomic, assign) NSUInteger totalPlannedDownloadCount;
 @property (nonatomic, assign) float lastEmittedDownloadProgress;
 @property (nonatomic, strong) WfloatSpeechSession *speechSession;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSValue *> *sttSessions;
+@property (nonatomic, assign) NSInteger nextSttSessionId;
+@property (nonatomic, assign) BOOL sttLoadInProgress;
 @property (nonatomic) dispatch_queue_t workQueue;
 
 @end
@@ -117,10 +125,21 @@ RCT_EXPORT_MODULE()
 - (void)dealloc {
   [self.speechSession cancel];
   self.speechSession = nil;
+  [self closeAllSttSessions];
 
   if (self.tts) {
     SherpaOnnxDestroyOfflineTts(self.tts);
     self.tts = nil;
+  }
+
+  if (self.offlineRecognizer) {
+    SherpaOnnxDestroyOfflineRecognizer(self.offlineRecognizer);
+    self.offlineRecognizer = nil;
+  }
+
+  if (self.onlineRecognizer) {
+    SherpaOnnxDestroyOnlineRecognizer(self.onlineRecognizer);
+    self.onlineRecognizer = nil;
   }
 
   [self.loadModelSession invalidateAndCancel];
@@ -132,6 +151,14 @@ RCT_EXPORT_MODULE()
   }
 
   return _workQueue;
+}
+
+- (NSMutableDictionary<NSNumber *, NSValue *> *)sttSessions {
+  if (_sttSessions == nil) {
+    _sttSessions = [NSMutableDictionary dictionary];
+  }
+
+  return _sttSessions;
 }
 
 - (BOOL)ensureDirectoryExistsAtPath:(NSString *)path error:(NSError **)error {
@@ -641,6 +668,216 @@ RCT_EXPORT_MODULE()
   return YES;
 }
 
+- (void)closeAllSttSessions {
+  for (NSValue *value in self.sttSessions.allValues) {
+    const SherpaOnnxOnlineStream *stream =
+        (const SherpaOnnxOnlineStream *)value.pointerValue;
+    if (stream) {
+      SherpaOnnxDestroyOnlineStream(stream);
+    }
+  }
+  [self.sttSessions removeAllObjects];
+}
+
+- (const SherpaOnnxOnlineStream *)streamForSessionId:(NSInteger)sessionId {
+  NSValue *value = self.sttSessions[@(sessionId)];
+  return value ? (const SherpaOnnxOnlineStream *)value.pointerValue : nil;
+}
+
+- (BOOL)downloadURLString:(NSString *)urlString
+                   toPath:(NSString *)destinationPath
+                    error:(NSError **)error {
+  NSURL *url = [NSURL URLWithString:urlString];
+  if (!url) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:301
+                               userInfo:@{NSLocalizedDescriptionKey : @"Invalid STT asset URL."}];
+    }
+    return NO;
+  }
+
+  NSData *data = [NSData dataWithContentsOfURL:url options:0 error:error];
+  if (!data) {
+    return NO;
+  }
+
+  NSString *parent = [destinationPath stringByDeletingLastPathComponent];
+  if (![self ensureDirectoryExistsAtPath:parent error:error]) {
+    return NO;
+  }
+
+  return [data writeToFile:destinationPath options:NSDataWritingAtomic error:error];
+}
+
+- (BOOL)loadOfflineWhisperWithEncoderPath:(NSString *)encoderPath
+                              decoderPath:(NSString *)decoderPath
+                               tokensPath:(NSString *)tokensPath
+                                 language:(NSString *)language
+                                     task:(NSString *)task
+                                  modelId:(NSString *)modelId
+                                    error:(NSError **)error {
+  SherpaOnnxOfflineRecognizerConfig config;
+  memset(&config, 0, sizeof(config));
+  config.feat_config.sample_rate = 16000;
+  config.feat_config.feature_dim = 80;
+  config.model_config.whisper.encoder = encoderPath.UTF8String;
+  config.model_config.whisper.decoder = decoderPath.UTF8String;
+  config.model_config.whisper.language = language.UTF8String;
+  config.model_config.whisper.task = task.UTF8String;
+  config.model_config.whisper.tail_paddings = 1000;
+  config.model_config.tokens = tokensPath.UTF8String;
+  config.model_config.num_threads = 1;
+  config.model_config.debug = 0;
+  config.model_config.provider = "cpu";
+  config.model_config.model_type = "whisper";
+  config.decoding_method = "greedy_search";
+  config.max_active_paths = 4;
+  config.hotwords_score = 1.5f;
+  config.blank_penalty = 0.0f;
+
+  const SherpaOnnxOfflineRecognizer *recognizer =
+      SherpaOnnxCreateOfflineRecognizer(&config);
+  if (!recognizer) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:302
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey : @"Failed to initialize offline STT model.",
+                               }];
+    }
+    return NO;
+  }
+
+  if (self.offlineRecognizer) {
+    SherpaOnnxDestroyOfflineRecognizer(self.offlineRecognizer);
+  }
+  if (self.onlineRecognizer) {
+    SherpaOnnxDestroyOnlineRecognizer(self.onlineRecognizer);
+    self.onlineRecognizer = nil;
+  }
+
+  [self closeAllSttSessions];
+  self.offlineRecognizer = recognizer;
+  self.loadedSttModelId = modelId;
+  self.loadedSttFamily = @"whisper";
+  return YES;
+}
+
+- (BOOL)loadStreamingZipformerWithEncoderPath:(NSString *)encoderPath
+                                  decoderPath:(NSString *)decoderPath
+                                   joinerPath:(NSString *)joinerPath
+                                   tokensPath:(NSString *)tokensPath
+                                      modelId:(NSString *)modelId
+                                        error:(NSError **)error {
+  SherpaOnnxOnlineRecognizerConfig config;
+  memset(&config, 0, sizeof(config));
+  config.feat_config.sample_rate = 16000;
+  config.feat_config.feature_dim = 80;
+  config.model_config.transducer.encoder = encoderPath.UTF8String;
+  config.model_config.transducer.decoder = decoderPath.UTF8String;
+  config.model_config.transducer.joiner = joinerPath.UTF8String;
+  config.model_config.tokens = tokensPath.UTF8String;
+  config.model_config.num_threads = 1;
+  config.model_config.provider = "cpu";
+  config.model_config.debug = 0;
+  config.model_config.model_type = "zipformer";
+  config.decoding_method = "greedy_search";
+  config.max_active_paths = 4;
+  config.enable_endpoint = 1;
+  config.rule1_min_trailing_silence = 2.4f;
+  config.rule2_min_trailing_silence = 1.4f;
+  config.rule3_min_utterance_length = 20.0f;
+  config.hotwords_score = 1.5f;
+  config.blank_penalty = 0.0f;
+
+  const SherpaOnnxOnlineRecognizer *recognizer =
+      SherpaOnnxCreateOnlineRecognizer(&config);
+  if (!recognizer) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:303
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey : @"Failed to initialize streaming STT model.",
+                               }];
+    }
+    return NO;
+  }
+
+  if (self.offlineRecognizer) {
+    SherpaOnnxDestroyOfflineRecognizer(self.offlineRecognizer);
+    self.offlineRecognizer = nil;
+  }
+  if (self.onlineRecognizer) {
+    SherpaOnnxDestroyOnlineRecognizer(self.onlineRecognizer);
+  }
+
+  [self closeAllSttSessions];
+  self.onlineRecognizer = recognizer;
+  self.loadedSttModelId = modelId;
+  self.loadedSttFamily = @"zipformer-transducer";
+  return YES;
+}
+
+- (NSDictionary *)offlineTranscriptionResultDictionary:
+                    (const SherpaOnnxOfflineRecognizerResult *)result
+                                              modelId:(NSString *)modelId {
+  NSString* (^toString)(const char *) = ^NSString *(const char *value) {
+    return value ? [NSString stringWithUTF8String:value] : @"";
+  };
+
+  NSMutableArray<NSDictionary *> *tokens = [NSMutableArray array];
+  for (int32_t index = 0; index < result->count; index += 1) {
+    const char *text = result->tokens_arr ? result->tokens_arr[index] : "";
+    float startSec = result->timestamps ? result->timestamps[index] : 0;
+    float durationSec = result->durations ? result->durations[index] : 0;
+    float confidence = result->ys_log_probs ? result->ys_log_probs[index] : 0;
+    [tokens addObject:@{
+      @"text" : toString(text),
+      @"startSec" : @(startSec),
+      @"durationSec" : @(durationSec),
+      @"confidence" : @(confidence),
+    }];
+  }
+
+  NSMutableArray<NSDictionary *> *segments = [NSMutableArray array];
+  for (int32_t index = 0; index < result->segment_count; index += 1) {
+    const char *text = result->segment_texts_arr ? result->segment_texts_arr[index] : "";
+    float startSec = result->segment_timestamps ? result->segment_timestamps[index] : 0;
+    float durationSec = result->segment_durations ? result->segment_durations[index] : 0;
+    [segments addObject:@{
+      @"text" : toString(text),
+      @"startSec" : @(startSec),
+      @"durationSec" : @(durationSec),
+    }];
+  }
+
+  return @{
+    @"text" : toString(result->text),
+    @"modelId" : modelId ?: @"",
+    @"language" : toString(result->lang),
+    @"emotion" : toString(result->emotion),
+    @"event" : toString(result->event),
+    @"json" : toString(result->json),
+    @"tokens" : tokens,
+    @"segments" : segments,
+  };
+}
+
+- (NSDictionary *)streamingTranscriptionResultDictionary:
+                    (const SherpaOnnxOnlineRecognizerResult *)result
+                                             isEndpoint:(BOOL)isEndpoint
+                                                modelId:(NSString *)modelId {
+  NSString *text = result->text ? [NSString stringWithUTF8String:result->text] : @"";
+  NSString *json = result->json ? [NSString stringWithUTF8String:result->json] : @"";
+  return @{
+    @"text" : text,
+    @"modelId" : modelId ?: @"",
+    @"isEndpoint" : @(isEndpoint),
+    @"json" : json,
+  };
+}
+
 - (NSArray<NSString *> *)stringArrayFromValue:(id)value {
   if (![value isKindOfClass:[NSArray class]]) {
     return @[];
@@ -1134,6 +1371,485 @@ RCT_EXPORT_MODULE()
   }
 
   [self finishPendingLoadModel];
+}
+
+- (void)loadSttModel:(JS::NativeWfloat::LoadSttModelNativeOptions &)options
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  NSString *modelId = options.modelId();
+  NSString *family = options.family();
+  if (modelId.length == 0 || family.length == 0) {
+    reject(@"invalid_arguments", @"modelId and family are required.", nil);
+    return;
+  }
+
+  if (self.loadModelResolve != nil || self.loadModelReject != nil || self.sttLoadInProgress) {
+    reject(@"load_in_progress", @"A loadModel operation is already in progress.", nil);
+    return;
+  }
+
+  self.sttLoadInProgress = YES;
+
+  dispatch_async(self.workQueue, ^{
+    @autoreleasepool {
+      NSError *filesystemError = nil;
+      NSString *directoryPath = [self cacheDirectoryForModelId:modelId];
+        if (![self ensureDirectoryExistsAtPath:directoryPath error:&filesystemError]) {
+          dispatch_async(dispatch_get_main_queue(), ^{
+            self.sttLoadInProgress = NO;
+            reject(@"filesystem_error", filesystemError.localizedDescription, filesystemError);
+          });
+          return;
+        }
+
+      NSMutableArray<NSDictionary *> *downloads = [NSMutableArray array];
+      auto addDownload = ^(NSString *label, NSString *urlString) {
+        if (urlString.length == 0) {
+          return;
+        }
+
+        NSError *pathError = nil;
+        NSString *fileName = [self fileNameFromURLString:urlString error:&pathError];
+        if (pathError) {
+          filesystemError = pathError;
+          return;
+        }
+
+        [downloads addObject:@{
+          @"label" : label,
+          @"url" : urlString,
+          @"path" : [directoryPath stringByAppendingPathComponent:fileName],
+        }];
+      };
+
+      if ([family isEqualToString:@"whisper"]) {
+        addDownload(@"tokens", options.tokensUrl() ?: @"");
+        addDownload(@"encoder", options.encoderUrl() ?: @"");
+        addDownload(@"decoder", options.decoderUrl() ?: @"");
+      } else if ([family isEqualToString:@"zipformer-transducer"]) {
+        addDownload(@"tokens", options.tokensUrl() ?: @"");
+        addDownload(@"encoder", options.encoderUrl() ?: @"");
+        addDownload(@"decoder", options.decoderUrl() ?: @"");
+        addDownload(@"joiner", options.joinerUrl() ?: @"");
+      } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          self.sttLoadInProgress = NO;
+          reject(@"invalid_arguments",
+                 [NSString stringWithFormat:@"Unsupported STT family: %@", family],
+                 nil);
+        });
+        return;
+      }
+
+      if (filesystemError) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          self.sttLoadInProgress = NO;
+          reject(@"invalid_url", filesystemError.localizedDescription, filesystemError);
+        });
+        return;
+      }
+
+      NSUInteger totalPlannedDownloadCount = 0;
+      for (NSDictionary *entry in downloads) {
+        if (![[NSFileManager defaultManager] fileExistsAtPath:entry[@"path"]]) {
+          totalPlannedDownloadCount += 1;
+        }
+      }
+
+      __block NSUInteger completedDownloadCount = 0;
+      __block double lastEmittedProgress = -1;
+      void (^emitProgress)(double) = ^(double phaseProgress) {
+        double clamped = MIN(MAX(phaseProgress, 0), 1);
+        double overallProgress = totalPlannedDownloadCount > 0
+                                     ? (completedDownloadCount + clamped) / (double)totalPlannedDownloadCount
+                                     : clamped;
+        if (overallProgress < 1.0 && fabs(lastEmittedProgress - overallProgress) < 0.01) {
+          return;
+        }
+        lastEmittedProgress = overallProgress;
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self emitLoadModelProgressWithStatus:@"downloading" progress:@(overallProgress)];
+        });
+      };
+
+      for (NSDictionary *entry in downloads) {
+        NSString *path = entry[@"path"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+          continue;
+        }
+
+        emitProgress(0.0);
+        NSError *downloadError = nil;
+        if (![self downloadURLString:entry[@"url"] toPath:path error:&downloadError]) {
+          dispatch_async(dispatch_get_main_queue(), ^{
+            self.sttLoadInProgress = NO;
+            reject(@"download_failed",
+                   downloadError.localizedDescription ?: @"Failed to download STT asset.",
+                   downloadError);
+          });
+          return;
+        }
+        completedDownloadCount += 1;
+        emitProgress(1.0);
+      }
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [self emitLoadModelProgressWithStatus:@"loading" progress:nil];
+      });
+
+      NSDictionary *resolved = [NSDictionary dictionaryWithObjectsAndKeys:
+        @"", @"tokens",
+        @"", @"encoder",
+        @"", @"decoder",
+        @"", @"joiner",
+        nil];
+      NSMutableDictionary *resolvedMutable = [resolved mutableCopy];
+      for (NSDictionary *entry in downloads) {
+        resolvedMutable[entry[@"label"]] = entry[@"path"];
+      }
+
+      NSError *loadError = nil;
+      BOOL didLoad = NO;
+      if ([family isEqualToString:@"whisper"]) {
+        NSString *language = options.language().length > 0 ? options.language() : @"en";
+        NSString *task = options.task().length > 0 ? options.task() : @"transcribe";
+        didLoad = [self loadOfflineWhisperWithEncoderPath:resolvedMutable[@"encoder"]
+                                              decoderPath:resolvedMutable[@"decoder"]
+                                               tokensPath:resolvedMutable[@"tokens"]
+                                                 language:language
+                                                     task:task
+                                                  modelId:modelId
+                                                    error:&loadError];
+      } else {
+        didLoad = [self loadStreamingZipformerWithEncoderPath:resolvedMutable[@"encoder"]
+                                                  decoderPath:resolvedMutable[@"decoder"]
+                                                   joinerPath:resolvedMutable[@"joiner"]
+                                                   tokensPath:resolvedMutable[@"tokens"]
+                                                      modelId:modelId
+                                                        error:&loadError];
+      }
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (!didLoad) {
+          self.sttLoadInProgress = NO;
+          reject(@"load_failed", loadError.localizedDescription ?: @"Failed to load STT model.", loadError);
+          return;
+        }
+
+        [self emitLoadModelProgressWithStatus:@"completed" progress:nil];
+        self.sttLoadInProgress = NO;
+        resolve(@{
+          @"family" : family,
+          @"supportsStreaming" : @([family isEqualToString:@"zipformer-transducer"]),
+        });
+      });
+    }
+  });
+}
+
+- (void)transcribe:(JS::NativeWfloat::TranscribeNativeOptions &)options
+           resolve:(RCTPromiseResolveBlock)resolve
+            reject:(RCTPromiseRejectBlock)reject {
+  if (!self.offlineRecognizer && self.onlineRecognizer) {
+    reject(@"invalid_model_mode",
+           @"The loaded STT model supports streaming sessions only. Use createSession() instead of transcribe().",
+           nil);
+    return;
+  }
+
+  if (!self.offlineRecognizer || self.loadedSttModelId.length == 0) {
+    reject(@"not_loaded", @"STT model is not loaded. Call loadSttModel(...) first.", nil);
+    return;
+  }
+
+  double sampleRateValue = options.sampleRate();
+  if (!isfinite(sampleRateValue) || sampleRateValue <= 0 ||
+      floor(sampleRateValue) != sampleRateValue) {
+    reject(@"invalid_arguments", @"sampleRate must be a positive integer.", nil);
+    return;
+  }
+
+  auto nativeSamples = options.samples();
+  if (nativeSamples.size() == 0) {
+    reject(@"invalid_arguments", @"samples is required.", nil);
+    return;
+  }
+
+  std::vector<float> samples;
+  samples.reserve(nativeSamples.size());
+  for (facebook::react::LazyVector<double>::size_type index = 0; index < nativeSamples.size();
+       index += 1) {
+    double value = nativeSamples[index];
+    if (!isfinite(value)) {
+      reject(@"invalid_arguments", @"samples must contain only finite numbers.", nil);
+      return;
+    }
+    samples.push_back((float)value);
+  }
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOfflineStream *stream = SherpaOnnxCreateOfflineStream(self.offlineRecognizer);
+    if (!stream) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"transcribe_failed", @"Failed to create offline STT stream.", nil);
+      });
+      return;
+    }
+
+    SherpaOnnxAcceptWaveformOffline(stream, (int32_t)sampleRateValue, samples.data(), (int32_t)samples.size());
+    SherpaOnnxDecodeOfflineStream(self.offlineRecognizer, stream);
+    const SherpaOnnxOfflineRecognizerResult *result = SherpaOnnxGetOfflineStreamResult(stream);
+
+    NSDictionary *payload = result
+        ? [self offlineTranscriptionResultDictionary:result modelId:self.loadedSttModelId]
+        : nil;
+
+    if (result) {
+      SherpaOnnxDestroyOfflineRecognizerResult(result);
+    }
+    SherpaOnnxDestroyOfflineStream(stream);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!payload) {
+        reject(@"transcribe_failed", @"Failed to transcribe audio.", nil);
+        return;
+      }
+      resolve(payload);
+    });
+  });
+}
+
+- (void)createSttSession:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  if (!self.onlineRecognizer || self.loadedSttModelId.length == 0) {
+    reject(@"not_loaded",
+           @"Streaming STT model is not loaded. Call loadSttModel(...) with a streaming-capable model first.",
+           nil);
+    return;
+  }
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = SherpaOnnxCreateOnlineStream(self.onlineRecognizer);
+    if (!stream) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"session_create_failed", @"Failed to create STT session.", nil);
+      });
+      return;
+    }
+
+    if (self.nextSttSessionId <= 0) {
+      self.nextSttSessionId = 1;
+    }
+    NSInteger sessionId = self.nextSttSessionId;
+    self.nextSttSessionId += 1;
+    self.sttSessions[@(sessionId)] = [NSValue valueWithPointer:stream];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      resolve(@(sessionId));
+    });
+  });
+}
+
+- (void)pushSttSessionAudio:(JS::NativeWfloat::PushSttSessionAudioNativeOptions &)options
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  if (!self.onlineRecognizer) {
+    reject(@"not_loaded", @"Streaming STT model is not loaded.", nil);
+    return;
+  }
+
+  double sessionIdValue = options.sessionId();
+  double sampleRateValue = options.sampleRate();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue ||
+      !isfinite(sampleRateValue) || sampleRateValue <= 0 || floor(sampleRateValue) != sampleRateValue) {
+    reject(@"invalid_arguments", @"sessionId and sampleRate must be positive integers.", nil);
+    return;
+  }
+
+  auto nativeSamples = options.samples();
+  std::vector<float> samples;
+  samples.reserve(nativeSamples.size());
+  for (facebook::react::LazyVector<double>::size_type index = 0; index < nativeSamples.size();
+       index += 1) {
+    double value = nativeSamples[index];
+    if (!isfinite(value)) {
+      reject(@"invalid_arguments", @"samples must contain only finite numbers.", nil);
+      return;
+    }
+    samples.push_back((float)value);
+  }
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = [self streamForSessionId:(NSInteger)sessionIdValue];
+    if (!stream) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"invalid_arguments", @"Unknown STT session.", nil);
+      });
+      return;
+    }
+
+    SherpaOnnxOnlineStreamAcceptWaveform(stream, (int32_t)sampleRateValue, samples.data(),
+                                         (int32_t)samples.size());
+    while (SherpaOnnxIsOnlineStreamReady(self.onlineRecognizer, stream)) {
+      SherpaOnnxDecodeOnlineStream(self.onlineRecognizer, stream);
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      resolve(nil);
+    });
+  });
+}
+
+- (void)getSttSessionResult:(JS::NativeWfloat::SttSessionNativeOptions &)options
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  if (!self.onlineRecognizer || self.loadedSttModelId.length == 0) {
+    reject(@"not_loaded", @"Streaming STT model is not loaded.", nil);
+    return;
+  }
+
+  double sessionIdValue = options.sessionId();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue) {
+    reject(@"invalid_arguments", @"sessionId must be a non-negative integer.", nil);
+    return;
+  }
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = [self streamForSessionId:(NSInteger)sessionIdValue];
+    if (!stream) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"invalid_arguments", @"Unknown STT session.", nil);
+      });
+      return;
+    }
+
+    while (SherpaOnnxIsOnlineStreamReady(self.onlineRecognizer, stream)) {
+      SherpaOnnxDecodeOnlineStream(self.onlineRecognizer, stream);
+    }
+
+    const SherpaOnnxOnlineRecognizerResult *result =
+        SherpaOnnxGetOnlineStreamResult(self.onlineRecognizer, stream);
+    NSDictionary *payload = result
+        ? [self streamingTranscriptionResultDictionary:result
+                                            isEndpoint:SherpaOnnxOnlineStreamIsEndpoint(
+                                                           self.onlineRecognizer, stream)
+                                               modelId:self.loadedSttModelId]
+        : nil;
+    if (result) {
+      SherpaOnnxDestroyOnlineRecognizerResult(result);
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!payload) {
+        reject(@"session_result_failed", @"Failed to get STT session result.", nil);
+        return;
+      }
+      resolve(payload);
+    });
+  });
+}
+
+- (void)finishSttSession:(JS::NativeWfloat::SttSessionNativeOptions &)options
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  if (!self.onlineRecognizer || self.loadedSttModelId.length == 0) {
+    reject(@"not_loaded", @"Streaming STT model is not loaded.", nil);
+    return;
+  }
+
+  double sessionIdValue = options.sessionId();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue) {
+    reject(@"invalid_arguments", @"sessionId must be a non-negative integer.", nil);
+    return;
+  }
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = [self streamForSessionId:(NSInteger)sessionIdValue];
+    if (!stream) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"invalid_arguments", @"Unknown STT session.", nil);
+      });
+      return;
+    }
+
+    SherpaOnnxOnlineStreamInputFinished(stream);
+    while (SherpaOnnxIsOnlineStreamReady(self.onlineRecognizer, stream)) {
+      SherpaOnnxDecodeOnlineStream(self.onlineRecognizer, stream);
+    }
+
+    const SherpaOnnxOnlineRecognizerResult *result =
+        SherpaOnnxGetOnlineStreamResult(self.onlineRecognizer, stream);
+    NSDictionary *payload = result
+        ? [self streamingTranscriptionResultDictionary:result
+                                            isEndpoint:SherpaOnnxOnlineStreamIsEndpoint(
+                                                           self.onlineRecognizer, stream)
+                                               modelId:self.loadedSttModelId]
+        : nil;
+    if (result) {
+      SherpaOnnxDestroyOnlineRecognizerResult(result);
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!payload) {
+        reject(@"session_finish_failed", @"Failed to finish STT session.", nil);
+        return;
+      }
+      resolve(payload);
+    });
+  });
+}
+
+- (void)resetSttSession:(JS::NativeWfloat::SttSessionNativeOptions &)options
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  if (!self.onlineRecognizer) {
+    reject(@"not_loaded", @"Streaming STT model is not loaded.", nil);
+    return;
+  }
+
+  double sessionIdValue = options.sessionId();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue) {
+    reject(@"invalid_arguments", @"sessionId must be a non-negative integer.", nil);
+    return;
+  }
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = [self streamForSessionId:(NSInteger)sessionIdValue];
+    if (!stream) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"invalid_arguments", @"Unknown STT session.", nil);
+      });
+      return;
+    }
+
+    SherpaOnnxOnlineStreamReset(self.onlineRecognizer, stream);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      resolve(nil);
+    });
+  });
+}
+
+- (void)closeSttSession:(JS::NativeWfloat::SttSessionNativeOptions &)options
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  double sessionIdValue = options.sessionId();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue) {
+    reject(@"invalid_arguments", @"sessionId must be a non-negative integer.", nil);
+    return;
+  }
+
+  dispatch_async(self.workQueue, ^{
+    NSNumber *key = @((NSInteger)sessionIdValue);
+    NSValue *value = self.sttSessions[key];
+    if (value) {
+      const SherpaOnnxOnlineStream *stream =
+          (const SherpaOnnxOnlineStream *)value.pointerValue;
+      SherpaOnnxDestroyOnlineStream(stream);
+      [self.sttSessions removeObjectForKey:key];
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      resolve(nil);
+    });
+  });
 }
 
 - (void)generate:(JS::NativeWfloat::GenerateNativeOptions &)options

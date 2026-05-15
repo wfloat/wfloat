@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from ._results import TranscriptionResult
+from ._results import StreamingTranscriptionResult, TranscriptionResult
 
 
 def _coerce_audio_samples(audio: bytes | Sequence[float]) -> list[float]:
@@ -40,6 +40,45 @@ def _load_wav_audio(path: Path) -> tuple[list[float], int]:
 
 
 @dataclass
+class SttSession:
+    model_id: str
+    _native_session: object
+
+    def push(
+        self,
+        audio: Sequence[float],
+        *,
+        sample_rate: Optional[int] = None,
+    ) -> None:
+        if not hasattr(self._native_session, "push"):
+            raise RuntimeError("Native STT backend does not support push().")
+
+        self._native_session.push(audio, sample_rate=sample_rate)
+
+    def get_result(self) -> StreamingTranscriptionResult:
+        if not hasattr(self._native_session, "get_result"):
+            raise RuntimeError("Native STT backend does not support get_result().")
+
+        return self._native_session.get_result()
+
+    def finish(self) -> StreamingTranscriptionResult:
+        if not hasattr(self._native_session, "finish"):
+            raise RuntimeError("Native STT backend does not support finish().")
+
+        return self._native_session.finish()
+
+    def reset(self) -> None:
+        if not hasattr(self._native_session, "reset"):
+            raise RuntimeError("Native STT backend does not support reset().")
+
+        self._native_session.reset()
+
+    def close(self) -> None:
+        if hasattr(self._native_session, "close"):
+            self._native_session.close()
+
+
+@dataclass
 class SttModel:
     model_id: str
     _native_stt: object
@@ -71,4 +110,13 @@ class SttModel:
             language=language,
             task=task,
             hotwords=hotwords,
+        )
+
+    def create_session(self) -> SttSession:
+        if not hasattr(self._native_stt, "create_session"):
+            raise RuntimeError("Native STT backend does not support create_session().")
+
+        return SttSession(
+            model_id=self.model_id,
+            _native_session=self._native_stt.create_session(),
         )

@@ -53,6 +53,14 @@ struct wfloat_stt_model {
   int32_t sample_rate = 16000;
   int32_t supports_language_override = 0;
   const SherpaOnnxOfflineRecognizer *recognizer = nullptr;
+  const SherpaOnnxOnlineRecognizer *online_recognizer = nullptr;
+  size_t active_session_count = 0;
+  bool destroy_pending = false;
+};
+
+struct wfloat_stt_session {
+  wfloat_stt_model_t *model = nullptr;
+  const SherpaOnnxOnlineStream *stream = nullptr;
 };
 
 namespace {
@@ -67,6 +75,9 @@ constexpr int32_t kDefaultSampleRate = 16000;
 constexpr int32_t kDefaultFeatureDim = 80;
 constexpr int32_t kDefaultThreads = 1;
 constexpr int32_t kDefaultMaxActivePaths = 4;
+constexpr float kDefaultEndpointRule1MinTrailingSilence = 2.4f;
+constexpr float kDefaultEndpointRule2MinTrailingSilence = 1.2f;
+constexpr float kDefaultEndpointRule3MinUtteranceLength = 20.0f;
 
 struct OwnedTranscriptionResult {
   wfloat_stt_transcription_result_t base{};
@@ -105,6 +116,21 @@ struct OwnedTranscriptionResult {
   }
 };
 
+struct OwnedSessionResult {
+  wfloat_stt_session_result_t base{};
+  std::string model_id;
+  std::string text;
+  std::string json;
+  int32_t is_endpoint = 0;
+
+  void Finalize() {
+    base.model_id = model_id.c_str();
+    base.text = text.c_str();
+    base.json = json.empty() ? nullptr : json.c_str();
+    base.is_endpoint = is_endpoint;
+  }
+};
+
 std::string OrEmpty(const char *value) {
   return value ? std::string(value) : std::string();
 }
@@ -131,6 +157,8 @@ const char *FamilyName(wfloat_stt_family_t family) {
       return "parakeet-ctc";
     case WFLOAT_STT_FAMILY_PARAKEET_TDT:
       return "parakeet-tdt";
+    case WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER:
+      return "zipformer-transducer";
     case WFLOAT_STT_FAMILY_UNKNOWN:
     default:
       return "unknown";
@@ -157,6 +185,11 @@ uint64_t FeatureFlagsForConfig(const StoredSttConfig &config) {
     case WFLOAT_STT_FAMILY_PARAKEET_TDT:
       flags |= WFLOAT_STT_FEATURE_TIMESTAMPS;
       flags |= WFLOAT_STT_FEATURE_DURATIONS;
+      break;
+    case WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER:
+      flags |= WFLOAT_STT_FEATURE_TIMESTAMPS;
+      flags |= WFLOAT_STT_FEATURE_EVENTS;
+      flags |= WFLOAT_STT_FEATURE_STREAMING;
       break;
     case WFLOAT_STT_FAMILY_UNKNOWN:
     default:
@@ -192,6 +225,12 @@ int32_t ValidateConfig(const StoredSttConfig &config) {
       }
       break;
     case WFLOAT_STT_FAMILY_PARAKEET_TDT:
+      if (config.encoder_path.empty() || config.decoder_path.empty() ||
+          config.joiner_path.empty()) {
+        return kStatusInvalidArgument;
+      }
+      break;
+    case WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER:
       if (config.encoder_path.empty() || config.decoder_path.empty() ||
           config.joiner_path.empty()) {
         return kStatusInvalidArgument;
@@ -291,6 +330,7 @@ SherpaOnnxOfflineRecognizerConfig BuildRecognizerConfig(
       recognizer_config.model_config.transducer.joiner =
           config.joiner_path.c_str();
       break;
+    case WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER:
     case WFLOAT_STT_FAMILY_UNKNOWN:
     default:
       break;
@@ -306,8 +346,75 @@ SherpaOnnxOfflineRecognizerConfig BuildRecognizerConfig(
   return recognizer_config;
 }
 
+SherpaOnnxOnlineRecognizerConfig BuildOnlineRecognizerConfig(
+    const StoredSttConfig &config) {
+  SherpaOnnxOnlineRecognizerConfig recognizer_config;
+  memset(&recognizer_config, 0, sizeof(recognizer_config));
+
+  recognizer_config.feat_config.sample_rate = config.sample_rate;
+  recognizer_config.feat_config.feature_dim = config.feat_dim;
+
+  recognizer_config.model_config.tokens = config.tokens_path.c_str();
+  recognizer_config.model_config.num_threads = config.num_threads;
+  recognizer_config.model_config.provider = config.provider.c_str();
+  recognizer_config.model_config.debug = config.debug;
+  recognizer_config.model_config.model_type = "";
+  recognizer_config.model_config.modeling_unit = "cjkchar";
+  recognizer_config.model_config.bpe_vocab = "";
+  recognizer_config.model_config.tokens_buf = "";
+  recognizer_config.model_config.tokens_buf_size = 0;
+  recognizer_config.model_config.nemo_ctc.model = "";
+  recognizer_config.model_config.t_one_ctc.model = "";
+
+  switch (config.family) {
+    case WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER:
+      recognizer_config.model_config.transducer.encoder =
+          config.encoder_path.c_str();
+      recognizer_config.model_config.transducer.decoder =
+          config.decoder_path.c_str();
+      recognizer_config.model_config.transducer.joiner =
+          config.joiner_path.c_str();
+      break;
+    case WFLOAT_STT_FAMILY_UNKNOWN:
+    case WFLOAT_STT_FAMILY_WHISPER:
+    case WFLOAT_STT_FAMILY_MOONSHINE:
+    case WFLOAT_STT_FAMILY_PARAKEET_CTC:
+    case WFLOAT_STT_FAMILY_PARAKEET_TDT:
+    default:
+      break;
+  }
+
+  recognizer_config.decoding_method = "greedy_search";
+  recognizer_config.max_active_paths = config.max_active_paths;
+  recognizer_config.enable_endpoint = 1;
+  recognizer_config.rule1_min_trailing_silence =
+      kDefaultEndpointRule1MinTrailingSilence;
+  recognizer_config.rule2_min_trailing_silence =
+      kDefaultEndpointRule2MinTrailingSilence;
+  recognizer_config.rule3_min_utterance_length =
+      kDefaultEndpointRule3MinUtteranceLength;
+  recognizer_config.hotwords_file = config.hotwords_file.c_str();
+  recognizer_config.hotwords_score = config.hotwords_score;
+  recognizer_config.ctc_fst_decoder_config.graph = "";
+  recognizer_config.ctc_fst_decoder_config.max_active = 3000;
+  recognizer_config.rule_fsts = config.rule_fsts.c_str();
+  recognizer_config.rule_fars = config.rule_fars.c_str();
+  recognizer_config.blank_penalty = config.blank_penalty;
+  recognizer_config.hotwords_buf = "";
+  recognizer_config.hotwords_buf_size = 0;
+  recognizer_config.hr.dict_dir = "";
+  recognizer_config.hr.lexicon = "";
+  recognizer_config.hr.rule_fsts = "";
+
+  return recognizer_config;
+}
+
 int32_t SetRecognizerConfig(wfloat_stt_model_t *model, const char *language,
                             const char *task) {
+  if (!model->recognizer) {
+    return kStatusNotSupported;
+  }
+
   SherpaOnnxOfflineRecognizerConfig config =
       BuildRecognizerConfig(model->config, language, task);
   SherpaOnnxOfflineRecognizerSetConfig(model->recognizer, &config);
@@ -366,6 +473,98 @@ int32_t PopulateResult(const wfloat_stt_model_t *model,
   return kStatusOk;
 }
 
+int32_t PopulateSessionResult(const wfloat_stt_model_t *model,
+                              const SherpaOnnxOnlineRecognizerResult *result,
+                              int32_t is_endpoint,
+                              OwnedSessionResult *out) {
+  if (!model || !result || !out) {
+    return kStatusInvalidArgument;
+  }
+
+  out->model_id = model->config.model_id;
+  out->text = result->text ? result->text : "";
+  out->json = result->json ? result->json : "";
+  out->is_endpoint = is_endpoint;
+  out->Finalize();
+  return kStatusOk;
+}
+
+void DestroyModelStorage(wfloat_stt_model_t *model) {
+  if (!model) {
+    return;
+  }
+
+  if (model->recognizer) {
+    SherpaOnnxDestroyOfflineRecognizer(model->recognizer);
+    model->recognizer = nullptr;
+  }
+
+  if (model->online_recognizer) {
+    SherpaOnnxDestroyOnlineRecognizer(model->online_recognizer);
+    model->online_recognizer = nullptr;
+  }
+
+  delete model;
+}
+
+void MaybeDestroyPendingModel(wfloat_stt_model_t *model) {
+  if (!model) {
+    return;
+  }
+
+  if (model->destroy_pending && model->active_session_count == 0) {
+    DestroyModelStorage(model);
+  }
+}
+
+int32_t DecodeOnlineSession(const wfloat_stt_session_t *session) {
+  if (!session || !session->model || !session->stream ||
+      !session->model->online_recognizer) {
+    return kStatusInvalidArgument;
+  }
+
+  while (SherpaOnnxIsOnlineStreamReady(session->model->online_recognizer,
+                                       session->stream)) {
+    SherpaOnnxDecodeOnlineStream(session->model->online_recognizer,
+                                 session->stream);
+  }
+
+  return kStatusOk;
+}
+
+int32_t BuildSessionResult(wfloat_stt_session_t *session,
+                           wfloat_stt_session_result_t **out_result) {
+  if (!session || !out_result || !session->model || !session->stream ||
+      !session->model->online_recognizer) {
+    return kStatusInvalidArgument;
+  }
+
+  *out_result = nullptr;
+
+  const SherpaOnnxOnlineRecognizerResult *recognizer_result =
+      SherpaOnnxGetOnlineStreamResult(session->model->online_recognizer,
+                                     session->stream);
+  if (!recognizer_result) {
+    return kStatusBackendError;
+  }
+
+  const int32_t is_endpoint = SherpaOnnxOnlineStreamIsEndpoint(
+      session->model->online_recognizer, session->stream);
+
+  std::unique_ptr<OwnedSessionResult> owned(new OwnedSessionResult);
+  int32_t populate_status = PopulateSessionResult(
+      session->model, recognizer_result, is_endpoint, owned.get());
+
+  SherpaOnnxDestroyOnlineRecognizerResult(recognizer_result);
+
+  if (populate_status != kStatusOk) {
+    return populate_status;
+  }
+
+  *out_result = &owned.release()->base;
+  return kStatusOk;
+}
+
 }  // namespace
 
 int32_t wfloat_stt_model_create(const wfloat_stt_model_config_t *config,
@@ -382,14 +581,6 @@ int32_t wfloat_stt_model_create(const wfloat_stt_model_config_t *config,
     return validation_status;
   }
 
-  SherpaOnnxOfflineRecognizerConfig recognizer_config =
-      BuildRecognizerConfig(stored, nullptr, nullptr);
-  const SherpaOnnxOfflineRecognizer *recognizer =
-      SherpaOnnxCreateOfflineRecognizer(&recognizer_config);
-  if (!recognizer) {
-    return kStatusBackendError;
-  }
-
   std::unique_ptr<wfloat_stt_model_t> model(new wfloat_stt_model_t);
   model->config = std::move(stored);
   model->family_name = FamilyName(model->config.family);
@@ -397,7 +588,23 @@ int32_t wfloat_stt_model_create(const wfloat_stt_model_config_t *config,
   model->sample_rate = model->config.sample_rate;
   model->supports_language_override =
       model->config.family == WFLOAT_STT_FAMILY_WHISPER ? 1 : 0;
-  model->recognizer = recognizer;
+
+  if (model->config.family == WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER) {
+    SherpaOnnxOnlineRecognizerConfig recognizer_config =
+        BuildOnlineRecognizerConfig(model->config);
+    model->online_recognizer =
+        SherpaOnnxCreateOnlineRecognizer(&recognizer_config);
+    if (!model->online_recognizer) {
+      return kStatusBackendError;
+    }
+  } else {
+    SherpaOnnxOfflineRecognizerConfig recognizer_config =
+        BuildRecognizerConfig(model->config, nullptr, nullptr);
+    model->recognizer = SherpaOnnxCreateOfflineRecognizer(&recognizer_config);
+    if (!model->recognizer) {
+      return kStatusBackendError;
+    }
+  }
 
   *out_model = model.release();
   return kStatusOk;
@@ -408,12 +615,12 @@ void wfloat_stt_model_destroy(wfloat_stt_model_t *model) {
     return;
   }
 
-  if (model->recognizer) {
-    SherpaOnnxDestroyOfflineRecognizer(model->recognizer);
-    model->recognizer = nullptr;
+  if (model->active_session_count > 0) {
+    model->destroy_pending = true;
+    return;
   }
 
-  delete model;
+  DestroyModelStorage(model);
 }
 
 int32_t wfloat_stt_model_get_info(const wfloat_stt_model_t *model,
@@ -438,6 +645,9 @@ int32_t wfloat_stt_model_transcribe(
     wfloat_stt_transcription_result_t **out_result) {
   if (!model || !options || !out_result || !model->recognizer ||
       !options->samples || options->sample_count == 0 || options->sample_rate <= 0) {
+    if (model && !model->recognizer && model->online_recognizer) {
+      return kStatusNotSupported;
+    }
     return kStatusInvalidArgument;
   }
 
@@ -489,4 +699,124 @@ int32_t wfloat_stt_model_transcribe(
 void wfloat_stt_transcription_result_destroy(
     wfloat_stt_transcription_result_t *result) {
   delete reinterpret_cast<OwnedTranscriptionResult *>(result);
+}
+
+int32_t wfloat_stt_model_create_session(const wfloat_stt_model_t *model,
+                                        wfloat_stt_session_t **out_session) {
+  if (!model || !out_session) {
+    return kStatusInvalidArgument;
+  }
+
+  *out_session = nullptr;
+  auto *mutable_model = const_cast<wfloat_stt_model_t *>(model);
+  if (!mutable_model->online_recognizer) {
+    return kStatusNotSupported;
+  }
+
+  const SherpaOnnxOnlineStream *stream =
+      SherpaOnnxCreateOnlineStream(mutable_model->online_recognizer);
+  if (!stream) {
+    return kStatusBackendError;
+  }
+
+  std::unique_ptr<wfloat_stt_session_t> session(new wfloat_stt_session_t);
+  session->model = mutable_model;
+  session->stream = stream;
+  mutable_model->active_session_count += 1;
+
+  *out_session = session.release();
+  return kStatusOk;
+}
+
+int32_t wfloat_stt_session_push_audio(wfloat_stt_session_t *session,
+                                      const float *samples,
+                                      size_t sample_count,
+                                      int32_t sample_rate) {
+  if (!session || !samples || sample_count == 0 || sample_rate <= 0) {
+    return kStatusInvalidArgument;
+  }
+
+  if (!session->model || !session->stream || !session->model->online_recognizer) {
+    return kStatusNotSupported;
+  }
+
+  if (sample_count > static_cast<size_t>(INT32_MAX)) {
+    return kStatusInvalidArgument;
+  }
+
+  SherpaOnnxOnlineStreamAcceptWaveform(
+      session->stream, sample_rate, samples,
+      static_cast<int32_t>(sample_count));
+  return DecodeOnlineSession(session);
+}
+
+int32_t wfloat_stt_session_get_result(wfloat_stt_session_t *session,
+                                      wfloat_stt_session_result_t **out_result) {
+  if (!session || !out_result) {
+    return kStatusInvalidArgument;
+  }
+
+  int32_t decode_status = DecodeOnlineSession(session);
+  if (decode_status != kStatusOk) {
+    return decode_status;
+  }
+
+  return BuildSessionResult(session, out_result);
+}
+
+int32_t wfloat_stt_session_finish(wfloat_stt_session_t *session,
+                                  wfloat_stt_session_result_t **out_result) {
+  if (!session || !out_result) {
+    return kStatusInvalidArgument;
+  }
+
+  if (!session->model || !session->stream || !session->model->online_recognizer) {
+    return kStatusNotSupported;
+  }
+
+  SherpaOnnxOnlineStreamInputFinished(session->stream);
+  int32_t decode_status = DecodeOnlineSession(session);
+  if (decode_status != kStatusOk) {
+    return decode_status;
+  }
+
+  return BuildSessionResult(session, out_result);
+}
+
+int32_t wfloat_stt_session_reset(wfloat_stt_session_t *session) {
+  if (!session) {
+    return kStatusInvalidArgument;
+  }
+
+  if (!session->model || !session->stream || !session->model->online_recognizer) {
+    return kStatusNotSupported;
+  }
+
+  SherpaOnnxOnlineStreamReset(session->model->online_recognizer,
+                              session->stream);
+  return kStatusOk;
+}
+
+void wfloat_stt_session_destroy(wfloat_stt_session_t *session) {
+  if (!session) {
+    return;
+  }
+
+  wfloat_stt_model_t *model = session->model;
+
+  if (session->stream) {
+    SherpaOnnxDestroyOnlineStream(session->stream);
+    session->stream = nullptr;
+  }
+
+  if (model && model->active_session_count > 0) {
+    model->active_session_count -= 1;
+  }
+
+  delete session;
+  MaybeDestroyPendingModel(model);
+}
+
+void wfloat_stt_session_result_destroy(wfloat_stt_session_result_t *result) {
+  delete reinterpret_cast<OwnedSessionResult *>(result);
 }

@@ -3,6 +3,8 @@ import { SttWorkerBridge } from "../worker/sttWorkerBridge.js";
 import type {
   DecodedAudio,
   LoadSttModelOptions,
+  StreamingTranscribeChunk,
+  StreamingTranscriptionResult,
   TranscribeOptions,
   TranscriptionResult,
 } from "./types.js";
@@ -109,6 +111,7 @@ export class SttModel {
   private constructor(
     public readonly modelId: string,
     public readonly family: string,
+    public readonly supportsStreaming: boolean,
   ) {}
 
   static async load(modelId: string, options: LoadSttModelOptions = {}): Promise<SttModel> {
@@ -129,7 +132,7 @@ export class SttModel {
     setPersistentId(response.persistentId);
     options.onProgress?.({ status: "completed" });
 
-    return new SttModel(modelId, response.family);
+    return new SttModel(modelId, response.family, response.supportsStreaming);
   }
 
   async transcribe(options: TranscribeOptions): Promise<TranscriptionResult> {
@@ -139,6 +142,17 @@ export class SttModel {
       sampleRate: normalized.sampleRate,
     });
   }
+
+  async createSession(): Promise<SttSession> {
+    if (!this.supportsStreaming) {
+      throw new Error(
+        `Model ${this.modelId} does not support streaming sessions. Load a streaming-capable STT model first.`,
+      );
+    }
+
+    const sessionId = await SttWorkerBridge.createSession();
+    return new SttSession(this.modelId, sessionId);
+  }
 }
 
 export async function loadSttModel(
@@ -146,4 +160,35 @@ export async function loadSttModel(
   options: LoadSttModelOptions = {},
 ): Promise<SttModel> {
   return SttModel.load(modelId, options);
+}
+
+export class SttSession {
+  constructor(
+    public readonly modelId: string,
+    private readonly sessionId: number,
+  ) {}
+
+  async push(options: StreamingTranscribeChunk): Promise<void> {
+    await SttWorkerBridge.pushSessionAudio({
+      sessionId: this.sessionId,
+      samples: options.audio,
+      sampleRate: options.sampleRate ?? TARGET_SAMPLE_RATE,
+    });
+  }
+
+  async getResult(): Promise<StreamingTranscriptionResult> {
+    return SttWorkerBridge.getSessionResult(this.sessionId);
+  }
+
+  async finish(): Promise<StreamingTranscriptionResult> {
+    return SttWorkerBridge.finishSession(this.sessionId);
+  }
+
+  async reset(): Promise<void> {
+    await SttWorkerBridge.resetSession(this.sessionId);
+  }
+
+  async close(): Promise<void> {
+    await SttWorkerBridge.closeSession(this.sessionId);
+  }
 }

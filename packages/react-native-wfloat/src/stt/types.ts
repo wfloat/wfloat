@@ -1,4 +1,4 @@
-import type { LoadModelProgressEvent } from "../tts/types.js";
+import type { LoadModelProgressEvent } from '../tts/types';
 
 export type TranscriptionToken = {
   text: string;
@@ -35,20 +35,15 @@ export type LoadSttModelOptions = {
   onProgress?: (event: LoadModelProgressEvent) => void;
   modelAssetHost?: string;
   language?: string;
-  task?: "transcribe" | "translate";
+  task?: 'transcribe' | 'translate';
 };
 
 export type TranscribeOptions = {
-  audio: Blob | ArrayBuffer | Float32Array | AudioBuffer;
-  sampleRate?: number;
-};
-
-export type DecodedAudio = {
-  samples: Float32Array;
+  audio: ReadonlyArray<number> | Float32Array;
   sampleRate: number;
 };
 
 export type StreamingTranscribeChunk = {
-  audio: Float32Array;
+  audio: ReadonlyArray<number> | Float32Array;
   sampleRate?: number;
 };

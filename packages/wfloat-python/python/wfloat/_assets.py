@@ -263,7 +263,7 @@ def fetch_stt_assets(
     package_version_override: Optional[str] = None,
     timeout: float = 60.0,
 ) -> SttModelAssets:
-    extra_query = {"capability": "stt"}
+    extra_query = {}
     if family:
         extra_query["family"] = family
 

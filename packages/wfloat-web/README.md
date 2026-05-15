@@ -70,6 +70,8 @@ console.log(result.audio.sampleRate, result.timeline.chunks.length);
 - `tts.pause()`, `tts.play()`, and `tts.stop()` control playback for the active request on that model instance.
 - `loadSttModel(modelId, { onProgress })` loads an offline STT model into the browser worker.
 - `stt.transcribe({ audio, sampleRate? })` transcribes a single audio input and returns `{ text, tokens?, segments?, ... }`.
+- `createMicrophoneCapture({ sampleRate? })` creates a reusable browser mic capture helper for record -> stop -> transcribe flows.
+- streaming-capable STT models may also expose `await stt.createSession()` for incremental transcription.
 
 ## Progress callbacks
 
@@ -143,6 +145,66 @@ console.log(result.text);
 console.log(result.tokens?.length ?? 0);
 ```
 
+## Microphone capture quick start
+
+```ts
+import { createMicrophoneCapture, loadSttModel } from "@wfloat/wfloat-web";
+
+const stt = await loadSttModel("openai/whisper-tiny-en");
+const mic = await createMicrophoneCapture({ sampleRate: 16000 });
+
+await mic.start();
+
+// later, from a Stop button click
+const audio = await mic.stop();
+
+const result = await stt.transcribe({
+  audio: audio.samples,
+  sampleRate: audio.sampleRate,
+});
+
+console.log(result.text);
+```
+
+This is currently meant for one-shot browser STT flows such as:
+- record
+- stop
+- transcribe
+
+It is not the final streaming session API. Real live partial transcription will
+use a streaming-capable STT model path later.
+
+## Streaming STT direction
+
+The first streaming web STT target is a sherpa online recognizer path for:
+
+- `k2-fsa/streaming-zipformer-en`
+
+Intended shape:
+
+```ts
+const stt = await loadSttModel("k2-fsa/streaming-zipformer-en", {
+  modelAssetHost: "http://localhost:4000",
+});
+
+const session = await stt.createSession();
+
+await session.push({
+  audio: pcmChunk,
+  sampleRate: 16000,
+});
+
+const partial = await session.getResult();
+console.log(partial.text, partial.isEndpoint);
+
+const finalResult = await session.finish();
+console.log(finalResult.text);
+```
+
+This path is now implemented in the package surface, but it still depends on
+the corresponding streaming model assets being staged in the asset API /
+registry.
+
 ## Local API override
 
 For smoke tests against a local asset API, pass `modelAssetHost` when loading
@@ -174,6 +236,7 @@ The smoke page exercises:
 - model download
 - browser TTS synthesis and playback controls
 - optional browser STT loading and transcription from an uploaded audio file
+- browser microphone capture with record -> stop -> transcribe
 
 Current note: the local STT smoke path depends on the asset API returning the
 uploaded Whisper tiny English files now stored at:

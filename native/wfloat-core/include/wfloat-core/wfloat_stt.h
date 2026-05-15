@@ -11,12 +11,13 @@ extern "C" {
 /*
  * Draft shared STT ABI for wfloat-core.
  *
- * This first version is intentionally narrow around offline transcription.
- * Streaming/session semantics should be layered in after the base request,
- * result, and model metadata contract settle.
+ * Offline transcription is implemented first. Streaming/session semantics are
+ * now part of the ABI draft so wrappers can converge on one shape even before
+ * every backend family implements it.
  */
 
 typedef struct wfloat_stt_model wfloat_stt_model_t;
+typedef struct wfloat_stt_session wfloat_stt_session_t;
 
 typedef enum wfloat_stt_family {
   WFLOAT_STT_FAMILY_UNKNOWN = 0,
@@ -24,6 +25,7 @@ typedef enum wfloat_stt_family {
   WFLOAT_STT_FAMILY_MOONSHINE = 2,
   WFLOAT_STT_FAMILY_PARAKEET_CTC = 3,
   WFLOAT_STT_FAMILY_PARAKEET_TDT = 4,
+  WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER = 5,
 } wfloat_stt_family_t;
 
 typedef enum wfloat_stt_feature_flags {
@@ -65,6 +67,13 @@ typedef struct wfloat_stt_transcription_result {
   const wfloat_stt_segment_t *segments;
   size_t segment_count;
 } wfloat_stt_transcription_result_t;
+
+typedef struct wfloat_stt_session_result {
+  const char *model_id;
+  const char *text;
+  const char *json;
+  int32_t is_endpoint;
+} wfloat_stt_session_result_t;
 
 typedef struct wfloat_stt_model_info {
   const char *model_id;
@@ -133,8 +142,33 @@ int32_t wfloat_stt_model_transcribe(
     const wfloat_stt_transcribe_options_t *options,
     wfloat_stt_transcription_result_t **out_result);
 
+int32_t wfloat_stt_model_create_session(
+    const wfloat_stt_model_t *model,
+    wfloat_stt_session_t **out_session);
+
+int32_t wfloat_stt_session_push_audio(
+    wfloat_stt_session_t *session,
+    const float *samples,
+    size_t sample_count,
+    int32_t sample_rate);
+
+int32_t wfloat_stt_session_get_result(
+    wfloat_stt_session_t *session,
+    wfloat_stt_session_result_t **out_result);
+
+int32_t wfloat_stt_session_finish(
+    wfloat_stt_session_t *session,
+    wfloat_stt_session_result_t **out_result);
+
+int32_t wfloat_stt_session_reset(wfloat_stt_session_t *session);
+
+void wfloat_stt_session_destroy(wfloat_stt_session_t *session);
+
 void wfloat_stt_transcription_result_destroy(
     wfloat_stt_transcription_result_t *result);
+
+void wfloat_stt_session_result_destroy(
+    wfloat_stt_session_result_t *result);
 
 #ifdef __cplusplus
 }  // extern "C"

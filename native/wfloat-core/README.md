@@ -52,6 +52,25 @@ Current draft native surface:
 - [src/wfloat_tts.cc](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/src/wfloat_tts.cc:1)
 - [CMakeLists.txt](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/CMakeLists.txt:1)
 
+The STT draft now includes both:
+
+- offline `transcribe(...)`
+- session-style STT ABI for streaming-capable model families
+
+Current STT implementation state:
+
+- offline families: Whisper, Moonshine, Parakeet CTC, Parakeet TDT
+- first streaming family: Zipformer transducer sessions via sherpa's online
+  recognizer C API
+- Linux shared wrapper path uses vendored sherpa in `BUILD_SHARED_LIBS=ON`
+  mode so `libwfloat-core.so` resolves through
+  `libsherpa-onnx-c-api.so` + `libonnxruntime.so`, matching the upstream
+  packaging strategy that works for both offline and streaming recognizers
+
+That does not mean every backend family is implemented yet. The intent is to
+keep the native contract aligned with the web/package direction while new
+streaming families are brought up incrementally.
+
 That work should stay separate from:
 
 - playback helpers
@@ -60,10 +79,11 @@ That work should stay separate from:
 
 ## Current Build Assumption
 
-The current native target links directly against vendored `sherpa-onnx-core`
-through the top-level [CMakeLists.txt](/home/mitch/dev/slop_fork/wfloat/CMakeLists.txt:1).
-
-That is a practical first step, not a final packaging decision.
+On Linux, the top-level [CMakeLists.txt](/home/mitch/dev/slop_fork/wfloat/CMakeLists.txt:1)
+forces vendored sherpa into shared-library mode when `WFLOAT_BUILD_CORE` is on.
+That keeps the `wfloat-core` shared wrapper aligned with upstream sherpa's
+working `libsherpa-onnx-c-api.so` packaging rather than embedding the static
+onnxruntime stack inside a second shared object.
 
 The native build now defines both:
 

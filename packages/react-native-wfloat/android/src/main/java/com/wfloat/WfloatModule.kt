@@ -7,10 +7,22 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.module.annotations.ReactModule
+import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.HomophoneReplacerConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineStream
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsWfloatModelConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -70,6 +82,49 @@ private data class GenerationSummary(
   val result: GeneratedSpeechResult?,
 )
 
+private data class SttFileSet(
+  val family: String,
+  val model: String?,
+  val tokens: String?,
+  val preprocessor: String?,
+  val encoder: String?,
+  val decoder: String?,
+  val joiner: String?,
+  val uncachedDecoder: String?,
+  val cachedDecoder: String?,
+)
+
+private data class SttTranscriptionToken(
+  val text: String,
+  val startSec: Double,
+  val durationSec: Double,
+  val confidence: Double,
+)
+
+private data class SttTranscriptionSegment(
+  val text: String,
+  val startSec: Double,
+  val durationSec: Double,
+)
+
+private data class SttTranscriptionResult(
+  val text: String,
+  val modelId: String,
+  val language: String,
+  val emotion: String,
+  val event: String,
+  val json: String,
+  val tokens: List<SttTranscriptionToken>,
+  val segments: List<SttTranscriptionSegment>,
+)
+
+private data class StreamingSttResult(
+  val text: String,
+  val modelId: String,
+  val isEndpoint: Boolean,
+  val json: String,
+)
+
 private enum class GenerationOutcome {
   COMPLETED,
   CANCELLED,
@@ -102,12 +157,31 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   @Volatile
   private var loadModelInProgress = false
 
+  @Volatile
+  private var offlineRecognizer: OfflineRecognizer? = null
+
+  @Volatile
+  private var onlineRecognizer: OnlineRecognizer? = null
+
+  @Volatile
+  private var loadedSttModelId: String? = null
+
+  @Volatile
+  private var loadedSttFamily: String? = null
+
+  @Volatile
+  private var loadedSttPaths: SttFileSet? = null
+
+  private val sttSessions = LinkedHashMap<Int, OnlineStream>()
+  private var nextSttSessionId = 1
+
   override fun getName(): String {
     return NAME
   }
 
   override fun invalidate() {
     cancelCurrentSpeechSession()
+    closeAllSttSessions()
 
     synchronized(stateLock) {
       offlineTts?.free()
@@ -115,6 +189,13 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       loadedModelPath = null
       loadedTokensPath = null
       loadedDataDir = null
+      offlineRecognizer?.release()
+      offlineRecognizer = null
+      onlineRecognizer?.release()
+      onlineRecognizer = null
+      loadedSttModelId = null
+      loadedSttFamily = null
+      loadedSttPaths = null
     }
 
     workQueue.shutdownNow()
@@ -264,6 +345,354 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         }
         cleanupEspeakWorkDirectory()
       }
+    }
+  }
+
+  override fun loadSttModel(options: ReadableMap, promise: Promise) {
+    val modelId: String
+    val family: String
+    val fileSet: SttFileSet
+    val language: String
+    val task: String
+
+    try {
+      modelId = readRequiredString(options, "modelId")
+      family = readRequiredString(options, "family")
+      fileSet = SttFileSet(
+        family = family,
+        model = readString(options, "modelUrl"),
+        tokens = readString(options, "tokensUrl"),
+        preprocessor = readString(options, "preprocessorUrl"),
+        encoder = readString(options, "encoderUrl"),
+        decoder = readString(options, "decoderUrl"),
+        joiner = readString(options, "joinerUrl"),
+        uncachedDecoder = readString(options, "uncachedDecoderUrl"),
+        cachedDecoder = readString(options, "cachedDecoderUrl"),
+      )
+      language = readString(options, "language")?.ifBlank { "en" } ?: "en"
+      task = readString(options, "task")?.ifBlank { "transcribe" } ?: "transcribe"
+      validateSttFileSet(fileSet)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    synchronized(stateLock) {
+      if (loadModelInProgress) {
+        promise.reject("load_in_progress", "A loadModel operation is already in progress.")
+        return
+      }
+      loadModelInProgress = true
+    }
+
+    workQueue.execute {
+      try {
+        val modelDirectory = cacheDirectoryForModelId(modelId)
+        ensureDirectoryExists(modelDirectory)
+
+        val requiredDownloads = requiredSttDownloads(fileSet, modelDirectory)
+        val totalPlannedDownloadCount = requiredDownloads.count { !it.destination.exists() }
+        var completedDownloadCount = 0
+        var lastEmittedDownloadProgress = -1.0
+
+        fun emitDownloadProgress(phaseProgress: Double) {
+          val clamped = phaseProgress.coerceIn(0.0, 1.0)
+          val overallProgress = if (totalPlannedDownloadCount > 0) {
+            (completedDownloadCount + clamped) / totalPlannedDownloadCount.toDouble()
+          } else {
+            clamped
+          }
+
+          if (overallProgress < 1.0 &&
+            lastEmittedDownloadProgress >= 0 &&
+            abs(lastEmittedDownloadProgress - overallProgress) < DEFAULT_DOWNLOAD_PROGRESS_DELTA
+          ) {
+            return
+          }
+
+          lastEmittedDownloadProgress = overallProgress
+          emitLoadModelProgress("downloading", overallProgress)
+        }
+
+        requiredDownloads.forEach { asset ->
+          if (!asset.destination.exists()) {
+            emitDownloadProgress(0.0)
+            downloadFile(asset.url, asset.destination) { phaseProgress ->
+              emitDownloadProgress(phaseProgress)
+            }
+            completedDownloadCount += 1
+          }
+        }
+
+        emitLoadModelProgress("loading", null)
+        closeAllSttSessions()
+
+        val resolvedPaths = fileSet.copy(
+          model = requiredDownloads.find { it.label == "model" }?.destination?.absolutePath,
+          tokens = requiredDownloads.find { it.label == "tokens" }?.destination?.absolutePath,
+          preprocessor = requiredDownloads.find { it.label == "preprocessor" }?.destination?.absolutePath,
+          encoder = requiredDownloads.find { it.label == "encoder" }?.destination?.absolutePath,
+          decoder = requiredDownloads.find { it.label == "decoder" }?.destination?.absolutePath,
+          joiner = requiredDownloads.find { it.label == "joiner" }?.destination?.absolutePath,
+          uncachedDecoder = requiredDownloads.find { it.label == "uncached_decoder" }?.destination?.absolutePath,
+          cachedDecoder = requiredDownloads.find { it.label == "cached_decoder" }?.destination?.absolutePath,
+        )
+
+        val newOfflineRecognizer: OfflineRecognizer?
+        val newOnlineRecognizer: OnlineRecognizer?
+        when (family) {
+          "whisper" -> {
+            newOfflineRecognizer = createOfflineWhisperRecognizer(
+              resolvedPaths,
+              language,
+              task
+            )
+            newOnlineRecognizer = null
+          }
+          "zipformer-transducer" -> {
+            newOfflineRecognizer = null
+            newOnlineRecognizer = createStreamingZipformerRecognizer(resolvedPaths)
+          }
+          else -> throw IllegalArgumentException("Unsupported STT family: $family")
+        }
+
+        synchronized(stateLock) {
+          offlineRecognizer?.release()
+          onlineRecognizer?.release()
+          offlineRecognizer = newOfflineRecognizer
+          onlineRecognizer = newOnlineRecognizer
+          loadedSttModelId = modelId
+          loadedSttFamily = family
+          loadedSttPaths = resolvedPaths
+        }
+
+        emitLoadModelProgress("completed", null)
+        promise.resolve(
+          Arguments.createMap().apply {
+            putString("family", family)
+            putBoolean("supportsStreaming", family == "zipformer-transducer")
+          }
+        )
+      } catch (error: Throwable) {
+        promise.reject(loadModelErrorCode(error), error.message ?: "Failed to load STT model.", error)
+      } finally {
+        synchronized(stateLock) {
+          loadModelInProgress = false
+        }
+      }
+    }
+  }
+
+  override fun transcribe(options: ReadableMap, promise: Promise) {
+    val recognizer = offlineRecognizer
+    val modelId = loadedSttModelId
+    if (recognizer == null && onlineRecognizer != null) {
+      promise.reject(
+        "invalid_model_mode",
+        "The loaded STT model supports streaming sessions only. Use createSession() instead of transcribe()."
+      )
+      return
+    }
+    if (recognizer == null || modelId == null) {
+      promise.reject("not_loaded", "STT model is not loaded. Call loadSttModel(...) first.")
+      return
+    }
+
+    val samples: FloatArray
+    val sampleRate: Int
+    try {
+      samples = readRequiredFloatArray(options, "samples")
+      sampleRate = readRequiredPositiveInt(options, "sampleRate")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      val stream = recognizer.createStream()
+
+      try {
+        stream.acceptWaveform(samples, sampleRate)
+        recognizer.decode(stream)
+        val result = recognizer.getResult(stream)
+        promise.resolve(
+          mapOfflineRecognizerResult(
+            modelId = modelId,
+            result = result
+          ).toWritableMap()
+        )
+      } catch (error: Throwable) {
+        promise.reject(
+          "transcribe_failed",
+          error.message ?: "Failed to transcribe audio.",
+          error
+        )
+      } finally {
+        stream.release()
+      }
+    }
+  }
+
+  override fun createSttSession(promise: Promise) {
+    val recognizer = onlineRecognizer
+    val modelId = loadedSttModelId
+    if (recognizer == null || modelId == null) {
+      promise.reject(
+        "not_loaded",
+        "Streaming STT model is not loaded. Call loadSttModel(...) with a streaming-capable model first."
+      )
+      return
+    }
+
+    synchronized(stateLock) {
+      val sessionId = nextSttSessionId
+      nextSttSessionId += 1
+      sttSessions[sessionId] = recognizer.createStream()
+      promise.resolve(sessionId.toDouble())
+    }
+  }
+
+  override fun pushSttSessionAudio(options: ReadableMap, promise: Promise) {
+    val recognizer = onlineRecognizer
+    if (recognizer == null) {
+      promise.reject("not_loaded", "Streaming STT model is not loaded.")
+      return
+    }
+
+    val sessionId: Int
+    val samples: FloatArray
+    val sampleRate: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+      samples = readRequiredFloatArray(options, "samples")
+      sampleRate = readRequiredPositiveInt(options, "sampleRate")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        val session = requireSttSession(sessionId)
+        session.acceptWaveform(samples, sampleRate)
+        decodeOnlineSession(recognizer, session)
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        promise.reject("session_push_failed", error.message ?: "Failed to push session audio.", error)
+      }
+    }
+  }
+
+  override fun getSttSessionResult(options: ReadableMap, promise: Promise) {
+    val recognizer = onlineRecognizer
+    val modelId = loadedSttModelId
+    if (recognizer == null || modelId == null) {
+      promise.reject("not_loaded", "Streaming STT model is not loaded.")
+      return
+    }
+
+    val sessionId: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        val session = requireSttSession(sessionId)
+        decodeOnlineSession(recognizer, session)
+        val result = recognizer.getResult(session)
+        promise.resolve(
+          StreamingSttResult(
+            text = result.text,
+            modelId = modelId,
+            isEndpoint = recognizer.isEndpoint(session),
+            json = buildStreamingJson(result.text, result.tokens, result.timestamps)
+          ).toWritableMap()
+        )
+      } catch (error: Throwable) {
+        promise.reject("session_result_failed", error.message ?: "Failed to get session result.", error)
+      }
+    }
+  }
+
+  override fun finishSttSession(options: ReadableMap, promise: Promise) {
+    val recognizer = onlineRecognizer
+    val modelId = loadedSttModelId
+    if (recognizer == null || modelId == null) {
+      promise.reject("not_loaded", "Streaming STT model is not loaded.")
+      return
+    }
+
+    val sessionId: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        val session = requireSttSession(sessionId)
+        session.inputFinished()
+        decodeOnlineSession(recognizer, session)
+        val result = recognizer.getResult(session)
+        promise.resolve(
+          StreamingSttResult(
+            text = result.text,
+            modelId = modelId,
+            isEndpoint = recognizer.isEndpoint(session),
+            json = buildStreamingJson(result.text, result.tokens, result.timestamps)
+          ).toWritableMap()
+        )
+      } catch (error: Throwable) {
+        promise.reject("session_finish_failed", error.message ?: "Failed to finish session.", error)
+      }
+    }
+  }
+
+  override fun resetSttSession(options: ReadableMap, promise: Promise) {
+    val recognizer = onlineRecognizer
+    if (recognizer == null) {
+      promise.reject("not_loaded", "Streaming STT model is not loaded.")
+      return
+    }
+
+    val sessionId: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        recognizer.reset(requireSttSession(sessionId))
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        promise.reject("session_reset_failed", error.message ?: "Failed to reset session.", error)
+      }
+    }
+  }
+
+  override fun closeSttSession(options: ReadableMap, promise: Promise) {
+    val sessionId: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      synchronized(stateLock) {
+        sttSessions.remove(sessionId)?.release()
+      }
+      promise.resolve(null)
     }
   }
 
@@ -790,6 +1219,197 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     return OfflineTts(config = config)
   }
 
+  private data class DownloadedAsset(
+    val label: String,
+    val url: String,
+    val destination: File,
+  )
+
+  private fun validateSttFileSet(fileSet: SttFileSet) {
+    when (fileSet.family) {
+      "whisper" -> {
+        if (fileSet.encoder.isNullOrBlank() || fileSet.decoder.isNullOrBlank() || fileSet.tokens.isNullOrBlank()) {
+          throw IllegalArgumentException("Whisper STT manifests require encoderUrl, decoderUrl, and tokensUrl.")
+        }
+      }
+      "zipformer-transducer" -> {
+        if (fileSet.encoder.isNullOrBlank() ||
+          fileSet.decoder.isNullOrBlank() ||
+          fileSet.joiner.isNullOrBlank() ||
+          fileSet.tokens.isNullOrBlank()
+        ) {
+          throw IllegalArgumentException(
+            "Streaming Zipformer STT manifests require encoderUrl, decoderUrl, joinerUrl, and tokensUrl."
+          )
+        }
+      }
+      else -> throw IllegalArgumentException("Unsupported STT family: ${fileSet.family}")
+    }
+  }
+
+  private fun requiredSttDownloads(
+    fileSet: SttFileSet,
+    directory: File,
+  ): List<DownloadedAsset> {
+    val assets = mutableListOf<DownloadedAsset>()
+
+    fun add(label: String, url: String?) {
+      if (url.isNullOrBlank()) {
+        return
+      }
+      assets.add(
+        DownloadedAsset(
+          label = label,
+          url = url,
+          destination = File(directory, requireFileNameFromUrl(url))
+        )
+      )
+    }
+
+    add("model", fileSet.model)
+    add("tokens", fileSet.tokens)
+    add("preprocessor", fileSet.preprocessor)
+    add("encoder", fileSet.encoder)
+    add("decoder", fileSet.decoder)
+    add("joiner", fileSet.joiner)
+    add("uncached_decoder", fileSet.uncachedDecoder)
+    add("cached_decoder", fileSet.cachedDecoder)
+    return assets
+  }
+
+  private fun createOfflineWhisperRecognizer(
+    fileSet: SttFileSet,
+    language: String,
+    task: String,
+  ): OfflineRecognizer {
+    val config = OfflineRecognizerConfig(
+      featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+      modelConfig = OfflineModelConfig(
+        whisper = OfflineWhisperModelConfig(
+          encoder = fileSet.encoder ?: "",
+          decoder = fileSet.decoder ?: "",
+          language = language,
+          task = task,
+          tailPaddings = 1000
+        ),
+        tokens = fileSet.tokens ?: "",
+        numThreads = 1,
+        debug = false,
+        provider = "cpu",
+        modelType = "whisper",
+      ),
+      hr = HomophoneReplacerConfig(),
+      decodingMethod = "greedy_search",
+      maxActivePaths = 4,
+      hotwordsFile = "",
+      hotwordsScore = 1.5f,
+      ruleFsts = "",
+      ruleFars = "",
+      blankPenalty = 0.0f,
+    )
+
+    return OfflineRecognizer(config = config)
+  }
+
+  private fun createStreamingZipformerRecognizer(
+    fileSet: SttFileSet,
+  ): OnlineRecognizer {
+    val config = OnlineRecognizerConfig(
+      featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+      modelConfig = OnlineModelConfig(
+        transducer = OnlineTransducerModelConfig(
+          encoder = fileSet.encoder ?: "",
+          decoder = fileSet.decoder ?: "",
+          joiner = fileSet.joiner ?: "",
+        ),
+        tokens = fileSet.tokens ?: "",
+        numThreads = 1,
+        debug = false,
+        provider = "cpu",
+        modelType = "zipformer",
+      ),
+      hr = HomophoneReplacerConfig(),
+      enableEndpoint = true,
+      decodingMethod = "greedy_search",
+      maxActivePaths = 4,
+      hotwordsFile = "",
+      hotwordsScore = 1.5f,
+      ruleFsts = "",
+      ruleFars = "",
+      blankPenalty = 0.0f,
+    )
+
+    return OnlineRecognizer(config = config)
+  }
+
+  private fun mapOfflineRecognizerResult(
+    modelId: String,
+    result: com.k2fsa.sherpa.onnx.OfflineRecognizerResult,
+  ): SttTranscriptionResult {
+    val timestamps = result.timestamps
+    val durations = result.durations
+    val confidences = FloatArray(result.tokens.size)
+    val tokens = result.tokens.mapIndexed { index, text ->
+      SttTranscriptionToken(
+        text = text,
+        startSec = timestamps.getOrNull(index)?.toDouble() ?: 0.0,
+        durationSec = durations.getOrNull(index)?.toDouble() ?: 0.0,
+        confidence = confidences.getOrNull(index)?.toDouble() ?: 0.0
+      )
+    }
+
+    return SttTranscriptionResult(
+      text = result.text,
+      modelId = modelId,
+      language = result.lang,
+      emotion = result.emotion,
+      event = result.event,
+      json = buildOfflineJson(result),
+      tokens = tokens,
+      segments = emptyList(),
+    )
+  }
+
+  private fun buildOfflineJson(result: com.k2fsa.sherpa.onnx.OfflineRecognizerResult): String {
+    val tokenJson = result.tokens.joinToString(separator = ",", prefix = "[", postfix = "]") {
+      "\"${escapeJson(it)}\""
+    }
+    return "{\"text\":\"${escapeJson(result.text)}\",\"tokens\":$tokenJson}"
+  }
+
+  private fun buildStreamingJson(
+    text: String,
+    tokens: Array<String>,
+    timestamps: FloatArray,
+  ): String {
+    val tokenJson = tokens.joinToString(separator = ",", prefix = "[", postfix = "]") {
+      "\"${escapeJson(it)}\""
+    }
+    val timestampJson =
+      timestamps.joinToString(separator = ",", prefix = "[", postfix = "]") { it.toString() }
+    return "{\"text\":\"${escapeJson(text)}\",\"tokens\":$tokenJson,\"timestamps\":$timestampJson}"
+  }
+
+  private fun decodeOnlineSession(recognizer: OnlineRecognizer, stream: OnlineStream) {
+    while (recognizer.isReady(stream)) {
+      recognizer.decode(stream)
+    }
+  }
+
+  private fun requireSttSession(sessionId: Int): OnlineStream {
+    synchronized(stateLock) {
+      return sttSessions[sessionId]
+        ?: throw IllegalArgumentException("Unknown STT session: $sessionId")
+    }
+  }
+
+  private fun closeAllSttSessions() {
+    synchronized(stateLock) {
+      sttSessions.values.forEach { it.release() }
+      sttSessions.clear()
+    }
+  }
+
   private fun cancelCurrentSpeechSession() {
     val currentSession = speechSession
     speechSession = null
@@ -1029,6 +1649,56 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     )
   }
 
+  private fun SttTranscriptionToken.toWritableMap() = Arguments.createMap().apply {
+    putString("text", text)
+    putDouble("startSec", startSec)
+    putDouble("durationSec", durationSec)
+    putDouble("confidence", confidence)
+  }
+
+  private fun SttTranscriptionSegment.toWritableMap() = Arguments.createMap().apply {
+    putString("text", text)
+    putDouble("startSec", startSec)
+    putDouble("durationSec", durationSec)
+  }
+
+  private fun SttTranscriptionResult.toWritableMap() = Arguments.createMap().apply {
+    putString("text", text)
+    putString("modelId", modelId)
+    putString("language", language)
+    putString("emotion", emotion)
+    putString("event", event)
+    putString("json", json)
+    putArray(
+      "tokens",
+      Arguments.createArray().apply {
+        tokens.forEach { pushMap(it.toWritableMap()) }
+      }
+    )
+    putArray(
+      "segments",
+      Arguments.createArray().apply {
+        segments.forEach { pushMap(it.toWritableMap()) }
+      }
+    )
+  }
+
+  private fun StreamingSttResult.toWritableMap() = Arguments.createMap().apply {
+    putString("text", text)
+    putString("modelId", modelId)
+    putBoolean("isEndpoint", isEndpoint)
+    putString("json", json)
+  }
+
+  private fun escapeJson(value: String): String {
+    return value
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+      .replace("\n", "\\n")
+      .replace("\r", "\\r")
+      .replace("\t", "\\t")
+  }
+
   private fun normalizeChecksum(checksum: String): String {
     return checksum.trim().lowercase()
   }
@@ -1117,6 +1787,27 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         throw IllegalArgumentException("$key must be a non-negative integer.")
       }
       return value.toInt()
+    }
+
+    private fun readRequiredPositiveInt(map: ReadableMap, key: String): Int {
+      val value = readRequiredNonNegativeInt(map, key)
+      if (value <= 0) {
+        throw IllegalArgumentException("$key must be a positive integer.")
+      }
+      return value
+    }
+
+    private fun readRequiredFloatArray(map: ReadableMap, key: String): FloatArray {
+      val array = readRequiredArray(map, key)
+      val values = FloatArray(array.size())
+      for (index in 0 until array.size()) {
+        val value = array.getDouble(index)
+        if (!value.isFinite()) {
+          throw IllegalArgumentException("$key[$index] must be a finite number.")
+        }
+        values[index] = value.toFloat()
+      }
+      return values
     }
 
     private fun normalizeIntensity(value: Double?, defaultValue: Double): Double {

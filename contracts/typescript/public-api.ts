@@ -154,16 +154,23 @@ export interface SttTranscriptionResult {
   text: string;
 }
 
+export interface SttSessionResult {
+  text: string;
+  isEndpoint: boolean;
+}
+
 export interface SttModel extends PreparedModel {
   capability: "stt";
   transcribe(options: { audio: Float32Array; language?: string }): Promise<SttTranscriptionResult>;
-  createSession?(): Promise<SttSession>;
+  createSession(): Promise<SttSession>;
 }
 
 export interface SttSession {
   push(audio: Float32Array): Promise<void>;
-  finish(): Promise<SttTranscriptionResult>;
-  cancel(): Promise<void>;
+  getResult(): Promise<SttSessionResult>;
+  finish(): Promise<SttSessionResult>;
+  reset(): Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface VadModel extends PreparedModel {

@@ -10,6 +10,21 @@ export type LoadModelNativeOptions = {
   espeakChecksum: string;
 };
 
+export type LoadSttModelNativeOptions = {
+  modelId: string;
+  family: string;
+  modelUrl: string;
+  tokensUrl: string;
+  preprocessorUrl: string;
+  encoderUrl: string;
+  decoderUrl: string;
+  joinerUrl: string;
+  uncachedDecoderUrl: string;
+  cachedDecoderUrl: string;
+  language: string;
+  task: string;
+};
+
 export type GenerateNativeOptions = {
   requestId: number;
   text: string;
@@ -56,6 +71,60 @@ export type NativeGenerateResult = {
   timelineChunks: NativeTimelineChunk[];
 };
 
+export type TranscribeNativeOptions = {
+  samples: number[];
+  sampleRate: number;
+  language: string;
+  task: string;
+  hotwords: string;
+};
+
+export type SttSessionNativeOptions = {
+  sessionId: number;
+};
+
+export type PushSttSessionAudioNativeOptions = {
+  sessionId: number;
+  samples: number[];
+  sampleRate: number;
+};
+
+export type NativeTranscriptionToken = {
+  text: string;
+  startSec: number;
+  durationSec: number;
+  confidence: number;
+};
+
+export type NativeTranscriptionSegment = {
+  text: string;
+  startSec: number;
+  durationSec: number;
+};
+
+export type NativeTranscriptionResult = {
+  text: string;
+  modelId: string;
+  language: string;
+  emotion: string;
+  event: string;
+  json: string;
+  tokens: NativeTranscriptionToken[];
+  segments: NativeTranscriptionSegment[];
+};
+
+export type NativeStreamingTranscriptionResult = {
+  text: string;
+  modelId: string;
+  isEndpoint: boolean;
+  json: string;
+};
+
+export type NativeLoadSttModelResult = {
+  family: string;
+  supportsStreaming: boolean;
+};
+
 export type NativeLoadModelProgressEvent = {
   status: string;
   progress?: number;
@@ -77,10 +146,22 @@ export type NativeSpeechPlaybackFinishedEvent = {
 
 export interface Spec extends TurboModule {
   loadModel(options: LoadModelNativeOptions): Promise<void>;
+  loadSttModel(options: LoadSttModelNativeOptions): Promise<NativeLoadSttModelResult>;
   generate(options: GenerateNativeOptions): Promise<NativeGenerateResult>;
   generateDialogue(
     options: GenerateDialogueNativeOptions
   ): Promise<NativeGenerateResult>;
+  transcribe(options: TranscribeNativeOptions): Promise<NativeTranscriptionResult>;
+  createSttSession(): Promise<number>;
+  pushSttSessionAudio(options: PushSttSessionAudioNativeOptions): Promise<void>;
+  getSttSessionResult(
+    options: SttSessionNativeOptions
+  ): Promise<NativeStreamingTranscriptionResult>;
+  finishSttSession(
+    options: SttSessionNativeOptions
+  ): Promise<NativeStreamingTranscriptionResult>;
+  resetSttSession(options: SttSessionNativeOptions): Promise<void>;
+  closeSttSession(options: SttSessionNativeOptions): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   readonly onLoadModelProgress: EventEmitter<NativeLoadModelProgressEvent>;

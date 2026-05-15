@@ -1,11 +1,12 @@
 from ._constants import SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS
 from ._model import Model, TtsModel, load, load_tts_model
-from ._stt import SttModel
+from ._stt import SttModel, SttSession
 from ._stt_load import load_moonshine_tiny_en, load_stt_model, load_whisper_tiny_en
 from ._results import (
     Audio,
     AudioResult,
     GenerationResult,
+    StreamingTranscriptionResult,
     TranscriptionResult,
     TranscriptionSegment,
     TranscriptionToken,
@@ -37,6 +38,8 @@ __all__ = [
     "Model",
     "SPEAKER_IDS",
     "SttModel",
+    "SttSession",
+    "StreamingTranscriptionResult",
     "TtsModel",
     "Timeline",
     "TimelineChunk",

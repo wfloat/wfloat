@@ -1,4 +1,4 @@
-import { loadSttModel, loadTtsModel } from "./dist/index.js";
+import { createMicrophoneCapture, loadSttModel, loadTtsModel } from "./dist/index.js";
 
 const elements = {
   assetHost: document.getElementById("assetHost"),
@@ -17,10 +17,17 @@ const elements = {
   speed: document.getElementById("speed"),
   stop: document.getElementById("stop"),
   sttAudio: document.getElementById("sttAudio"),
+  sttStreamingStart: document.getElementById("sttStreamingStart"),
+  sttStreamingStop: document.getElementById("sttStreamingStop"),
+  sttMicStart: document.getElementById("sttMicStart"),
+  sttMicStop: document.getElementById("sttMicStop"),
   sttLanguage: document.getElementById("sttLanguage"),
   sttModelId: document.getElementById("sttModelId"),
   sttProgress: document.getElementById("sttProgress"),
   sttSummary: document.getElementById("sttSummary"),
+  sttStreamingSummary: document.getElementById("sttStreamingSummary"),
+  sttStreamingTiming: document.getElementById("sttStreamingTiming"),
+  sttStreamingTranscript: document.getElementById("sttStreamingTranscript"),
   sttTask: document.getElementById("sttTask"),
   sttTiming: document.getElementById("sttTiming"),
   transcript: document.getElementById("transcript"),
@@ -35,6 +42,12 @@ const elements = {
 let ttsModel = null;
 let sttModel = null;
 let lastResult = null;
+let micCapture = null;
+let recordedMicAudio = null;
+let streamingSession = null;
+let streamingMicCapture = null;
+let streamingQueue = Promise.resolve();
+let streamingStartedAt = 0;
 
 function formatError(error) {
   if (error instanceof Error) {
@@ -81,6 +94,10 @@ function setButtons({ loaded, busy }) {
 function setSttButtons({ loaded, busy }) {
   elements.loadStt.disabled = busy;
   elements.transcribe.disabled = !loaded || busy;
+  elements.sttMicStart.disabled = !loaded || busy;
+  elements.sttMicStop.disabled = !loaded || busy || !micCapture?.isRecording;
+  elements.sttStreamingStart.disabled = !loaded || busy || !sttModel?.supportsStreaming || Boolean(streamingSession);
+  elements.sttStreamingStop.disabled = !loaded || busy || !streamingSession;
 }
 
 function readSynthesisOptions() {
@@ -218,14 +235,184 @@ async function loadStt() {
     });
 
     elements.sttSummary.textContent = "Model ready";
+    elements.sttStreamingSummary.textContent = sttModel.supportsStreaming
+      ? "Streaming session available"
+      : "Offline STT model";
     setSttButtons({ loaded: true, busy: false });
-    appendLog("STT model loaded");
+    appendLog("STT model loaded", {
+      family: sttModel.family,
+      supportsStreaming: sttModel.supportsStreaming,
+    });
   } catch (error) {
     sttModel = null;
     elements.sttSummary.textContent = "STT load failed";
+    elements.sttStreamingSummary.textContent = "Streaming unavailable";
     setSttButtons({ loaded: false, busy: false });
     appendLog("STT load failed", error);
     throw error;
+  }
+}
+
+async function startMicCapture() {
+  if (!sttModel) {
+    appendLog("Cannot start mic capture before loading the STT model");
+    return;
+  }
+
+  setSttButtons({ loaded: true, busy: true });
+  elements.sttSummary.textContent = "Starting microphone";
+  elements.sttProgress.value = 0;
+
+  try {
+    if (!micCapture) {
+      micCapture = await createMicrophoneCapture({ sampleRate: 16000 });
+    }
+
+    recordedMicAudio = null;
+    await micCapture.start();
+    elements.sttSummary.textContent = "Recording microphone";
+    elements.sttTiming.textContent = "Recording in progress";
+    appendLog("Microphone capture started", {
+      sampleRate: micCapture.sampleRate,
+    });
+  } catch (error) {
+    elements.sttSummary.textContent = "Microphone start failed";
+    appendLog("Microphone start failed", error);
+    throw error;
+  } finally {
+    setSttButtons({ loaded: Boolean(sttModel), busy: false });
+  }
+}
+
+async function stopMicCapture() {
+  if (!micCapture?.isRecording) {
+    appendLog("Cannot stop mic capture because recording is not active");
+    return;
+  }
+
+  setSttButtons({ loaded: true, busy: true });
+  elements.sttSummary.textContent = "Stopping microphone";
+
+  try {
+    recordedMicAudio = await micCapture.stop();
+    elements.sttSummary.textContent = "Microphone clip ready";
+    elements.sttTiming.textContent = `${Math.round(recordedMicAudio.durationSec * 1000)} ms recorded`;
+    appendLog("Microphone capture stopped", {
+      durationSec: recordedMicAudio.durationSec,
+      sampleRate: recordedMicAudio.sampleRate,
+      samples: recordedMicAudio.samples.length,
+    });
+  } catch (error) {
+    elements.sttSummary.textContent = "Microphone stop failed";
+    appendLog("Microphone stop failed", error);
+    throw error;
+  } finally {
+    setSttButtons({ loaded: Boolean(sttModel), busy: false });
+  }
+}
+
+async function startStreamingSession() {
+  if (!sttModel) {
+    appendLog("Cannot start streaming before loading an STT model");
+    return;
+  }
+
+  if (!sttModel.supportsStreaming) {
+    appendLog("Loaded STT model does not support streaming sessions", {
+      family: sttModel.family,
+      modelId: sttModel.modelId,
+    });
+    return;
+  }
+
+  setSttButtons({ loaded: true, busy: true });
+  elements.sttStreamingSummary.textContent = "Starting streaming session";
+  elements.sttStreamingTranscript.textContent = "";
+  elements.sttStreamingTiming.textContent = "Waiting for microphone";
+  elements.transcript.textContent = "";
+
+  try {
+    streamingSession = await sttModel.createSession();
+    streamingMicCapture = await createMicrophoneCapture({ sampleRate: 16000 });
+    streamingQueue = Promise.resolve();
+    streamingStartedAt = performance.now();
+
+    await streamingMicCapture.start({
+      onChunk(samples, sampleRate) {
+        if (!streamingSession) {
+          return;
+        }
+
+        streamingQueue = streamingQueue.then(async () => {
+          await streamingSession.push({ audio: samples, sampleRate });
+          const partial = await streamingSession.getResult();
+          elements.sttStreamingTranscript.textContent = partial.text || "(listening...)";
+          elements.sttStreamingSummary.textContent = partial.isEndpoint
+            ? "Endpoint detected"
+            : "Streaming microphone";
+        });
+      },
+    });
+
+    elements.sttStreamingSummary.textContent = "Streaming microphone";
+    appendLog("Streaming STT session started", {
+      modelId: sttModel.modelId,
+      family: sttModel.family,
+    });
+  } catch (error) {
+    elements.sttStreamingSummary.textContent = "Streaming start failed";
+    if (streamingMicCapture) {
+      await streamingMicCapture.close().catch(() => {});
+      streamingMicCapture = null;
+    }
+    if (streamingSession) {
+      await streamingSession.close().catch(() => {});
+      streamingSession = null;
+    }
+    appendLog("Streaming STT start failed", error);
+    throw error;
+  } finally {
+    setSttButtons({ loaded: Boolean(sttModel), busy: false });
+  }
+}
+
+async function stopStreamingSession() {
+  if (!streamingSession || !streamingMicCapture) {
+    appendLog("Cannot stop streaming because no session is active");
+    return;
+  }
+
+  setSttButtons({ loaded: true, busy: true });
+  elements.sttStreamingSummary.textContent = "Stopping streaming session";
+
+  try {
+    const mic = streamingMicCapture;
+    const session = streamingSession;
+    streamingMicCapture = null;
+    streamingSession = null;
+
+    const recordedAudio = await mic.stop();
+    await streamingQueue;
+    const finalResult = await session.finish();
+    await session.close();
+
+    const elapsedMs = Math.round(performance.now() - streamingStartedAt);
+    elements.sttStreamingSummary.textContent = "Streaming complete";
+    elements.sttStreamingTiming.textContent =
+      `${elapsedMs} ms, ${Math.round(recordedAudio.durationSec * 1000)} ms captured`;
+    elements.sttStreamingTranscript.textContent = finalResult.text || "(empty transcript)";
+
+    appendLog("Streaming STT result", {
+      modelId: finalResult.modelId,
+      isEndpoint: finalResult.isEndpoint,
+      text: finalResult.text,
+    });
+  } catch (error) {
+    elements.sttStreamingSummary.textContent = "Streaming stop failed";
+    appendLog("Streaming STT stop failed", error);
+    throw error;
+  } finally {
+    setSttButtons({ loaded: Boolean(sttModel), busy: false });
   }
 }
 
@@ -236,8 +423,9 @@ async function transcribe() {
   }
 
   const file = elements.sttAudio.files?.[0];
-  if (!file) {
-    appendLog("Cannot transcribe without choosing an audio file");
+  const audioSource = recordedMicAudio ?? file ?? null;
+  if (!audioSource) {
+    appendLog("Cannot transcribe without choosing an audio file or recording microphone audio");
     return;
   }
 
@@ -247,15 +435,31 @@ async function transcribe() {
   elements.transcript.textContent = "";
 
   const startedAt = performance.now();
-  appendLog("STT transcription request", {
-    modelId: elements.sttModelId.value.trim(),
-    name: file.name,
-    size: file.size,
-    type: file.type,
-  });
+  appendLog(
+    "STT transcription request",
+    recordedMicAudio
+      ? {
+          modelId: elements.sttModelId.value.trim(),
+          sampleRate: recordedMicAudio.sampleRate,
+          samples: recordedMicAudio.samples.length,
+          source: "microphone",
+        }
+      : {
+          modelId: elements.sttModelId.value.trim(),
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          source: "file",
+        },
+  );
 
   try {
-    const result = await sttModel.transcribe({ audio: file });
+    const result = recordedMicAudio
+      ? await sttModel.transcribe({
+          audio: recordedMicAudio.samples,
+          sampleRate: recordedMicAudio.sampleRate,
+        })
+      : await sttModel.transcribe({ audio: file });
     const elapsedMs = Math.round(performance.now() - startedAt);
     elements.sttSummary.textContent = "Transcription complete";
     elements.sttTiming.textContent = `${elapsedMs} ms`;
@@ -304,6 +508,18 @@ elements.generate.addEventListener("click", () => {
 elements.loadStt.addEventListener("click", () => {
   loadStt().catch(() => {});
 });
+elements.sttStreamingStart.addEventListener("click", () => {
+  startStreamingSession().catch(() => {});
+});
+elements.sttStreamingStop.addEventListener("click", () => {
+  stopStreamingSession().catch(() => {});
+});
+elements.sttMicStart.addEventListener("click", () => {
+  startMicCapture().catch(() => {});
+});
+elements.sttMicStop.addEventListener("click", () => {
+  stopMicCapture().catch(() => {});
+});
 elements.transcribe.addEventListener("click", () => {
   transcribe().catch(() => {});
 });
@@ -322,5 +538,6 @@ appendLog("Smoke page ready", {
   modelId: elements.modelId.value,
   sttModelId: elements.sttModelId.value,
 });
+elements.sttStreamingSummary.textContent = "Streaming idle";
 setButtons({ loaded: false, busy: false });
 setSttButtons({ loaded: false, busy: false });

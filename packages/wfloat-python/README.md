@@ -111,6 +111,32 @@ stt = wfloat.load_stt_model(
 That STT path is still an early monorepo development surface, not a polished
 public distribution story yet.
 
+Streaming-capable STT families also expose a separate session path instead of
+overloading `transcribe(...)`:
+
+```python
+stt = wfloat.load_stt_model("k2-fsa/streaming-zipformer-en")
+session = stt.create_session()
+
+session.push(audio_chunk, sample_rate=16000)
+partial = session.get_result()
+final_result = session.finish()
+session.close()
+```
+
+There is also a convenience loader for explicit local/URL overrides:
+
+```python
+stt = wfloat.load_stt_model(
+    "streaming-model-id",
+    family="zipformer-transducer",
+    encoder="https://example.com/encoder-epoch-99-avg-1.int8.onnx",
+    decoder="https://example.com/decoder-epoch-99-avg-1.onnx",
+    joiner="https://example.com/joiner-epoch-99-avg-1.onnx",
+    tokens="https://example.com/tokens.txt",
+)
+```
+
 You can also generate a WAV from the command line:
 
 ```bash

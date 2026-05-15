@@ -26,6 +26,7 @@ packages/react-native-wfloat/example/ios/build/
 
 # CMake / native builds
 out/
+build-*/
 cmake-build-*/
 vendor/sherpa-onnx/.emscripten_cache/
 vendor/sherpa-onnx/build-wasm-simd-speech/

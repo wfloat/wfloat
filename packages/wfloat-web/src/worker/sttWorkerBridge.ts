@@ -1,5 +1,5 @@
 import type { LoadModelProgressEvent } from "../tts/types.js";
-import type { TranscriptionResult } from "../stt/types.js";
+import type { StreamingTranscriptionResult, TranscriptionResult } from "../stt/types.js";
 import type { SttModelAssetsResponse, WorkerRequest, WorkerResponse } from "./workerTypes.js";
 // @ts-ignore
 import workerCode from "./worker-inline.js";
@@ -133,6 +133,107 @@ export class SttWorkerBridge {
     }
 
     return response.result;
+  }
+
+  static async createSession(): Promise<number> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "stt-create-session",
+    });
+
+    if (response.type !== "stt-create-session-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+
+    return response.sessionId;
+  }
+
+  static async pushSessionAudio(options: {
+    sessionId: number;
+    samples: Float32Array;
+    sampleRate: number;
+  }): Promise<void> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "stt-session-push",
+      sessionId: options.sessionId,
+      samples: options.samples,
+      sampleRate: options.sampleRate,
+    });
+
+    if (response.type !== "stt-session-push-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+  }
+
+  static async getSessionResult(sessionId: number): Promise<StreamingTranscriptionResult> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "stt-session-get-result",
+      sessionId,
+    });
+
+    if (response.type !== "stt-session-get-result-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+
+    return response.result;
+  }
+
+  static async finishSession(sessionId: number): Promise<StreamingTranscriptionResult> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "stt-session-finish",
+      sessionId,
+    });
+
+    if (response.type !== "stt-session-finish-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+
+    return response.result;
+  }
+
+  static async resetSession(sessionId: number): Promise<void> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "stt-session-reset",
+      sessionId,
+    });
+
+    if (response.type !== "stt-session-reset-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+  }
+
+  static async closeSession(sessionId: number): Promise<void> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "stt-session-close",
+      sessionId,
+    });
+
+    if (response.type !== "stt-session-close-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
   }
 }
 

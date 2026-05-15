@@ -125,3 +125,11 @@ class TranscriptionResult:
     json: str = ""
     tokens: Optional[List[TranscriptionToken]] = None
     segments: Optional[List[TranscriptionSegment]] = None
+
+
+@dataclass
+class StreamingTranscriptionResult:
+    text: str
+    model_id: str
+    is_endpoint: bool = False
+    json: str = ""

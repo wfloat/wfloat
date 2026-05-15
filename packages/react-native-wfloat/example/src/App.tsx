@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -12,27 +12,19 @@ import {
 } from 'react-native';
 import {
   SPEAKER_IDS,
-  TtsModel,
+  VALID_EMOTIONS,
+  loadSttModel,
   loadTtsModel,
   type LoadModelProgressEvent,
+  type StreamingTranscriptionResult,
+  type SttModel,
+  type SttSession,
   type TtsEmotion,
+  type TtsModel,
   type TtsProgressEvent,
-  VALID_EMOTIONS,
 } from '@wfloat/react-native-wfloat';
-import { LOCAL_CONFIG } from './localConfig';
 
-type ExampleLocalConfig = {
-  modelId: string;
-  sampleText?: string;
-  voiceId?: string | number;
-  emotion?: TtsEmotion;
-  intensity?: number;
-  speed?: number;
-  silencePaddingSec?: number;
-};
-
-type ExampleStatus = 'off' | 'loading-model' | 'generating' | 'ready';
-
+type ExampleStatus = 'idle' | 'loading' | 'ready' | 'running';
 type LogLevel = 'info' | 'success' | 'error';
 
 type LogEntry = {
@@ -41,16 +33,19 @@ type LogEntry = {
   message: string;
 };
 
-const EXAMPLE_CONFIG = LOCAL_CONFIG as ExampleLocalConfig;
+const DEFAULT_TTS_MODEL_ID = 'wfloat/wfloat-tts';
+const DEFAULT_OFFLINE_STT_MODEL_ID = 'openai/whisper-tiny-en';
+const DEFAULT_STREAMING_STT_MODEL_ID = 'k2-fsa/streaming-zipformer-en';
 const DEFAULT_TEXT =
-  EXAMPLE_CONFIG.sampleText ??
-  'Wfloat on React Native is now generating speech directly on iOS.';
-const DEFAULT_VOICE_ID = String(EXAMPLE_CONFIG.voiceId ?? 'narrator_woman');
-const DEFAULT_EMOTION = EXAMPLE_CONFIG.emotion ?? 'neutral';
-const DEFAULT_INTENSITY = String(EXAMPLE_CONFIG.intensity ?? 0.5);
-const DEFAULT_SPEED = String(EXAMPLE_CONFIG.speed ?? 1);
-const DEFAULT_SILENCE_PADDING = String(EXAMPLE_CONFIG.silencePaddingSec ?? 0.1);
-const MAX_LOGS = 18;
+  'Wfloat on React Native is now generating speech directly on device.';
+const DEFAULT_VOICE_ID = 'narrator_woman';
+const DEFAULT_EMOTION: TtsEmotion = 'neutral';
+const DEFAULT_INTENSITY = '0.5';
+const DEFAULT_SPEED = '1';
+const DEFAULT_SILENCE_PADDING = '0.1';
+const DEFAULT_SAMPLE_RATE = '16000';
+const DEFAULT_SILENCE_MS = '1200';
+const MAX_LOGS = 24;
 
 function clampUnit(value: number, fallback: number): number {
   if (!Number.isFinite(value)) {
@@ -91,9 +86,7 @@ function normalizeVoiceIdInput(input: string): string | number {
   return trimmed;
 }
 
-function renderHighlightedText(
-  progressEvent: TtsProgressEvent | null
-): string {
+function renderHighlightedText(progressEvent: TtsProgressEvent | null): string {
   if (!progressEvent) {
     return 'No progress event received yet.';
   }
@@ -105,38 +98,66 @@ function renderHighlightedText(
 
   const start = Math.min(Math.max(textHighlightStart, 0), text.length);
   const end = Math.min(Math.max(textHighlightEnd, start), text.length);
-
   return `${text.slice(0, start)}[${text.slice(start, end)}]${text.slice(end)}`;
 }
 
+function buildSilenceSamples(sampleRate: number, durationMs: number): Float32Array {
+  const frameCount = Math.max(1, Math.round((sampleRate * durationMs) / 1000));
+  return new Float32Array(frameCount);
+}
+
 export default function App() {
+  const [assetHost, setAssetHost] = useState('');
+
+  const [ttsModelId, setTtsModelId] = useState(DEFAULT_TTS_MODEL_ID);
   const [ttsModel, setTtsModel] = useState<TtsModel | null>(null);
-  const [status, setStatus] = useState<ExampleStatus>('off');
+  const [ttsStatus, setTtsStatus] = useState<ExampleStatus>('idle');
   const [text, setText] = useState(DEFAULT_TEXT);
   const [voiceId, setVoiceId] = useState(DEFAULT_VOICE_ID);
   const [emotion, setEmotion] = useState<TtsEmotion>(DEFAULT_EMOTION);
   const [intensity, setIntensity] = useState(DEFAULT_INTENSITY);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
-  const [silencePaddingSec, setSilencePaddingSec] = useState(
-    DEFAULT_SILENCE_PADDING
-  );
-  const [loadProgress, setLoadProgress] =
+  const [silencePaddingSec, setSilencePaddingSec] =
+    useState(DEFAULT_SILENCE_PADDING);
+  const [ttsLoadProgress, setTtsLoadProgress] =
     useState<LoadModelProgressEvent | null>(null);
-  const [progressEvent, setProgressEvent] =
+  const [ttsProgressEvent, setTtsProgressEvent] =
     useState<TtsProgressEvent | null>(null);
+
+  const [offlineSttModelId, setOfflineSttModelId] = useState(
+    DEFAULT_OFFLINE_STT_MODEL_ID
+  );
+  const [offlineSttModel, setOfflineSttModel] = useState<SttModel | null>(null);
+  const [offlineSttStatus, setOfflineSttStatus] = useState<ExampleStatus>('idle');
+  const [offlineSttLoadProgress, setOfflineSttLoadProgress] =
+    useState<LoadModelProgressEvent | null>(null);
+  const [offlineTranscript, setOfflineTranscript] = useState('');
+
+  const [streamingSttModelId, setStreamingSttModelId] = useState(
+    DEFAULT_STREAMING_STT_MODEL_ID
+  );
+  const [streamingSttModel, setStreamingSttModel] = useState<SttModel | null>(
+    null
+  );
+  const [streamingSttStatus, setStreamingSttStatus] =
+    useState<ExampleStatus>('idle');
+  const [streamingSttLoadProgress, setStreamingSttLoadProgress] =
+    useState<LoadModelProgressEvent | null>(null);
+  const [streamingResult, setStreamingResult] =
+    useState<StreamingTranscriptionResult | null>(null);
+  const [streamingSampleRate, setStreamingSampleRate] =
+    useState(DEFAULT_SAMPLE_RATE);
+  const [streamingChunkMs, setStreamingChunkMs] = useState(DEFAULT_SILENCE_MS);
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const streamingSessionRef = useRef<SttSession | null>(null);
 
   const addLog = (message: string, level: LogLevel = 'info') => {
     setLogs((currentLogs) => {
       const nextLogs = [
-        {
-          id: Date.now() + currentLogs.length,
-          level,
-          message,
-        },
+        { id: Date.now() + currentLogs.length, level, message },
         ...currentLogs,
       ];
-
       return nextLogs.slice(0, MAX_LOGS);
     });
   };
@@ -154,28 +175,29 @@ export default function App() {
   }, [voiceId]);
 
   const highlightedTextPreview = useMemo(
-    () => renderHighlightedText(progressEvent),
-    [progressEvent]
+    () => renderHighlightedText(ttsProgressEvent),
+    [ttsProgressEvent]
   );
 
-  const handleLoadModel = async () => {
-    setStatus('loading-model');
-    setLoadProgress(null);
-    addLog(`Loading model ${EXAMPLE_CONFIG.modelId}`);
+  const normalizedAssetHost = assetHost.trim() || undefined;
+
+  const handleLoadTtsModel = async () => {
+    setTtsStatus('loading');
+    setTtsLoadProgress(null);
+    addLog(`Loading TTS model ${ttsModelId}`);
 
     try {
-      const model = await loadTtsModel(EXAMPLE_CONFIG.modelId, {
-        onProgress: (event) => {
-          setLoadProgress(event);
-        },
+      const model = await loadTtsModel(ttsModelId, {
+        modelAssetHost: normalizedAssetHost,
+        onProgress: (event) => setTtsLoadProgress(event),
       });
       setTtsModel(model);
-      setStatus('ready');
-      addLog('Model loaded successfully.', 'success');
+      setTtsStatus('ready');
+      addLog('TTS model loaded successfully.', 'success');
     } catch (error) {
-      setStatus('off');
+      setTtsStatus('idle');
       addLog(
-        error instanceof Error ? error.message : 'Failed to load model.',
+        error instanceof Error ? error.message : 'Failed to load TTS model.',
         'error'
       );
     }
@@ -183,7 +205,7 @@ export default function App() {
 
   const handleGenerate = async () => {
     if (!ttsModel) {
-      addLog('Load a model first.', 'error');
+      addLog('Load a TTS model first.', 'error');
       return;
     }
 
@@ -195,8 +217,8 @@ export default function App() {
     );
     const normalizedVoiceId = normalizeVoiceIdInput(voiceId);
 
-    setStatus('generating');
-    setProgressEvent(null);
+    setTtsStatus('running');
+    setTtsProgressEvent(null);
     addLog(
       `Generating with ${selectedVoiceName}, ${emotion}, speed ${normalizedSpeed.toFixed(
         2
@@ -212,18 +234,18 @@ export default function App() {
         speed: normalizedSpeed,
         silencePaddingSec: normalizedSilencePadding,
         onProgress: (event) => {
-          setProgressEvent(event);
+          setTtsProgressEvent(event);
         },
         onFinishedPlaying: () => {
-          setStatus('ready');
-          addLog('Playback finished.', 'success');
+          setTtsStatus('ready');
+          addLog('TTS playback finished.', 'success');
         },
       });
 
-      setStatus('ready');
-      addLog('Generation promise resolved.', 'success');
+      setTtsStatus('ready');
+      addLog('TTS generation promise resolved.', 'success');
     } catch (error) {
-      setStatus(ttsModel ? 'ready' : 'off');
+      setTtsStatus(ttsModel ? 'ready' : 'idle');
       addLog(
         error instanceof Error ? error.message : 'Failed to generate speech.',
         'error'
@@ -233,7 +255,7 @@ export default function App() {
 
   const handleGenerateDialogue = async () => {
     if (!ttsModel) {
-      addLog('Load a model first.', 'error');
+      addLog('Load a TTS model first.', 'error');
       return;
     }
 
@@ -245,9 +267,9 @@ export default function App() {
     );
     const normalizedVoiceId = normalizeVoiceIdInput(voiceId);
 
-    setStatus('generating');
-    setProgressEvent(null);
-    addLog('Generating two-segment dialogue.');
+    setTtsStatus('running');
+    setTtsProgressEvent(null);
+    addLog('Generating dialogue test.');
 
     try {
       await ttsModel.synthesizeDialogue({
@@ -275,18 +297,18 @@ export default function App() {
         speed: normalizedSpeed,
         silenceBetweenSegmentsSec: 0.2,
         onProgress: (event) => {
-          setProgressEvent(event);
+          setTtsProgressEvent(event);
         },
         onFinishedPlaying: () => {
-          setStatus('ready');
+          setTtsStatus('ready');
           addLog('Dialogue playback finished.', 'success');
         },
       });
 
-      setStatus('ready');
+      setTtsStatus('ready');
       addLog('Dialogue generation promise resolved.', 'success');
     } catch (error) {
-      setStatus(ttsModel ? 'ready' : 'off');
+      setTtsStatus(ttsModel ? 'ready' : 'idle');
       addLog(
         error instanceof Error ? error.message : 'Failed to generate dialogue.',
         'error'
@@ -296,7 +318,7 @@ export default function App() {
 
   const handlePlay = async () => {
     if (!ttsModel) {
-      addLog('Load a model first.', 'error');
+      addLog('Load a TTS model first.', 'error');
       return;
     }
 
@@ -305,14 +327,12 @@ export default function App() {
       addLog('Play requested.');
     } catch (error) {
       addLog(error instanceof Error ? error.message : 'Play failed.', 'error');
-    } finally {
-      setStatus(ttsModel ? 'ready' : 'off');
     }
   };
 
   const handlePause = async () => {
     if (!ttsModel) {
-      addLog('Load a model first.', 'error');
+      addLog('Load a TTS model first.', 'error');
       return;
     }
 
@@ -321,8 +341,194 @@ export default function App() {
       addLog('Pause requested.');
     } catch (error) {
       addLog(error instanceof Error ? error.message : 'Pause failed.', 'error');
-    } finally {
-      setStatus(ttsModel ? 'ready' : 'off');
+    }
+  };
+
+  const handleLoadOfflineStt = async () => {
+    setOfflineSttStatus('loading');
+    setOfflineSttLoadProgress(null);
+    setOfflineTranscript('');
+    addLog(`Loading offline STT model ${offlineSttModelId}`);
+
+    try {
+      const model = await loadSttModel(offlineSttModelId, {
+        modelAssetHost: normalizedAssetHost,
+        language: 'en',
+        onProgress: (event) => setOfflineSttLoadProgress(event),
+      });
+      setOfflineSttModel(model);
+      setOfflineSttStatus('ready');
+      addLog('Offline STT model loaded successfully.', 'success');
+    } catch (error) {
+      setOfflineSttStatus('idle');
+      addLog(
+        error instanceof Error ? error.message : 'Failed to load offline STT model.',
+        'error'
+      );
+    }
+  };
+
+  const handleOfflineTranscribe = async () => {
+    if (!offlineSttModel) {
+      addLog('Load the offline STT model first.', 'error');
+      return;
+    }
+
+    const sampleRate = parsePositiveNumber(streamingSampleRate, 16000);
+    const silenceMs = parsePositiveNumber(streamingChunkMs, 1200);
+    const samples = buildSilenceSamples(sampleRate, silenceMs);
+
+    setOfflineSttStatus('running');
+    addLog(
+      `Running offline STT over ${samples.length} silent samples at ${sampleRate} Hz`
+    );
+
+    try {
+      const result = await offlineSttModel.transcribe({
+        audio: samples,
+        sampleRate,
+      });
+      setOfflineTranscript(result.text);
+      setOfflineSttStatus('ready');
+      addLog(`Offline STT result: "${result.text}"`, 'success');
+    } catch (error) {
+      setOfflineSttStatus('ready');
+      addLog(
+        error instanceof Error ? error.message : 'Offline transcription failed.',
+        'error'
+      );
+    }
+  };
+
+  const handleLoadStreamingStt = async () => {
+    setStreamingSttStatus('loading');
+    setStreamingSttLoadProgress(null);
+    setStreamingResult(null);
+    addLog(`Loading streaming STT model ${streamingSttModelId}`);
+
+    try {
+      const model = await loadSttModel(streamingSttModelId, {
+        modelAssetHost: normalizedAssetHost,
+        onProgress: (event) => setStreamingSttLoadProgress(event),
+      });
+      setStreamingSttModel(model);
+      setStreamingSttStatus('ready');
+      addLog('Streaming STT model loaded successfully.', 'success');
+    } catch (error) {
+      setStreamingSttStatus('idle');
+      addLog(
+        error instanceof Error ? error.message : 'Failed to load streaming STT model.',
+        'error'
+      );
+    }
+  };
+
+  const handleStartStreaming = async () => {
+    if (!streamingSttModel) {
+      addLog('Load the streaming STT model first.', 'error');
+      return;
+    }
+
+    try {
+      if (streamingSessionRef.current) {
+        await streamingSessionRef.current.close();
+      }
+      const session = await streamingSttModel.createSession();
+      streamingSessionRef.current = session;
+      setStreamingResult(null);
+      setStreamingSttStatus('running');
+      addLog('Streaming STT session created.', 'success');
+    } catch (error) {
+      addLog(
+        error instanceof Error ? error.message : 'Failed to create streaming session.',
+        'error'
+      );
+    }
+  };
+
+  const handlePushStreamingChunk = async () => {
+    if (!streamingSessionRef.current) {
+      addLog('Create a streaming session first.', 'error');
+      return;
+    }
+
+    const sampleRate = parsePositiveNumber(streamingSampleRate, 16000);
+    const silenceMs = parsePositiveNumber(streamingChunkMs, 1200);
+    const samples = buildSilenceSamples(sampleRate, silenceMs);
+
+    try {
+      await streamingSessionRef.current.push({
+        audio: samples,
+        sampleRate,
+      });
+      const partial = await streamingSessionRef.current.getResult();
+      setStreamingResult(partial);
+      addLog(
+        `Pushed streaming chunk (${samples.length} samples). Partial: "${partial.text}"`,
+        'success'
+      );
+    } catch (error) {
+      addLog(
+        error instanceof Error ? error.message : 'Failed to push streaming chunk.',
+        'error'
+      );
+    }
+  };
+
+  const handleFinishStreaming = async () => {
+    if (!streamingSessionRef.current) {
+      addLog('Create a streaming session first.', 'error');
+      return;
+    }
+
+    try {
+      const finalResult = await streamingSessionRef.current.finish();
+      setStreamingResult(finalResult);
+      setStreamingSttStatus('ready');
+      addLog(`Streaming STT final: "${finalResult.text}"`, 'success');
+    } catch (error) {
+      addLog(
+        error instanceof Error ? error.message : 'Failed to finish streaming session.',
+        'error'
+      );
+    }
+  };
+
+  const handleResetStreaming = async () => {
+    if (!streamingSessionRef.current) {
+      addLog('Create a streaming session first.', 'error');
+      return;
+    }
+
+    try {
+      await streamingSessionRef.current.reset();
+      setStreamingResult(null);
+      addLog('Streaming STT session reset.', 'success');
+    } catch (error) {
+      addLog(
+        error instanceof Error ? error.message : 'Failed to reset streaming session.',
+        'error'
+      );
+    }
+  };
+
+  const handleCloseStreaming = async () => {
+    if (!streamingSessionRef.current) {
+      addLog('No streaming session is open.', 'error');
+      return;
+    }
+
+    try {
+      await streamingSessionRef.current.close();
+      streamingSessionRef.current = null;
+      setStreamingResult(null);
+      setStreamingSttStatus(streamingSttModel ? 'ready' : 'idle');
+      addLog('Streaming STT session closed.', 'success');
+    } catch (error) {
+      addLog(
+        error instanceof Error ? error.message : 'Failed to close streaming session.',
+        'error'
+      );
     }
   };
 
@@ -343,30 +549,46 @@ export default function App() {
           <View style={styles.header}>
             <Text style={styles.title}>Wfloat RN Example</Text>
             <Text style={styles.subtitle}>
-              Manual test bed for model load, speech generate, progress, and
-              playback controls.
+              Manual smoke test for TTS, offline STT, and streaming STT on
+              React Native.
             </Text>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Session</Text>
-            <Text style={styles.label}>Model ID</Text>
-            <Text style={styles.value}>{EXAMPLE_CONFIG.modelId}</Text>
+            <Text style={styles.cardTitle}>Asset API</Text>
+            <InputField
+              label="Model Asset Host"
+              value={assetHost}
+              onChangeText={setAssetHost}
+            />
+            <Text style={styles.helpText}>
+              Leave blank for production. Set this to your local asset API host
+              when testing against a dev server.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>TTS</Text>
+            <InputField
+              label="TTS Model ID"
+              value={ttsModelId}
+              onChangeText={setTtsModelId}
+            />
             <View style={styles.metricsRow}>
-              <Metric label="Status" value={status} />
+              <Metric label="Status" value={ttsStatus} />
               <Metric
                 label="Load"
                 value={
-                  loadProgress?.status === 'downloading'
-                    ? `${Math.round(loadProgress.progress * 100)}%`
-                    : (loadProgress?.status ?? 'idle')
+                  ttsLoadProgress?.status === 'downloading'
+                    ? `${Math.round(ttsLoadProgress.progress * 100)}%`
+                    : (ttsLoadProgress?.status ?? 'idle')
                 }
               />
               <Metric
                 label="Speech"
                 value={
-                  progressEvent
-                    ? `${Math.round(progressEvent.progress * 100)}%`
+                  ttsProgressEvent
+                    ? `${Math.round(ttsProgressEvent.progress * 100)}%`
                     : 'idle'
                 }
               />
@@ -374,13 +596,13 @@ export default function App() {
             <View style={styles.metricsRow}>
               <Metric
                 label="Playing"
-                value={progressEvent?.isPlaying ? 'yes' : 'no'}
+                value={ttsProgressEvent?.isPlaying ? 'yes' : 'no'}
               />
               <Metric label="Voice" value={selectedVoiceName} />
               <Metric label="Emotion" value={emotion} />
             </View>
             <View style={styles.buttonRow}>
-              <ActionButton title="Load Model" onPress={handleLoadModel} />
+              <ActionButton title="Load TTS" onPress={handleLoadTtsModel} />
               <ActionButton title="Generate" onPress={handleGenerate} />
               <ActionButton title="Dialogue" onPress={handleGenerateDialogue} />
             </View>
@@ -391,7 +613,7 @@ export default function App() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Speech Options</Text>
+            <Text style={styles.cardTitle}>TTS Options</Text>
             <InputField
               label="Voice ID or SID"
               value={voiceId}
@@ -456,7 +678,97 @@ export default function App() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Progress Preview</Text>
+            <Text style={styles.cardTitle}>Offline STT</Text>
+            <InputField
+              label="Offline STT Model ID"
+              value={offlineSttModelId}
+              onChangeText={setOfflineSttModelId}
+            />
+            <View style={styles.metricsRow}>
+              <Metric label="Status" value={offlineSttStatus} />
+              <Metric
+                label="Load"
+                value={
+                  offlineSttLoadProgress?.status === 'downloading'
+                    ? `${Math.round(offlineSttLoadProgress.progress * 100)}%`
+                    : (offlineSttLoadProgress?.status ?? 'idle')
+                }
+              />
+              <Metric label="Text" value={offlineTranscript || 'empty'} />
+            </View>
+            <View style={styles.inlineInputs}>
+              <InputField
+                label="Sample Rate"
+                value={streamingSampleRate}
+                onChangeText={setStreamingSampleRate}
+                keyboardType="decimal-pad"
+                compact
+              />
+              <InputField
+                label="Silence ms"
+                value={streamingChunkMs}
+                onChangeText={setStreamingChunkMs}
+                keyboardType="decimal-pad"
+                compact
+              />
+            </View>
+            <View style={styles.buttonRow}>
+              <ActionButton title="Load Offline STT" onPress={handleLoadOfflineStt} />
+              <ActionButton title="Transcribe Silence" onPress={handleOfflineTranscribe} />
+            </View>
+            <Text style={styles.helpText}>
+              This uses a silent PCM clip so you can verify load and transcription
+              plumbing even before adding file-picker or mic capture UI.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Streaming STT</Text>
+            <InputField
+              label="Streaming STT Model ID"
+              value={streamingSttModelId}
+              onChangeText={setStreamingSttModelId}
+            />
+            <View style={styles.metricsRow}>
+              <Metric label="Status" value={streamingSttStatus} />
+              <Metric
+                label="Load"
+                value={
+                  streamingSttLoadProgress?.status === 'downloading'
+                    ? `${Math.round(streamingSttLoadProgress.progress * 100)}%`
+                    : (streamingSttLoadProgress?.status ?? 'idle')
+                }
+              />
+              <Metric
+                label="Endpoint"
+                value={streamingResult?.isEndpoint ? 'yes' : 'no'}
+              />
+            </View>
+            <Text style={styles.label}>Latest partial/final text</Text>
+            <Text style={styles.previewText}>
+              {streamingResult?.text || 'No streaming result yet.'}
+            </Text>
+            <View style={styles.buttonRow}>
+              <ActionButton title="Load Streaming STT" onPress={handleLoadStreamingStt} />
+              <ActionButton title="Start Session" onPress={handleStartStreaming} />
+            </View>
+            <View style={styles.buttonRow}>
+              <ActionButton title="Push Silence" onPress={handlePushStreamingChunk} secondary />
+              <ActionButton title="Finish" onPress={handleFinishStreaming} secondary />
+            </View>
+            <View style={styles.buttonRow}>
+              <ActionButton title="Reset" onPress={handleResetStreaming} secondary />
+              <ActionButton title="Close" onPress={handleCloseStreaming} secondary />
+            </View>
+            <Text style={styles.helpText}>
+              This also uses silent PCM chunks. It is meant to verify session
+              lifecycle and partial/final result calls before wiring microphone
+              capture.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>TTS Progress Preview</Text>
             <Text style={styles.label}>Latest chunk</Text>
             <Text style={styles.previewText}>{highlightedTextPreview}</Text>
             <Text style={styles.helpText}>
@@ -618,10 +930,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
-  },
-  value: {
-    color: '#243224',
-    fontSize: 14,
   },
   metricsRow: {
     flexDirection: 'row',

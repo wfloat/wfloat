@@ -18,6 +18,31 @@ export type WorkerRequestTemplate =
       type: "stt-transcribe";
       samples: Float32Array;
       sampleRate: number;
+    }
+  | {
+      type: "stt-create-session";
+    }
+  | {
+      type: "stt-session-push";
+      sessionId: number;
+      samples: Float32Array;
+      sampleRate: number;
+    }
+  | {
+      type: "stt-session-get-result";
+      sessionId: number;
+    }
+  | {
+      type: "stt-session-finish";
+      sessionId: number;
+    }
+  | {
+      type: "stt-session-reset";
+      sessionId: number;
+    }
+  | {
+      type: "stt-session-close";
+      sessionId: number;
     };
 
 export type WorkerRequest = WorkerRequestTemplate & { id: number };
@@ -51,12 +76,50 @@ export type WorkerResponse =
       id: number;
       type: "stt-load-model-done";
       family: string;
+      supportsStreaming: boolean;
       persistentId?: string;
     }
   | {
       id: number;
       type: "stt-transcribe-done";
       result: TranscriptionResult;
+    }
+  | {
+      id: number;
+      type: "stt-create-session-done";
+      sessionId: number;
+    }
+  | {
+      id: number;
+      type: "stt-session-push-done";
+    }
+  | {
+      id: number;
+      type: "stt-session-get-result-done";
+      result: {
+        text: string;
+        modelId: string;
+        isEndpoint: boolean;
+        json: string;
+      };
+    }
+  | {
+      id: number;
+      type: "stt-session-finish-done";
+      result: {
+        text: string;
+        modelId: string;
+        isEndpoint: boolean;
+        json: string;
+      };
+    }
+  | {
+      id: number;
+      type: "stt-session-reset-done";
+    }
+  | {
+      id: number;
+      type: "stt-session-close-done";
     };
 
 export type SpeechGenerateWorkerOptions = {

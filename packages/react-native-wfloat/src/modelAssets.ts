@@ -1,4 +1,4 @@
-import { fetchTtsModelManifest } from './modelManifest';
+import { fetchSttModelManifest, fetchTtsModelManifest } from './modelManifest';
 
 export type ModelAssetsResponse = {
   model_onnx: string;
@@ -7,8 +7,21 @@ export type ModelAssetsResponse = {
   espeak_checksum: string;
 };
 
+export type SttModelAssetsResponse = {
+  family: string;
+  model?: string;
+  tokens?: string;
+  preprocessor?: string;
+  encoder?: string;
+  decoder?: string;
+  joiner?: string;
+  uncached_decoder?: string;
+  cached_decoder?: string;
+};
+
 export async function getModelAssets(
-  modelId: string
+  modelId: string,
+  modelAssetHost?: string
 ): Promise<ModelAssetsResponse> {
   const trimmedModelId = modelId.trim();
   if (!trimmedModelId) {
@@ -17,6 +30,7 @@ export async function getModelAssets(
 
   const data = await fetchTtsModelManifest({
     modelName: trimmedModelId,
+    host: modelAssetHost,
   });
   const files =
     data.files && typeof data.files === 'object' ? data.files : undefined;
@@ -33,5 +47,39 @@ export async function getModelAssets(
       typeof files.espeak_data.checksum === 'string'
         ? files.espeak_data.checksum
         : '',
+  };
+}
+
+export async function getSttModelAssets(
+  modelId: string,
+  modelAssetHost?: string
+): Promise<SttModelAssetsResponse> {
+  const trimmedModelId = modelId.trim();
+  if (!trimmedModelId) {
+    throw new Error('modelId is required.');
+  }
+
+  const data = await fetchSttModelManifest({
+    modelName: trimmedModelId,
+    host: modelAssetHost,
+  });
+  const files =
+    data.files && typeof data.files === 'object' ? data.files : undefined;
+  const family = typeof data.family === 'string' ? data.family : '';
+
+  if (!family || !files?.tokens?.url) {
+    throw new Error('STT model asset manifest is missing required fields.');
+  }
+
+  return {
+    family,
+    model: files.model?.url,
+    tokens: files.tokens?.url,
+    preprocessor: files.preprocessor?.url,
+    encoder: files.encoder?.url,
+    decoder: files.decoder?.url,
+    joiner: files.joiner?.url,
+    uncached_decoder: files.uncached_decoder?.url,
+    cached_decoder: files.cached_decoder?.url,
   };
 }

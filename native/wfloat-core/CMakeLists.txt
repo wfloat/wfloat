@@ -39,13 +39,11 @@ target_include_directories(wfloat-core-shared
 
 target_link_libraries(wfloat-core
     PUBLIC
-        sherpa-onnx-core
         sherpa-onnx-c-api
 )
 
 target_link_libraries(wfloat-core-shared
     PUBLIC
-        sherpa-onnx-core
         sherpa-onnx-c-api
 )
 

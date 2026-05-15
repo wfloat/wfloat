@@ -61,6 +61,7 @@ export async function fetchModelManifest(args: {
   platform?: string;
   version?: string;
   persistentId?: string;
+  host?: string;
 }): Promise<BaseModelManifest> {
   const params = new URLSearchParams({
     model_name: args.modelName,
@@ -73,7 +74,7 @@ export async function fetchModelManifest(args: {
   }
 
   const response = await fetch(
-    `${MODEL_ASSET_HOST}${MODEL_ASSET_PATH}?${params.toString()}`,
+    `${args.host ?? MODEL_ASSET_HOST}${MODEL_ASSET_PATH}?${params.toString()}`,
     {
       method: 'GET',
       headers: {
@@ -94,6 +95,7 @@ export async function fetchTtsModelManifest(args: {
   platform?: string;
   version?: string;
   persistentId?: string;
+  host?: string;
 }): Promise<TtsModelManifest> {
   return (await fetchModelManifest(args)) as TtsModelManifest;
 }
@@ -103,6 +105,7 @@ export async function fetchSttModelManifest(args: {
   platform?: string;
   version?: string;
   persistentId?: string;
+  host?: string;
 }): Promise<SttModelManifest> {
   return (await fetchModelManifest(args)) as SttModelManifest;
 }

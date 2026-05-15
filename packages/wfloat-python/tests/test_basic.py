@@ -7,9 +7,10 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 import wfloat
-from wfloat import _core
+from wfloat import _assets, _core
 from wfloat._assets import ModelAssets, SttModelAssets
 from wfloat._cache import (
     CachedModelAssets,
@@ -21,7 +22,7 @@ from wfloat._cache import (
 from wfloat._model import Model
 from wfloat import _native
 from wfloat._results import Audio
-from wfloat._stt import SttModel
+from wfloat._stt import SttModel, SttSession
 from wfloat._stt_assets import cache_stt_model_assets
 
 
@@ -97,9 +98,11 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertTrue(hasattr(wfloat, "Model"))
         self.assertTrue(hasattr(wfloat, "TtsModel"))
         self.assertTrue(hasattr(wfloat, "SttModel"))
+        self.assertTrue(hasattr(wfloat, "SttSession"))
         self.assertTrue(hasattr(wfloat, "Audio"))
         self.assertTrue(hasattr(wfloat, "AudioResult"))
         self.assertTrue(hasattr(wfloat, "GenerationResult"))
+        self.assertTrue(hasattr(wfloat, "StreamingTranscriptionResult"))
         self.assertTrue(hasattr(wfloat, "TtsSynthesisResult"))
         self.assertTrue(hasattr(wfloat, "TranscriptionResult"))
         self.assertIn("narrator_woman", wfloat.SPEAKER_IDS)
@@ -162,6 +165,48 @@ class TestWfloatSmoke(unittest.TestCase):
 
         self.assertIs(result, sentinel)
         native_stt.transcribe_result.assert_called_once()
+
+    def test_stt_model_create_session_uses_native_backend(self):
+        sentinel = object()
+        native_stt = types.SimpleNamespace(create_session=mock.Mock(return_value=sentinel))
+        model = SttModel(model_id="k2-fsa/streaming-zipformer-en", _native_stt=native_stt)
+
+        session = model.create_session()
+
+        self.assertIsInstance(session, SttSession)
+        self.assertIs(session._native_session, sentinel)
+        native_stt.create_session.assert_called_once()
+
+    def test_stt_session_get_result_uses_native_backend(self):
+        sentinel = wfloat.StreamingTranscriptionResult(
+            text="HELLO WORLD",
+            model_id="k2-fsa/streaming-zipformer-en",
+            is_endpoint=False,
+        )
+        native_session = types.SimpleNamespace(
+            get_result=mock.Mock(return_value=sentinel),
+            push=mock.Mock(),
+            finish=mock.Mock(return_value=sentinel),
+            reset=mock.Mock(),
+            close=mock.Mock(),
+        )
+        session = SttSession(
+            model_id="k2-fsa/streaming-zipformer-en",
+            _native_session=native_session,
+        )
+
+        result = session.get_result()
+        session.push([0.1, -0.2], sample_rate=16000)
+        session.reset()
+        session.finish()
+        session.close()
+
+        self.assertIs(result, sentinel)
+        native_session.get_result.assert_called_once()
+        native_session.push.assert_called_once()
+        native_session.reset.assert_called_once()
+        native_session.finish.assert_called_once()
+        native_session.close.assert_called_once()
 
     def test_load_stt_model_wires_cache_and_core_loader(self):
         fake_cached = types.SimpleNamespace(
@@ -632,6 +677,38 @@ class TestWfloatSmoke(unittest.TestCase):
             self.assertIsNone(load_persistent_id(cache_dir))
             save_persistent_id("persist-123", cache_dir)
             self.assertEqual(load_persistent_id(cache_dir), "persist-123")
+
+    def test_fetch_stt_assets_infers_capability_from_model_name(self):
+        payload = b'{"family":"zipformer-transducer","files":{"tokens":{"url":"https://example.com/tokens.txt"}}}'
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return payload
+
+        with mock.patch("wfloat._assets.urlopen", return_value=_FakeResponse()) as urlopen_mock:
+            assets = _assets.fetch_stt_assets(
+                "k2-fsa/streaming-zipformer-en",
+                family="zipformer-transducer",
+                persistent_id="persist-123",
+                package_version_override="1.5.2",
+            )
+
+        self.assertEqual(assets.family, "zipformer-transducer")
+        request = urlopen_mock.call_args.args[0]
+        parsed = urlparse(request.full_url)
+        query = parse_qs(parsed.query)
+        self.assertEqual(query["model_name"], ["k2-fsa/streaming-zipformer-en"])
+        self.assertEqual(query["platform"], ["python"])
+        self.assertEqual(query["version"], ["1.5.2"])
+        self.assertEqual(query["family"], ["zipformer-transducer"])
+        self.assertEqual(query["persistent_id"], ["persist-123"])
+        self.assertNotIn("capability", query)
 
     def test_load_wires_endpoint_cache_and_native_builder(self):
         fake_assets = ModelAssets(

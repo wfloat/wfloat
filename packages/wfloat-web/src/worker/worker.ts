@@ -5,7 +5,7 @@ import {
   createOfflineTts,
   prepareWfloatText,
 } from "../wasm/sherpa-onnx-tts.js";
-import { OfflineRecognizer } from "../wasm/sherpa-onnx-asr.js";
+import { createOnlineRecognizer, OfflineRecognizer } from "../wasm/sherpa-onnx-asr.js";
 import { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "../tts/catalog.js";
 import type { TtsEmotion } from "../tts/types.js";
 import { fetchSttModelManifest, fetchTtsModelManifest } from "../modelManifest.js";
@@ -23,7 +23,8 @@ import { computeStartTime } from "../util/schedulingUtil.js";
 
 let SherpaSpeechModuleInstancePromise: Promise<SherpaModule>;
 let TTS: OfflineTts | null = null;
-let STT: OfflineRecognizer | null = null;
+let OFFLINE_STT: OfflineRecognizer | null = null;
+let ONLINE_STT: ReturnType<typeof createOnlineRecognizer> | null = null;
 // let CURRENT_GENERATE_ID: number | null = null;
 // let DO_EARLY_STOP: Boolean = false;
 let EARLY_STOP_MESSAGE_ID: number | null = null;
@@ -31,6 +32,8 @@ let EARLY_STOP_MESSAGE_ID: number | null = null;
 let TTS_MODEL_ASSET_URLS: ModelAssetsResponse | null = null;
 let STT_MODEL_ASSET_URLS: SttModelAssetsResponse | null = null;
 let STT_MODEL_ID: string | null = null;
+let NEXT_STT_SESSION_ID = 1;
+const STT_SESSIONS = new Map<number, ReturnType<ReturnType<typeof createOnlineRecognizer>["createStream"]>>();
 let INSTALLED_ESPEAK_ARCHIVE_URL: string | null = null;
 let SHERPA_SPEECH_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = null;
 
@@ -650,6 +653,100 @@ function buildSttRecognizerConfig(options: {
   throw new Error(`Unsupported STT family: ${options.family}`);
 }
 
+function supportsStreamingSttFamily(family: string): boolean {
+  return family === "zipformer-transducer";
+}
+
+function buildStreamingSttRecognizerConfig(options: {
+  family: string;
+  files: SttModelAssetsResponse;
+}) {
+  const tokens = `/${getFileNameFromUrl(options.files.tokens, "tokens")}`;
+
+  if (options.family === "zipformer-transducer") {
+    if (!options.files.encoder || !options.files.decoder || !options.files.joiner) {
+      throw new Error("Streaming Zipformer STT manifest is missing encoder, decoder, or joiner.");
+    }
+
+    return {
+      featConfig: {
+        sampleRate: 16000,
+        featureDim: 80,
+      },
+      modelConfig: {
+        transducer: {
+          encoder: `/${getFileNameFromUrl(options.files.encoder, "encoder")}`,
+          decoder: `/${getFileNameFromUrl(options.files.decoder, "decoder")}`,
+          joiner: `/${getFileNameFromUrl(options.files.joiner, "joiner")}`,
+        },
+        tokens,
+        provider: "cpu",
+        numThreads: 1,
+        debug: 0,
+      },
+      decodingMethod: "greedy_search",
+      maxActivePaths: 4,
+      enableEndpoint: 1,
+      rule1MinTrailingSilence: 2.4,
+      rule2MinTrailingSilence: 1.2,
+      rule3MinUtteranceLength: 20,
+      hotwordsFile: "",
+      hotwordsScore: 1.5,
+      ruleFsts: "",
+      ruleFars: "",
+      blankPenalty: 0,
+      ctcFstDecoderConfig: {
+        graph: "",
+        maxActive: 3000,
+      },
+    };
+  }
+
+  throw new Error(`Unsupported streaming STT family: ${options.family}`);
+}
+
+function closeAllSttSessions(): void {
+  for (const stream of STT_SESSIONS.values()) {
+    stream.free();
+  }
+  STT_SESSIONS.clear();
+}
+
+function requireStreamingSession(sessionId: number) {
+  const session = STT_SESSIONS.get(sessionId);
+  if (!session) {
+    throw new Error(`Unknown STT session: ${sessionId}`);
+  }
+  if (!ONLINE_STT || !STT_MODEL_ID) {
+    throw new Error("Streaming STT model is not loaded.");
+  }
+
+  return session;
+}
+
+function decodeOnlineSession(stream: ReturnType<ReturnType<typeof createOnlineRecognizer>["createStream"]>): void {
+  if (!ONLINE_STT) {
+    throw new Error("Streaming STT model is not loaded.");
+  }
+
+  while (ONLINE_STT.isReady(stream)) {
+    ONLINE_STT.decode(stream);
+  }
+}
+
+function toStreamingResult(rawResult: Record<string, unknown>, isEndpoint: boolean) {
+  if (!STT_MODEL_ID) {
+    throw new Error("STT model id is not available.");
+  }
+
+  return {
+    text: typeof rawResult.text === "string" ? rawResult.text : "",
+    modelId: STT_MODEL_ID,
+    isEndpoint,
+    json: JSON.stringify(rawResult),
+  };
+}
+
 async function handleLoadSttModel(
   id: number,
   options: Extract<WorkerRequest, { type: "stt-load-model" }>,
@@ -664,9 +761,16 @@ async function handleLoadSttModel(
   );
   STT_MODEL_ID = options.modelId;
 
-  if (STT) {
-    STT.free();
-    STT = null;
+  closeAllSttSessions();
+
+  if (OFFLINE_STT) {
+    OFFLINE_STT.free();
+    OFFLINE_STT = null;
+  }
+
+  if (ONLINE_STT) {
+    ONLINE_STT.free();
+    ONLINE_STT = null;
   }
 
   const sherpaModule = await getSherpaSpeechModule({
@@ -705,20 +809,32 @@ async function handleLoadSttModel(
     event: { status: "loading" },
   });
 
-  STT = new OfflineRecognizer(
-    buildSttRecognizerConfig({
-      family: STT_MODEL_ASSET_URLS.family,
-      files: STT_MODEL_ASSET_URLS,
-      language: options.language,
-      task: options.task,
-    }),
-    sherpaModule,
-  );
+  const supportsStreaming = supportsStreamingSttFamily(STT_MODEL_ASSET_URLS.family);
+  if (supportsStreaming) {
+    ONLINE_STT = createOnlineRecognizer(
+      sherpaModule,
+      buildStreamingSttRecognizerConfig({
+        family: STT_MODEL_ASSET_URLS.family,
+        files: STT_MODEL_ASSET_URLS,
+      }),
+    );
+  } else {
+    OFFLINE_STT = new OfflineRecognizer(
+      buildSttRecognizerConfig({
+        family: STT_MODEL_ASSET_URLS.family,
+        files: STT_MODEL_ASSET_URLS,
+        language: options.language,
+        task: options.task,
+      }),
+      sherpaModule,
+    );
+  }
 
   postResponse({
     id,
     type: "stt-load-model-done",
     family: STT_MODEL_ASSET_URLS.family,
+    supportsStreaming,
     persistentId: STT_MODEL_ASSET_URLS.persistent_id,
   });
 }
@@ -728,15 +844,21 @@ async function handleSttTranscribe(
   samples: Float32Array,
   sampleRate: number,
 ): Promise<void> {
-  if (!STT || !STT_MODEL_ASSET_URLS || !STT_MODEL_ID) {
+  if (ONLINE_STT && !OFFLINE_STT) {
+    throw new Error(
+      "The loaded STT model supports streaming sessions only. Use createSession() instead of transcribe().",
+    );
+  }
+
+  if (!OFFLINE_STT || !STT_MODEL_ASSET_URLS || !STT_MODEL_ID) {
     throw new Error("STT model is not loaded. Call loadSttModel(...) first.");
   }
 
-  const stream = STT.createStream();
+  const stream = OFFLINE_STT.createStream();
   try {
     stream.acceptWaveform(sampleRate, samples);
-    STT.decode(stream);
-    const rawResult = STT.getResult(stream) as Record<string, unknown>;
+    OFFLINE_STT.decode(stream);
+    const rawResult = OFFLINE_STT.getResult(stream) as Record<string, unknown>;
 
     const tokens = coerceStringArray(rawResult.tokens);
     const timestamps = coerceNumberArray(rawResult.timestamps);
@@ -778,6 +900,70 @@ async function handleSttTranscribe(
   } finally {
     stream.free();
   }
+}
+
+async function handleSttCreateSession(id: number): Promise<void> {
+  if (!ONLINE_STT) {
+    throw new Error("Streaming STT model is not loaded.");
+  }
+
+  const sessionId = NEXT_STT_SESSION_ID;
+  NEXT_STT_SESSION_ID += 1;
+  STT_SESSIONS.set(sessionId, ONLINE_STT.createStream());
+
+  postResponse({
+    id,
+    type: "stt-create-session-done",
+    sessionId,
+  });
+}
+
+async function handleSttSessionPush(
+  id: number,
+  sessionId: number,
+  samples: Float32Array,
+  sampleRate: number,
+): Promise<void> {
+  const session = requireStreamingSession(sessionId);
+  session.acceptWaveform(sampleRate, samples);
+  decodeOnlineSession(session);
+  postResponse({ id, type: "stt-session-push-done" });
+}
+
+async function handleSttSessionGetResult(id: number, sessionId: number): Promise<void> {
+  const session = requireStreamingSession(sessionId);
+  decodeOnlineSession(session);
+  const rawResult = ONLINE_STT!.getResult(session) as Record<string, unknown>;
+  postResponse({
+    id,
+    type: "stt-session-get-result-done",
+    result: toStreamingResult(rawResult, ONLINE_STT!.isEndpoint(session)),
+  });
+}
+
+async function handleSttSessionFinish(id: number, sessionId: number): Promise<void> {
+  const session = requireStreamingSession(sessionId);
+  session.inputFinished();
+  decodeOnlineSession(session);
+  const rawResult = ONLINE_STT!.getResult(session) as Record<string, unknown>;
+  postResponse({
+    id,
+    type: "stt-session-finish-done",
+    result: toStreamingResult(rawResult, ONLINE_STT!.isEndpoint(session)),
+  });
+}
+
+async function handleSttSessionReset(id: number, sessionId: number): Promise<void> {
+  const session = requireStreamingSession(sessionId);
+  ONLINE_STT!.reset(session);
+  postResponse({ id, type: "stt-session-reset-done" });
+}
+
+async function handleSttSessionClose(id: number, sessionId: number): Promise<void> {
+  const session = requireStreamingSession(sessionId);
+  session.free();
+  STT_SESSIONS.delete(sessionId);
+  postResponse({ id, type: "stt-session-close-done" });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1170,6 +1356,36 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
     if (message.type === "stt-transcribe") {
       await handleSttTranscribe(message.id, message.samples, message.sampleRate);
+      return;
+    }
+
+    if (message.type === "stt-create-session") {
+      await handleSttCreateSession(message.id);
+      return;
+    }
+
+    if (message.type === "stt-session-push") {
+      await handleSttSessionPush(message.id, message.sessionId, message.samples, message.sampleRate);
+      return;
+    }
+
+    if (message.type === "stt-session-get-result") {
+      await handleSttSessionGetResult(message.id, message.sessionId);
+      return;
+    }
+
+    if (message.type === "stt-session-finish") {
+      await handleSttSessionFinish(message.id, message.sessionId);
+      return;
+    }
+
+    if (message.type === "stt-session-reset") {
+      await handleSttSessionReset(message.id, message.sessionId);
+      return;
+    }
+
+    if (message.type === "stt-session-close") {
+      await handleSttSessionClose(message.id, message.sessionId);
       return;
     }
   } catch (error) {

@@ -1,5 +1,11 @@
 export { TtsModel, loadTtsModel } from "./tts/model.js";
-export { SttModel, loadSttModel } from "./stt/model.js";
+export { SttModel, SttSession, loadSttModel } from "./stt/model.js";
+export {
+  createMicrophoneCapture,
+  type CapturedMicrophoneAudio,
+  type MicrophoneCapture,
+  type MicrophoneCaptureOptions,
+} from "./audio/index.js";
 export type {
   AudioResult,
   LoadModelProgressEvent,
@@ -16,6 +22,8 @@ export type {
 export type {
   DecodedAudio,
   LoadSttModelOptions,
+  StreamingTranscribeChunk,
+  StreamingTranscriptionResult,
   TranscribeOptions,
   TranscriptionResult,
   TranscriptionSegment,

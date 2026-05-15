@@ -11,6 +11,7 @@ from ._constants import (
 from ._results import (
     Audio,
     GenerationResult,
+    StreamingTranscriptionResult,
     Timeline,
     TimelineChunk,
     TranscriptionResult,
@@ -23,6 +24,7 @@ WFLOAT_STT_FAMILY_WHISPER = 1
 WFLOAT_STT_FAMILY_MOONSHINE = 2
 WFLOAT_STT_FAMILY_PARAKEET_CTC = 3
 WFLOAT_STT_FAMILY_PARAKEET_TDT = 4
+WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER = 5
 WFLOAT_STATUS_OK = 0
 
 
@@ -191,6 +193,15 @@ class _WfloatSttTranscriptionResult(ctypes.Structure):
     ]
 
 
+class _WfloatSttSessionResult(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("text", ctypes.c_char_p),
+        ("json", ctypes.c_char_p),
+        ("is_endpoint", ctypes.c_int32),
+    ]
+
+
 class _WfloatSttModelInfo(ctypes.Structure):
     _fields_ = [
         ("model_id", ctypes.c_char_p),
@@ -350,6 +361,43 @@ def _prepare_library(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.POINTER(_WfloatSttTranscriptionResult)),
     ]
     lib.wfloat_stt_model_transcribe.restype = ctypes.c_int32
+
+    lib.wfloat_stt_model_create_session.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.wfloat_stt_model_create_session.restype = ctypes.c_int32
+
+    lib.wfloat_stt_session_push_audio.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.c_size_t,
+        ctypes.c_int32,
+    ]
+    lib.wfloat_stt_session_push_audio.restype = ctypes.c_int32
+
+    lib.wfloat_stt_session_get_result.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(_WfloatSttSessionResult)),
+    ]
+    lib.wfloat_stt_session_get_result.restype = ctypes.c_int32
+
+    lib.wfloat_stt_session_finish.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(_WfloatSttSessionResult)),
+    ]
+    lib.wfloat_stt_session_finish.restype = ctypes.c_int32
+
+    lib.wfloat_stt_session_reset.argtypes = [ctypes.c_void_p]
+    lib.wfloat_stt_session_reset.restype = ctypes.c_int32
+
+    lib.wfloat_stt_session_destroy.argtypes = [ctypes.c_void_p]
+    lib.wfloat_stt_session_destroy.restype = None
+
+    lib.wfloat_stt_session_result_destroy.argtypes = [
+        ctypes.POINTER(_WfloatSttSessionResult)
+    ]
+    lib.wfloat_stt_session_result_destroy.restype = None
 
     lib.wfloat_stt_transcription_result_destroy.argtypes = [
         ctypes.POINTER(_WfloatSttTranscriptionResult)
@@ -853,6 +901,111 @@ class CoreStt:
         finally:
             self._lib.wfloat_stt_transcription_result_destroy(result_ptr)
 
+    def create_session(self):
+        session = ctypes.c_void_p()
+        status = self._lib.wfloat_stt_model_create_session(
+            self._model,
+            ctypes.byref(session),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core create_session failed with status {status}.")
+
+        return CoreSttSession(
+            lib=self._lib,
+            model_id=_decode(self._config_bytes["model_id"]),
+            session=session,
+            sample_rate=self.sample_rate,
+        )
+
+
+class CoreSttSession:
+    def __init__(
+        self,
+        *,
+        lib: ctypes.CDLL,
+        model_id: str,
+        session: ctypes.c_void_p,
+        sample_rate: int,
+    ) -> None:
+        self._lib = lib
+        self._model_id = model_id
+        self._session = session
+        self.sample_rate = int(sample_rate)
+
+    def close(self) -> None:
+        if self._session and self._session.value:
+            self._lib.wfloat_stt_session_destroy(self._session)
+            self._session = ctypes.c_void_p()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def push(self, samples: Sequence[float], sample_rate: Optional[int] = None) -> None:
+        sample_values = [float(sample) for sample in samples]
+        if not sample_values:
+            raise ValueError("samples must not be empty.")
+
+        resolved_sample_rate = int(sample_rate or self.sample_rate)
+        sample_array = (ctypes.c_float * len(sample_values))(*sample_values)
+        status = self._lib.wfloat_stt_session_push_audio(
+            self._session,
+            sample_array,
+            len(sample_values),
+            resolved_sample_rate,
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core session push failed with status {status}.")
+
+    def get_result(self) -> StreamingTranscriptionResult:
+        result_ptr = ctypes.POINTER(_WfloatSttSessionResult)()
+        status = self._lib.wfloat_stt_session_get_result(
+            self._session,
+            ctypes.byref(result_ptr),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(
+                f"wfloat-core session get_result failed with status {status}."
+            )
+
+        try:
+            result = result_ptr.contents
+            return StreamingTranscriptionResult(
+                text=_decode(result.text),
+                model_id=_decode(result.model_id) or self._model_id,
+                is_endpoint=bool(result.is_endpoint),
+                json=_decode(result.json),
+            )
+        finally:
+            self._lib.wfloat_stt_session_result_destroy(result_ptr)
+
+    def finish(self) -> StreamingTranscriptionResult:
+        result_ptr = ctypes.POINTER(_WfloatSttSessionResult)()
+        status = self._lib.wfloat_stt_session_finish(
+            self._session,
+            ctypes.byref(result_ptr),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core session finish failed with status {status}.")
+
+        try:
+            result = result_ptr.contents
+            return StreamingTranscriptionResult(
+                text=_decode(result.text),
+                model_id=_decode(result.model_id) or self._model_id,
+                is_endpoint=bool(result.is_endpoint),
+                json=_decode(result.json),
+            )
+        finally:
+            self._lib.wfloat_stt_session_result_destroy(result_ptr)
+
+    def reset(self) -> None:
+        status = self._lib.wfloat_stt_session_reset(self._session)
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core session reset failed with status {status}.")
+
 
 def create_core_stt_whisper(
     *,
@@ -902,6 +1055,7 @@ def create_core_stt(
         "moonshine": WFLOAT_STT_FAMILY_MOONSHINE,
         "parakeet-ctc": WFLOAT_STT_FAMILY_PARAKEET_CTC,
         "parakeet-tdt": WFLOAT_STT_FAMILY_PARAKEET_TDT,
+        "zipformer-transducer": WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER,
     }
     family_value = family_map.get(normalized_family)
     if family_value is None:

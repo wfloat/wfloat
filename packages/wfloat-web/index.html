@@ -294,8 +294,15 @@
           </div>
         </div>
 
+        <p class="hint">
+          You can either choose an audio file or record a microphone clip and then
+          run one-shot transcription on the captured audio.
+        </p>
+
         <div class="actions">
           <button id="loadStt">Load STT Model</button>
+          <button id="sttMicStart" class="ghost" disabled>Start Recording</button>
+          <button id="sttMicStop" class="ghost" disabled>Stop Recording</button>
           <button id="transcribe" class="secondary" disabled>Transcribe</button>
         </div>
 
@@ -306,6 +313,26 @@
           </div>
           <progress id="sttProgress" max="100" value="0"></progress>
           <pre id="transcript"></pre>
+        </div>
+
+        <p class="hint">
+          For the first streaming smoke test, switch the model id to
+          <code>k2-fsa/streaming-zipformer-en</code>, load it, then use the
+          buttons below to feed live microphone chunks into
+          <code>createSession()</code>.
+        </p>
+
+        <div class="actions">
+          <button id="sttStreamingStart" class="ghost" disabled>Start Streaming</button>
+          <button id="sttStreamingStop" class="ghost" disabled>Stop Streaming</button>
+        </div>
+
+        <div class="status">
+          <div class="status-row">
+            <strong id="sttStreamingSummary">Streaming idle</strong>
+            <span id="sttStreamingTiming">No streaming result yet</span>
+          </div>
+          <pre id="sttStreamingTranscript"></pre>
         </div>
       </section>
 
