@@ -52,3 +52,22 @@ export type StreamingTranscribeChunk = {
   audio: Float32Array;
   sampleRate?: number;
 };
+
+export type SttMicrophoneRecordingOptions = {
+  sampleRate?: number;
+};
+
+export type SttMicrophoneRecording = TranscribeOptions & {
+  durationMs: number;
+};
+
+export type SttMicrophoneOptions = {
+  sampleRate?: number;
+  onResult?: (result: StreamingTranscriptionResult) => void | Promise<void>;
+};
+
+export type SttMicrophoneCaptureResult = {
+  durationMs: number;
+  sampleRate: number;
+  chunkCount: number;
+};

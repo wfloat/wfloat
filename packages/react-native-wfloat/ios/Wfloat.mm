@@ -1,6 +1,7 @@
 #import "Wfloat.h"
 #import "WfloatSpeechSession.h"
 #import <AppleArchive/AppleArchive.h>
+#import <AVFoundation/AVFoundation.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <math.h>
 #import <sherpa-onnx/c-api/c-api.h>
@@ -74,7 +75,7 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
   return (double)frameCount / (double)sampleRate;
 }
 
-@interface Wfloat () <NSURLSessionDownloadDelegate>
+@interface Wfloat () <NSURLSessionDownloadDelegate, AVAudioRecorderDelegate>
 @property (nonatomic, assign) const SherpaOnnxOfflineTts *tts;
 @property (nonatomic, assign) const SherpaOnnxOfflineRecognizer *offlineRecognizer;
 @property (nonatomic, assign) const SherpaOnnxOnlineRecognizer *onlineRecognizer;
@@ -107,6 +108,26 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSValue *> *sttSessions;
 @property (nonatomic, assign) NSInteger nextSttSessionId;
 @property (nonatomic, assign) BOOL sttLoadInProgress;
+@property (nonatomic, strong) AVAudioRecorder *sttMicrophoneRecorder;
+@property (nonatomic, strong) NSURL *sttMicrophoneRecordingURL;
+@property (nonatomic, strong) NSDate *sttMicrophoneRecordingStartedAt;
+@property (nonatomic, copy) RCTPromiseResolveBlock sttMicrophoneStopResolve;
+@property (nonatomic, copy) RCTPromiseRejectBlock sttMicrophoneStopReject;
+@property (nonatomic, assign) NSInteger sttMicrophoneRecordingSampleRate;
+@property (nonatomic, strong) AVAudioEngine *sttMicrophoneAudioEngine;
+@property (nonatomic, strong) AVAudioFormat *sttMicrophoneTargetFormat;
+@property (nonatomic, strong) NSDate *sttMicrophoneStartedAt;
+@property (nonatomic, assign) NSInteger sttMicrophoneSessionId;
+@property (nonatomic, assign) NSInteger sttMicrophoneSampleRate;
+@property (nonatomic, assign) NSInteger sttMicrophoneCallbackCount;
+@property (nonatomic, assign) NSInteger sttMicrophoneEmittedChunkCount;
+@property (nonatomic, assign) NSInteger sttMicrophoneInputChannels;
+@property (nonatomic, assign) NSInteger sttMicrophoneLastInputFrameLength;
+@property (nonatomic, assign) double sttMicrophoneInputSampleRate;
+@property (nonatomic, assign) double sttMicrophoneLastRawRms;
+@property (nonatomic, assign) double sttMicrophoneLastNormalizedRms;
+@property (nonatomic, assign) double sttMicrophoneMaxRawRms;
+@property (nonatomic, assign) double sttMicrophoneMaxNormalizedRms;
 @property (nonatomic) dispatch_queue_t workQueue;
 
 @end
@@ -125,6 +146,9 @@ RCT_EXPORT_MODULE()
 - (void)dealloc {
   [self.speechSession cancel];
   self.speechSession = nil;
+  [self.sttMicrophoneRecorder stop];
+  self.sttMicrophoneRecorder = nil;
+  [self stopSttMicrophoneCapture];
   [self closeAllSttSessions];
 
   if (self.tts) {
@@ -669,6 +693,7 @@ RCT_EXPORT_MODULE()
 }
 
 - (void)closeAllSttSessions {
+  [self stopSttMicrophoneCapture];
   for (NSValue *value in self.sttSessions.allValues) {
     const SherpaOnnxOnlineStream *stream =
         (const SherpaOnnxOnlineStream *)value.pointerValue;
@@ -682,6 +707,360 @@ RCT_EXPORT_MODULE()
 - (const SherpaOnnxOnlineStream *)streamForSessionId:(NSInteger)sessionId {
   NSValue *value = self.sttSessions[@(sessionId)];
   return value ? (const SherpaOnnxOnlineStream *)value.pointerValue : nil;
+}
+
+- (void)ensureRecordPermission:(void (^)(BOOL granted))completion {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  AVAudioSessionRecordPermission permission = session.recordPermission;
+  switch (permission) {
+    case AVAudioSessionRecordPermissionGranted:
+      completion(YES);
+      return;
+    case AVAudioSessionRecordPermissionDenied:
+      completion(NO);
+      return;
+    case AVAudioSessionRecordPermissionUndetermined:
+    default:
+      [session requestRecordPermission:^(BOOL granted) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          completion(granted);
+        });
+      }];
+      return;
+  }
+}
+
+- (BOOL)configureSharedSessionForRecordingWithSampleRate:(NSInteger)sampleRate
+                                                   error:(NSError **)error {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  AVAudioSessionCategoryOptions options =
+      AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth;
+  return [session setCategory:AVAudioSessionCategoryPlayAndRecord
+                         mode:AVAudioSessionModeMeasurement
+                      options:options
+                        error:error] &&
+         [session setPreferredSampleRate:(double)sampleRate error:error] &&
+         [session setActive:YES error:error];
+}
+
+- (AVAudioPCMBuffer *)normalizedBufferFromBuffer:(AVAudioPCMBuffer *)buffer
+                                      sampleRate:(NSInteger)sampleRate
+                                    targetFormat:(AVAudioFormat *)existingTargetFormat
+                                           error:(NSError **)error {
+  if (buffer.format.commonFormat == AVAudioPCMFormatFloat32 &&
+      buffer.format.channelCount == 1 &&
+      llround(buffer.format.sampleRate) == sampleRate &&
+      buffer.floatChannelData != nil) {
+    return buffer;
+  }
+
+  AVAudioFormat *targetFormat = existingTargetFormat;
+  if (!targetFormat) {
+    targetFormat =
+        [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+                                         sampleRate:(double)sampleRate
+                                           channels:1
+                                        interleaved:NO];
+  }
+  if (!targetFormat) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:401
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"Failed to create microphone audio format."
+                               }];
+    }
+    return nil;
+  }
+
+  AVAudioConverter *converter =
+      [[AVAudioConverter alloc] initFromFormat:buffer.format toFormat:targetFormat];
+  if (!converter) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:402
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"Failed to create microphone audio converter."
+                               }];
+    }
+    return nil;
+  }
+
+  double ratio = targetFormat.sampleRate / MAX(buffer.format.sampleRate, 1.0);
+  AVAudioFrameCount outputFrameCapacity =
+      (AVAudioFrameCount)MAX(1.0, ceil(buffer.frameLength * ratio) + 64.0);
+  AVAudioPCMBuffer *outputBuffer =
+      [[AVAudioPCMBuffer alloc] initWithPCMFormat:targetFormat
+                                    frameCapacity:outputFrameCapacity];
+  if (!outputBuffer) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:403
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"Failed to allocate microphone audio buffer."
+                               }];
+    }
+    return nil;
+  }
+
+  __block BOOL suppliedInput = NO;
+  AVAudioConverterOutputStatus status =
+      [converter convertToBuffer:outputBuffer
+                           error:error
+              withInputFromBlock:^AVAudioBuffer *_Nullable(
+                                     AVAudioPacketCount inNumberOfPackets,
+                                     AVAudioConverterInputStatus *_Nonnull outStatus) {
+                if (suppliedInput) {
+                  *outStatus = AVAudioConverterInputStatus_EndOfStream;
+                  return nil;
+                }
+
+                suppliedInput = YES;
+                *outStatus = AVAudioConverterInputStatus_HaveData;
+                return buffer;
+              }];
+  if (status == AVAudioConverterOutputStatus_Error ||
+      outputBuffer.floatChannelData == nil) {
+    if (status != AVAudioConverterOutputStatus_Error && error && *error == nil) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:404
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"Failed to normalize microphone audio."
+                               }];
+    }
+    return nil;
+  }
+
+  return outputBuffer;
+}
+
+- (double)rmsForBuffer:(AVAudioPCMBuffer *)buffer {
+  if (!buffer || buffer.frameLength == 0) {
+    return 0;
+  }
+
+  switch (buffer.format.commonFormat) {
+    case AVAudioPCMFormatFloat32: {
+      float *channelData = buffer.floatChannelData ? buffer.floatChannelData[0] : NULL;
+      if (!channelData) {
+        return 0;
+      }
+
+      double energy = 0;
+      for (AVAudioFrameCount index = 0; index < buffer.frameLength; index += 1) {
+        double sample = channelData[index];
+        energy += sample * sample;
+      }
+      return sqrt(energy / MAX((double)buffer.frameLength, 1.0));
+    }
+    case AVAudioPCMFormatInt16: {
+      int16_t *channelData = buffer.int16ChannelData ? buffer.int16ChannelData[0] : NULL;
+      if (!channelData) {
+        return 0;
+      }
+
+      double energy = 0;
+      for (AVAudioFrameCount index = 0; index < buffer.frameLength; index += 1) {
+        double sample = ((double)channelData[index]) / 32768.0;
+        energy += sample * sample;
+      }
+      return sqrt(energy / MAX((double)buffer.frameLength, 1.0));
+    }
+    case AVAudioPCMFormatInt32: {
+      int32_t *channelData = buffer.int32ChannelData ? buffer.int32ChannelData[0] : NULL;
+      if (!channelData) {
+        return 0;
+      }
+
+      double energy = 0;
+      for (AVAudioFrameCount index = 0; index < buffer.frameLength; index += 1) {
+        double sample = ((double)channelData[index]) / 2147483648.0;
+        energy += sample * sample;
+      }
+      return sqrt(energy / MAX((double)buffer.frameLength, 1.0));
+    }
+    default:
+      return 0;
+  }
+}
+
+- (void)acceptMicrophoneBuffer:(AVAudioPCMBuffer *)buffer {
+  self.sttMicrophoneCallbackCount += 1;
+  self.sttMicrophoneLastInputFrameLength = (NSInteger)buffer.frameLength;
+  self.sttMicrophoneLastRawRms = [self rmsForBuffer:buffer];
+  self.sttMicrophoneMaxRawRms =
+      MAX(self.sttMicrophoneMaxRawRms, self.sttMicrophoneLastRawRms);
+
+  AVAudioPCMBuffer *normalizedBuffer =
+      [self normalizedBufferFromBuffer:buffer
+                            sampleRate:self.sttMicrophoneSampleRate
+                          targetFormat:self.sttMicrophoneTargetFormat
+                                 error:nil];
+  if (!normalizedBuffer || !normalizedBuffer.floatChannelData || normalizedBuffer.frameLength == 0) {
+    return;
+  }
+
+  self.sttMicrophoneLastNormalizedRms = [self rmsForBuffer:normalizedBuffer];
+  self.sttMicrophoneMaxNormalizedRms =
+      MAX(self.sttMicrophoneMaxNormalizedRms, self.sttMicrophoneLastNormalizedRms);
+  self.sttMicrophoneEmittedChunkCount += 1;
+
+  AVAudioFrameCount frameLength = normalizedBuffer.frameLength;
+  float *channelData = normalizedBuffer.floatChannelData[0];
+  std::vector<float> samples(channelData, channelData + frameLength);
+  NSInteger sessionId = self.sttMicrophoneSessionId;
+  NSInteger sampleRate = self.sttMicrophoneSampleRate;
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = [self streamForSessionId:sessionId];
+    if (!stream || !self.onlineRecognizer || samples.empty()) {
+      return;
+    }
+
+    SherpaOnnxOnlineStreamAcceptWaveform(stream, (int32_t)sampleRate, samples.data(),
+                                         (int32_t)samples.size());
+    while (SherpaOnnxIsOnlineStreamReady(self.onlineRecognizer, stream)) {
+      SherpaOnnxDecodeOnlineStream(self.onlineRecognizer, stream);
+    }
+  });
+}
+
+- (void)resetSttMicrophoneState {
+  self.sttMicrophoneAudioEngine = nil;
+  self.sttMicrophoneTargetFormat = nil;
+  self.sttMicrophoneStartedAt = nil;
+  self.sttMicrophoneSessionId = 0;
+  self.sttMicrophoneSampleRate = 0;
+  self.sttMicrophoneCallbackCount = 0;
+  self.sttMicrophoneEmittedChunkCount = 0;
+  self.sttMicrophoneInputChannels = 0;
+  self.sttMicrophoneLastInputFrameLength = 0;
+  self.sttMicrophoneInputSampleRate = 0;
+  self.sttMicrophoneLastRawRms = 0;
+  self.sttMicrophoneLastNormalizedRms = 0;
+  self.sttMicrophoneMaxRawRms = 0;
+  self.sttMicrophoneMaxNormalizedRms = 0;
+}
+
+- (void)stopSttMicrophoneCapture {
+  AVAudioEngine *audioEngine = self.sttMicrophoneAudioEngine;
+  if (!audioEngine) {
+    return;
+  }
+
+  [audioEngine.inputNode removeTapOnBus:0];
+  [audioEngine stop];
+  [self resetSttMicrophoneState];
+}
+
+- (void)resetSttMicrophoneRecordingState {
+  self.sttMicrophoneRecorder = nil;
+  self.sttMicrophoneRecordingURL = nil;
+  self.sttMicrophoneRecordingStartedAt = nil;
+  self.sttMicrophoneStopResolve = nil;
+  self.sttMicrophoneStopReject = nil;
+  self.sttMicrophoneRecordingSampleRate = 0;
+}
+
+- (void)removeRecordingAtURL:(NSURL *)recordingURL {
+  if (!recordingURL) {
+    return;
+  }
+
+  [[NSFileManager defaultManager] removeItemAtURL:recordingURL error:nil];
+}
+
+- (BOOL)beginSttMicrophoneRecordingWithSampleRate:(NSInteger)sampleRate
+                                            error:(NSError **)error {
+  if (![self configureSharedSessionForRecordingWithSampleRate:sampleRate error:error]) {
+    return NO;
+  }
+
+  NSString *fileName =
+      [NSString stringWithFormat:@"wfloat-stt-mic-%@.caf", NSUUID.UUID.UUIDString];
+  NSURL *recordingURL =
+      [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:fileName]];
+  NSDictionary *settings = @{
+    AVFormatIDKey : @(kAudioFormatLinearPCM),
+    AVSampleRateKey : @(sampleRate),
+    AVNumberOfChannelsKey : @1,
+    AVLinearPCMBitDepthKey : @32,
+    AVLinearPCMIsFloatKey : @YES,
+    AVLinearPCMIsBigEndianKey : @NO,
+    AVLinearPCMIsNonInterleaved : @NO,
+  };
+
+  AVAudioRecorder *recorder = [[AVAudioRecorder alloc] initWithURL:recordingURL
+                                                          settings:settings
+                                                             error:error];
+  if (!recorder) {
+    return NO;
+  }
+
+  recorder.delegate = self;
+  recorder.meteringEnabled = NO;
+  if (![recorder prepareToRecord] || ![recorder record]) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:405
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"Failed to start STT microphone recording."
+                               }];
+    }
+    return NO;
+  }
+
+  self.sttMicrophoneRecorder = recorder;
+  self.sttMicrophoneRecordingURL = recordingURL;
+  self.sttMicrophoneRecordingStartedAt = [NSDate date];
+  self.sttMicrophoneRecordingSampleRate = sampleRate;
+  return YES;
+}
+
+- (NSDictionary *)payloadForSttRecordingAtURL:(NSURL *)recordingURL
+                                   sampleRate:(NSInteger)sampleRate
+                                   durationMs:(NSInteger)durationMs
+                                        error:(NSError **)error {
+  AVAudioFile *audioFile = [[AVAudioFile alloc] initForReading:recordingURL error:error];
+  if (!audioFile) {
+    return nil;
+  }
+
+  AVAudioFrameCount frameCount =
+      (AVAudioFrameCount)MAX((AVAudioFramePosition)1, audioFile.length);
+  AVAudioPCMBuffer *buffer =
+      [[AVAudioPCMBuffer alloc] initWithPCMFormat:audioFile.processingFormat
+                                    frameCapacity:frameCount];
+  if (!buffer || ![audioFile readIntoBuffer:buffer error:error]) {
+    return nil;
+  }
+
+  AVAudioPCMBuffer *normalizedBuffer =
+      [self normalizedBufferFromBuffer:buffer
+                            sampleRate:sampleRate
+                          targetFormat:nil
+                                 error:error];
+  if (!normalizedBuffer || !normalizedBuffer.floatChannelData) {
+    return nil;
+  }
+
+  float *channelData = normalizedBuffer.floatChannelData[0];
+  NSMutableArray<NSNumber *> *samples =
+      [NSMutableArray arrayWithCapacity:normalizedBuffer.frameLength];
+  for (AVAudioFrameCount index = 0; index < normalizedBuffer.frameLength; index += 1) {
+    [samples addObject:@(channelData[index])];
+  }
+
+  return @{
+    @"samples" : samples,
+    @"sampleRate" : @(sampleRate),
+    @"durationMs" : @(durationMs),
+  };
 }
 
 - (BOOL)downloadURLString:(NSString *)urlString
@@ -1271,7 +1650,7 @@ RCT_EXPORT_MODULE()
 
 - (void)emitDownloadProgress:(double)phaseProgress {
   double overallProgress = [self overallProgressForPhaseProgress:phaseProgress];
-  if (fabsf(self.lastEmittedDownloadProgress - overallProgress) < 0.01f &&
+  if (fabs(self.lastEmittedDownloadProgress - overallProgress) < 0.01 &&
       overallProgress < 1.0f) {
     return;
   }
@@ -1378,6 +1757,12 @@ RCT_EXPORT_MODULE()
               reject:(RCTPromiseRejectBlock)reject {
   NSString *modelId = options.modelId();
   NSString *family = options.family();
+  NSString *tokensURL = options.tokensUrl() ?: @"";
+  NSString *encoderURL = options.encoderUrl() ?: @"";
+  NSString *decoderURL = options.decoderUrl() ?: @"";
+  NSString *joinerURL = options.joinerUrl() ?: @"";
+  NSString *language = options.language().length > 0 ? options.language() : @"en";
+  NSString *task = options.task().length > 0 ? options.task() : @"transcribe";
   if (modelId.length == 0 || family.length == 0) {
     reject(@"invalid_arguments", @"modelId and family are required.", nil);
     return;
@@ -1392,7 +1777,7 @@ RCT_EXPORT_MODULE()
 
   dispatch_async(self.workQueue, ^{
     @autoreleasepool {
-      NSError *filesystemError = nil;
+      __block NSError *filesystemError = nil;
       NSString *directoryPath = [self cacheDirectoryForModelId:modelId];
         if (![self ensureDirectoryExistsAtPath:directoryPath error:&filesystemError]) {
           dispatch_async(dispatch_get_main_queue(), ^{
@@ -1423,14 +1808,14 @@ RCT_EXPORT_MODULE()
       };
 
       if ([family isEqualToString:@"whisper"]) {
-        addDownload(@"tokens", options.tokensUrl() ?: @"");
-        addDownload(@"encoder", options.encoderUrl() ?: @"");
-        addDownload(@"decoder", options.decoderUrl() ?: @"");
+        addDownload(@"tokens", tokensURL);
+        addDownload(@"encoder", encoderURL);
+        addDownload(@"decoder", decoderURL);
       } else if ([family isEqualToString:@"zipformer-transducer"]) {
-        addDownload(@"tokens", options.tokensUrl() ?: @"");
-        addDownload(@"encoder", options.encoderUrl() ?: @"");
-        addDownload(@"decoder", options.decoderUrl() ?: @"");
-        addDownload(@"joiner", options.joinerUrl() ?: @"");
+        addDownload(@"tokens", tokensURL);
+        addDownload(@"encoder", encoderURL);
+        addDownload(@"decoder", decoderURL);
+        addDownload(@"joiner", joinerURL);
       } else {
         dispatch_async(dispatch_get_main_queue(), ^{
           self.sttLoadInProgress = NO;
@@ -1511,8 +1896,6 @@ RCT_EXPORT_MODULE()
       NSError *loadError = nil;
       BOOL didLoad = NO;
       if ([family isEqualToString:@"whisper"]) {
-        NSString *language = options.language().length > 0 ? options.language() : @"en";
-        NSString *task = options.task().length > 0 ? options.task() : @"transcribe";
         didLoad = [self loadOfflineWhisperWithEncoderPath:resolvedMutable[@"encoder"]
                                               decoderPath:resolvedMutable[@"decoder"]
                                                tokensPath:resolvedMutable[@"tokens"]
@@ -1619,6 +2002,135 @@ RCT_EXPORT_MODULE()
   });
 }
 
+- (void)startSttMicrophoneRecording:(JS::NativeWfloat::SttMicrophoneRecordingNativeOptions &)options
+                             resolve:(RCTPromiseResolveBlock)resolve
+                              reject:(RCTPromiseRejectBlock)reject {
+  double sampleRateValue = options.sampleRate();
+  if (!isfinite(sampleRateValue) || sampleRateValue <= 0 ||
+      floor(sampleRateValue) != sampleRateValue) {
+    reject(@"invalid_arguments", @"sampleRate must be a positive integer.", nil);
+    return;
+  }
+
+  if (self.sttMicrophoneRecorder || self.sttMicrophoneAudioEngine) {
+    reject(@"microphone_in_use", @"A STT microphone capture is already in progress.", nil);
+    return;
+  }
+
+  NSInteger sampleRate = (NSInteger)sampleRateValue;
+  [self ensureRecordPermission:^(BOOL granted) {
+    if (!granted) {
+      reject(@"microphone_permission_denied",
+             @"Microphone access is required to record STT audio.",
+             nil);
+      return;
+    }
+
+    NSError *startError = nil;
+    if (![self beginSttMicrophoneRecordingWithSampleRate:sampleRate error:&startError]) {
+      [self resetSttMicrophoneRecordingState];
+      reject(@"microphone_start_failed",
+             startError.localizedDescription ?: @"Failed to start STT microphone recording.",
+             startError);
+      return;
+    }
+
+    resolve(nil);
+  }];
+}
+
+- (void)stopSttMicrophoneRecording:(RCTPromiseResolveBlock)resolve
+                            reject:(RCTPromiseRejectBlock)reject {
+  if (!self.sttMicrophoneRecorder || !self.sttMicrophoneRecorder.isRecording) {
+    reject(@"not_recording", @"No STT microphone recording is currently in progress.", nil);
+    return;
+  }
+
+  if (self.sttMicrophoneStopResolve || self.sttMicrophoneStopReject) {
+    reject(@"capture_in_progress", @"A microphone recording stop request is already pending.", nil);
+    return;
+  }
+
+  self.sttMicrophoneStopResolve = resolve;
+  self.sttMicrophoneStopReject = reject;
+  [self.sttMicrophoneRecorder stop];
+}
+
+- (void)audioRecorderDidFinishRecording:(AVAudioRecorder *)recorder
+                           successfully:(BOOL)flag {
+  if (recorder != self.sttMicrophoneRecorder) {
+    return;
+  }
+
+  NSURL *recordingURL = self.sttMicrophoneRecordingURL;
+  NSInteger sampleRate = self.sttMicrophoneRecordingSampleRate;
+  NSInteger durationMs =
+      self.sttMicrophoneRecordingStartedAt
+          ? MAX(1, (NSInteger)llround(-self.sttMicrophoneRecordingStartedAt.timeIntervalSinceNow *
+                                      1000.0))
+          : 0;
+  RCTPromiseResolveBlock resolve = self.sttMicrophoneStopResolve;
+  RCTPromiseRejectBlock reject = self.sttMicrophoneStopReject;
+
+  [self resetSttMicrophoneRecordingState];
+
+  if (!recordingURL) {
+    if (reject) {
+      reject(@"microphone_finish_failed",
+             @"STT microphone recording did not finish successfully.",
+             nil);
+    }
+    return;
+  }
+
+  if (!flag) {
+    if (reject) {
+      reject(@"microphone_finish_failed",
+             @"STT microphone recording did not finish successfully.",
+             nil);
+    }
+    [self removeRecordingAtURL:recordingURL];
+    return;
+  }
+
+  NSError *readError = nil;
+  NSDictionary *payload = [self payloadForSttRecordingAtURL:recordingURL
+                                                 sampleRate:sampleRate
+                                                 durationMs:durationMs
+                                                      error:&readError];
+  [self removeRecordingAtURL:recordingURL];
+  if (!payload) {
+    if (reject) {
+      reject(@"microphone_read_failed",
+             readError.localizedDescription ?: @"Failed to read STT microphone recording.",
+             readError);
+    }
+    return;
+  }
+
+  if (resolve) {
+    resolve(payload);
+  }
+}
+
+- (void)audioRecorderEncodeErrorDidOccur:(AVAudioRecorder *)recorder
+                                   error:(NSError *)error {
+  if (recorder != self.sttMicrophoneRecorder) {
+    return;
+  }
+
+  NSURL *recordingURL = self.sttMicrophoneRecordingURL;
+  RCTPromiseRejectBlock reject = self.sttMicrophoneStopReject;
+  [self resetSttMicrophoneRecordingState];
+  [self removeRecordingAtURL:recordingURL];
+
+  if (reject) {
+    reject(@"microphone_record_failed",
+           error.localizedDescription ?: @"STT microphone recording failed.",
+           error);
+  }
+}
+
 - (void)createSttSession:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   if (!self.onlineRecognizer || self.loadedSttModelId.length == 0) {
     reject(@"not_loaded",
@@ -1696,6 +2208,166 @@ RCT_EXPORT_MODULE()
       resolve(nil);
     });
   });
+}
+
+- (void)startSttSessionMicrophone:(JS::NativeWfloat::SttSessionMicrophoneNativeOptions &)options
+                           resolve:(RCTPromiseResolveBlock)resolve
+                            reject:(RCTPromiseRejectBlock)reject {
+  if (!self.onlineRecognizer || self.loadedSttModelId.length == 0) {
+    reject(@"not_loaded", @"Streaming STT model is not loaded.", nil);
+    return;
+  }
+
+  double sessionIdValue = options.sessionId();
+  double sampleRateValue = options.sampleRate();
+  double chunkMsValue = options.chunkMs();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue ||
+      !isfinite(sampleRateValue) || sampleRateValue <= 0 || floor(sampleRateValue) != sampleRateValue ||
+      !isfinite(chunkMsValue) || chunkMsValue <= 0 || floor(chunkMsValue) != chunkMsValue) {
+    reject(@"invalid_arguments", @"sessionId, sampleRate, and chunkMs must be positive integers.", nil);
+    return;
+  }
+
+  if (self.sttMicrophoneAudioEngine || self.sttMicrophoneRecorder) {
+    reject(@"microphone_in_use", @"A streaming STT microphone capture is already in progress.", nil);
+    return;
+  }
+
+  NSInteger sessionId = (NSInteger)sessionIdValue;
+  NSInteger sampleRate = (NSInteger)sampleRateValue;
+  NSInteger chunkMs = (NSInteger)chunkMsValue;
+
+  dispatch_async(self.workQueue, ^{
+    const SherpaOnnxOnlineStream *stream = [self streamForSessionId:sessionId];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!stream) {
+        reject(@"invalid_arguments", @"Unknown STT session.", nil);
+        return;
+      }
+
+      [self ensureRecordPermission:^(BOOL granted) {
+        if (!granted) {
+          reject(@"microphone_permission_denied",
+                 @"Microphone access is required to stream STT audio.",
+                 nil);
+          return;
+        }
+
+        NSError *sessionError = nil;
+        if (![self configureSharedSessionForRecordingWithSampleRate:sampleRate
+                                                              error:&sessionError]) {
+          reject(@"microphone_start_failed",
+                 sessionError.localizedDescription ?: @"Failed to configure microphone audio session.",
+                 sessionError);
+          return;
+        }
+
+        AVAudioEngine *audioEngine = [[AVAudioEngine alloc] init];
+        AVAudioInputNode *inputNode = audioEngine.inputNode;
+        if (!inputNode) {
+          reject(@"microphone_start_failed", @"Failed to access the microphone input node.", nil);
+          return;
+        }
+
+        AVAudioFormat *inputFormat = [inputNode outputFormatForBus:0];
+        AVAudioFormat *targetFormat =
+            [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+                                             sampleRate:(double)sampleRate
+                                               channels:1
+                                            interleaved:NO];
+        if (!targetFormat) {
+          reject(@"microphone_start_failed", @"Failed to create microphone target format.", nil);
+          return;
+        }
+
+        self.sttMicrophoneAudioEngine = audioEngine;
+        self.sttMicrophoneTargetFormat = targetFormat;
+        self.sttMicrophoneStartedAt = [NSDate date];
+        self.sttMicrophoneSessionId = sessionId;
+        self.sttMicrophoneSampleRate = sampleRate;
+        self.sttMicrophoneCallbackCount = 0;
+        self.sttMicrophoneEmittedChunkCount = 0;
+        self.sttMicrophoneInputChannels = (NSInteger)inputFormat.channelCount;
+        self.sttMicrophoneLastInputFrameLength = 0;
+        self.sttMicrophoneInputSampleRate = inputFormat.sampleRate;
+        self.sttMicrophoneLastRawRms = 0;
+        self.sttMicrophoneLastNormalizedRms = 0;
+        self.sttMicrophoneMaxRawRms = 0;
+        self.sttMicrophoneMaxNormalizedRms = 0;
+
+        Wfloat *module = self;
+        [inputNode installTapOnBus:0
+                        bufferSize:(AVAudioFrameCount)MAX(
+                                       1024,
+                                       llround((inputFormat.sampleRate * (double)chunkMs) /
+                                               1000.0))
+                            format:inputFormat
+                             block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+                               [module acceptMicrophoneBuffer:buffer];
+                             }];
+
+        [audioEngine prepare];
+        NSError *startError = nil;
+        if (![audioEngine startAndReturnError:&startError]) {
+          [inputNode removeTapOnBus:0];
+          [self resetSttMicrophoneState];
+          reject(@"microphone_start_failed",
+                 startError.localizedDescription ?: @"Failed to start microphone capture.",
+                 startError);
+          return;
+        }
+
+        resolve(nil);
+      }];
+    });
+  });
+}
+
+- (void)stopSttSessionMicrophone:(JS::NativeWfloat::SttSessionNativeOptions &)options
+                          resolve:(RCTPromiseResolveBlock)resolve
+                           reject:(RCTPromiseRejectBlock)reject {
+  double sessionIdValue = options.sessionId();
+  if (!isfinite(sessionIdValue) || sessionIdValue < 0 || floor(sessionIdValue) != sessionIdValue) {
+    reject(@"invalid_arguments", @"sessionId must be a non-negative integer.", nil);
+    return;
+  }
+
+  if (!self.sttMicrophoneAudioEngine) {
+    reject(@"not_recording", @"No streaming STT microphone capture is currently in progress.", nil);
+    return;
+  }
+
+  NSInteger sessionId = (NSInteger)sessionIdValue;
+  if (self.sttMicrophoneSessionId != sessionId) {
+    reject(@"invalid_arguments", @"Microphone capture belongs to a different STT session.", nil);
+    return;
+  }
+
+  AVAudioEngine *audioEngine = self.sttMicrophoneAudioEngine;
+  [audioEngine.inputNode removeTapOnBus:0];
+  [audioEngine stop];
+
+  NSInteger durationMs =
+      self.sttMicrophoneStartedAt
+          ? MAX(1, (NSInteger)llround(-self.sttMicrophoneStartedAt.timeIntervalSinceNow *
+                                      1000.0))
+          : 0;
+  NSDictionary *payload = @{
+    @"durationMs" : @(durationMs),
+    @"sampleRate" : @(self.sttMicrophoneSampleRate),
+    @"callbackCount" : @(self.sttMicrophoneCallbackCount),
+    @"emittedChunkCount" : @(self.sttMicrophoneEmittedChunkCount),
+    @"inputChannels" : @(self.sttMicrophoneInputChannels),
+    @"inputSampleRate" : @(self.sttMicrophoneInputSampleRate),
+    @"lastInputFrameLength" : @(self.sttMicrophoneLastInputFrameLength),
+    @"lastRawRms" : @(self.sttMicrophoneLastRawRms),
+    @"lastNormalizedRms" : @(self.sttMicrophoneLastNormalizedRms),
+    @"maxRawRms" : @(self.sttMicrophoneMaxRawRms),
+    @"maxNormalizedRms" : @(self.sttMicrophoneMaxNormalizedRms),
+  };
+
+  [self resetSttMicrophoneState];
+  resolve(payload);
 }
 
 - (void)getSttSessionResult:(JS::NativeWfloat::SttSessionNativeOptions &)options
@@ -1840,6 +2512,11 @@ RCT_EXPORT_MODULE()
     NSNumber *key = @((NSInteger)sessionIdValue);
     NSValue *value = self.sttSessions[key];
     if (value) {
+      if (self.sttMicrophoneSessionId == (NSInteger)sessionIdValue) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self stopSttMicrophoneCapture];
+        });
+      }
       const SherpaOnnxOnlineStream *stream =
           (const SherpaOnnxOnlineStream *)value.pointerValue;
       SherpaOnnxDestroyOnlineStream(stream);

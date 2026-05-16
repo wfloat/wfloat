@@ -1,5 +1,5 @@
 export { TtsModel, loadTtsModel } from './tts/model';
-export { SttModel, loadSttModel } from './stt/model';
+export { SttModel, SttSession, loadSttModel } from './stt/model';
 export type {
   AudioResult,
   LoadModelProgressEvent,
@@ -15,6 +15,10 @@ export type {
 } from './tts/types';
 export type {
   LoadSttModelOptions,
+  SttMicrophoneCaptureResult,
+  SttMicrophoneOptions,
+  SttMicrophoneRecording,
+  SttMicrophoneRecordingOptions,
   StreamingTranscriptionResult,
   StreamingTranscribeChunk,
   TranscribeOptions,

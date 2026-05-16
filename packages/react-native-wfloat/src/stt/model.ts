@@ -6,6 +6,10 @@ import Wfloat, {
 import { getSttModelAssets } from '../modelAssets';
 import type {
   LoadSttModelOptions,
+  SttMicrophoneCaptureResult,
+  SttMicrophoneOptions,
+  SttMicrophoneRecording,
+  SttMicrophoneRecordingOptions,
   StreamingTranscribeChunk,
   StreamingTranscriptionResult,
   TranscribeOptions,
@@ -15,6 +19,7 @@ import type {
 } from './types';
 
 const TARGET_SAMPLE_RATE = 16000;
+const DEFAULT_STREAMING_CHUNK_MS = 250;
 
 function normalizeLoadProgressEvent(
   event: NativeLoadModelProgressEvent
@@ -110,6 +115,9 @@ function mapStreamingResult(
 }
 
 export class SttSession {
+  private microphoneResultPoll: ReturnType<typeof globalThis.setInterval> | null = null;
+  private microphoneResultPollGeneration = 0;
+
   constructor(
     public readonly modelId: string,
     private readonly sessionId: number
@@ -124,6 +132,34 @@ export class SttSession {
           ? Math.max(1, Math.trunc(options.sampleRate))
           : TARGET_SAMPLE_RATE,
     });
+  }
+
+  async startMicrophone(options: SttMicrophoneOptions = {}): Promise<void> {
+    this.stopMicrophoneResultPolling();
+
+    const sampleRate =
+      typeof options.sampleRate === 'number' && Number.isFinite(options.sampleRate)
+        ? Math.max(1, Math.trunc(options.sampleRate))
+        : TARGET_SAMPLE_RATE;
+    const chunkMs =
+      typeof options.chunkMs === 'number' && Number.isFinite(options.chunkMs)
+        ? Math.max(100, Math.trunc(options.chunkMs))
+        : DEFAULT_STREAMING_CHUNK_MS;
+
+    await Wfloat.startSttSessionMicrophone({
+      sessionId: this.sessionId,
+      sampleRate,
+      chunkMs,
+    });
+
+    if (options.onResult) {
+      this.startMicrophoneResultPolling(chunkMs, options.onResult);
+    }
+  }
+
+  async stopMicrophone(): Promise<SttMicrophoneCaptureResult> {
+    this.stopMicrophoneResultPolling();
+    return Wfloat.stopSttSessionMicrophone({ sessionId: this.sessionId });
   }
 
   async getResult(): Promise<StreamingTranscriptionResult> {
@@ -143,7 +179,48 @@ export class SttSession {
   }
 
   async close(): Promise<void> {
+    this.stopMicrophoneResultPolling();
     await Wfloat.closeSttSession({ sessionId: this.sessionId });
+  }
+
+  private startMicrophoneResultPolling(
+    intervalMs: number,
+    onResult: (result: StreamingTranscriptionResult) => void | Promise<void>
+  ): void {
+    const generation = this.microphoneResultPollGeneration;
+    let inFlight = false;
+
+    this.microphoneResultPoll = globalThis.setInterval(() => {
+      if (inFlight || generation !== this.microphoneResultPollGeneration) {
+        return;
+      }
+
+      inFlight = true;
+      this.getResult()
+        .then(async (result) => {
+          if (generation === this.microphoneResultPollGeneration) {
+            await onResult(result);
+          }
+        })
+        .catch((error: unknown) => {
+          console.warn(
+            error instanceof Error
+              ? error.message
+              : 'Failed to read streaming STT microphone result.'
+          );
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, intervalMs);
+  }
+
+  private stopMicrophoneResultPolling(): void {
+    this.microphoneResultPollGeneration += 1;
+    if (this.microphoneResultPoll) {
+      globalThis.clearInterval(this.microphoneResultPoll);
+      this.microphoneResultPoll = null;
+    }
   }
 }
 
@@ -205,6 +282,27 @@ export class SttModel {
         hotwords: '',
       })
     );
+  }
+
+  async startMicrophone(options: SttMicrophoneRecordingOptions = {}): Promise<void> {
+    const sampleRate =
+      typeof options.sampleRate === 'number' && Number.isFinite(options.sampleRate)
+        ? Math.max(1, Math.trunc(options.sampleRate))
+        : TARGET_SAMPLE_RATE;
+
+    await Wfloat.startSttMicrophoneRecording({ sampleRate });
+  }
+
+  async stopMicrophone(): Promise<SttMicrophoneRecording> {
+    const recording = await Wfloat.stopSttMicrophoneRecording();
+    return {
+      audio: Float32Array.from(recording.samples),
+      sampleRate: Math.max(1, Math.trunc(recording.sampleRate)),
+      durationMs:
+        typeof recording.durationMs === 'number' && Number.isFinite(recording.durationMs)
+          ? Math.max(0, Math.trunc(recording.durationMs))
+          : 0,
+    };
   }
 
   async createSession(): Promise<SttSession> {

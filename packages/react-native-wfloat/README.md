@@ -91,6 +91,24 @@ const result = await stt.transcribe({
 console.log(result.text);
 ```
 
+Offline STT from the microphone:
+
+```tsx
+import { loadSttModel } from '@wfloat/react-native-wfloat';
+
+const stt = await loadSttModel('openai/whisper-tiny-en', {
+  language: 'en',
+});
+
+await stt.startMicrophone();
+
+// later, from a Stop button click
+const clip = await stt.stopMicrophone();
+const result = await stt.transcribe(clip);
+
+console.log(result.text);
+```
+
 Streaming STT with Zipformer:
 
 ```tsx
@@ -99,13 +117,14 @@ import { loadSttModel } from '@wfloat/react-native-wfloat';
 const stt = await loadSttModel('k2-fsa/streaming-zipformer-en');
 const session = await stt.createSession();
 
-await session.push({
-  audio: pcmChunk,
-  sampleRate: 16000,
+await session.startMicrophone({
+  onResult(partial) {
+    console.log(partial.text);
+  },
 });
 
-const partial = await session.getResult();
-console.log(partial.text);
+// later, from a Stop button click
+await session.stopMicrophone();
 
 const finalResult = await session.finish();
 console.log(finalResult.text);
@@ -128,6 +147,12 @@ await session.close();
   Whisper.
 - `stt.createSession()` opens a streaming session for streaming-capable models
   like Zipformer.
+- `stt.startMicrophone()` / `stt.stopMicrophone()` record microphone audio for
+  one-shot offline STT.
+- `session.startMicrophone({ onResult })` / `session.stopMicrophone()` capture
+  microphone audio and feed a streaming STT session.
+- `session.push(...)` and `session.getResult()` remain available for advanced
+  callers that already own their audio pipeline.
 - `tts.pause()` and `tts.play()` control playback for the active request.
 
 ## Progress callbacks
@@ -195,6 +220,9 @@ building voice pickers and validating user input.
 - Current React Native STT families:
   - `openai/whisper-tiny-en` for offline `transcribe(...)`
   - `k2-fsa/streaming-zipformer-en` for streaming `createSession()`
+- Microphone capture helpers are currently implemented for iOS. Android STT
+  model loading and manual audio APIs are present, but Android microphone
+  capture still needs the matching package-owned native implementation.
 
 ## Contributing
 

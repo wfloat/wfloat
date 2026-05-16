@@ -22,6 +22,10 @@ export type {
 export type {
   DecodedAudio,
   LoadSttModelOptions,
+  SttMicrophoneCaptureResult,
+  SttMicrophoneOptions,
+  SttMicrophoneRecording,
+  SttMicrophoneRecordingOptions,
   StreamingTranscribeChunk,
   StreamingTranscriptionResult,
   TranscribeOptions,

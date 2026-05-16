@@ -70,7 +70,9 @@ console.log(result.audio.sampleRate, result.timeline.chunks.length);
 - `tts.pause()`, `tts.play()`, and `tts.stop()` control playback for the active request on that model instance.
 - `loadSttModel(modelId, { onProgress })` loads an offline STT model into the browser worker.
 - `stt.transcribe({ audio, sampleRate? })` transcribes a single audio input and returns `{ text, tokens?, segments?, ... }`.
-- `createMicrophoneCapture({ sampleRate? })` creates a reusable browser mic capture helper for record -> stop -> transcribe flows.
+- `stt.startMicrophone()` / `stt.stopMicrophone()` record browser mic audio for one-shot offline STT flows.
+- `session.startMicrophone()` / `session.stopMicrophone()` capture browser mic audio and feed a streaming STT session.
+- `createMicrophoneCapture({ sampleRate? })` remains available as a lower-level browser mic helper when you need custom capture control.
 - streaming-capable STT models may also expose `await stt.createSession()` for incremental transcription.
 
 ## Progress callbacks
@@ -148,31 +150,27 @@ console.log(result.tokens?.length ?? 0);
 ## Microphone capture quick start
 
 ```ts
-import { createMicrophoneCapture, loadSttModel } from "@wfloat/wfloat-web";
+import { loadSttModel } from "@wfloat/wfloat-web";
 
 const stt = await loadSttModel("openai/whisper-tiny-en");
-const mic = await createMicrophoneCapture({ sampleRate: 16000 });
 
-await mic.start();
+await stt.startMicrophone({ sampleRate: 16000 });
 
 // later, from a Stop button click
-const audio = await mic.stop();
+const audio = await stt.stopMicrophone();
 
-const result = await stt.transcribe({
-  audio: audio.samples,
-  sampleRate: audio.sampleRate,
-});
+const result = await stt.transcribe(audio);
 
 console.log(result.text);
 ```
 
-This is currently meant for one-shot browser STT flows such as:
+This is meant for one-shot browser STT flows such as:
 - record
 - stop
 - transcribe
 
-It is not the final streaming session API. Real live partial transcription will
-use a streaming-capable STT model path later.
+For custom capture pipelines, `createMicrophoneCapture({ sampleRate })` is also
+exported as a lower-level helper.
 
 ## Streaming STT direction
 
@@ -189,16 +187,19 @@ const stt = await loadSttModel("k2-fsa/streaming-zipformer-en", {
 
 const session = await stt.createSession();
 
-await session.push({
-  audio: pcmChunk,
+await session.startMicrophone({
   sampleRate: 16000,
+  onResult(partial) {
+    console.log(partial.text, partial.isEndpoint);
+  },
 });
 
-const partial = await session.getResult();
-console.log(partial.text, partial.isEndpoint);
+// later, from a Stop button click
+await session.stopMicrophone();
 
 const finalResult = await session.finish();
 console.log(finalResult.text);
+await session.close();
 ```
 
 This path is now implemented in the package surface, but it still depends on

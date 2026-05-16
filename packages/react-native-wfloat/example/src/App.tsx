@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -17,6 +17,7 @@ import {
   loadTtsModel,
   type LoadModelProgressEvent,
   type StreamingTranscriptionResult,
+  type SttMicrophoneRecording,
   type SttModel,
   type SttSession,
   type TtsEmotion,
@@ -44,7 +45,7 @@ const DEFAULT_INTENSITY = '0.5';
 const DEFAULT_SPEED = '1';
 const DEFAULT_SILENCE_PADDING = '0.1';
 const DEFAULT_SAMPLE_RATE = '16000';
-const DEFAULT_SILENCE_MS = '1200';
+const DEFAULT_STREAMING_CHUNK_MS = '250';
 const MAX_LOGS = 24;
 
 function clampUnit(value: number, fallback: number): number {
@@ -101,11 +102,6 @@ function renderHighlightedText(progressEvent: TtsProgressEvent | null): string {
   return `${text.slice(0, start)}[${text.slice(start, end)}]${text.slice(end)}`;
 }
 
-function buildSilenceSamples(sampleRate: number, durationMs: number): Float32Array {
-  const frameCount = Math.max(1, Math.round((sampleRate * durationMs) / 1000));
-  return new Float32Array(frameCount);
-}
-
 export default function App() {
   const [assetHost, setAssetHost] = useState('');
 
@@ -132,6 +128,9 @@ export default function App() {
   const [offlineSttLoadProgress, setOfflineSttLoadProgress] =
     useState<LoadModelProgressEvent | null>(null);
   const [offlineTranscript, setOfflineTranscript] = useState('');
+  const [offlineRecordedClip, setOfflineRecordedClip] =
+    useState<SttMicrophoneRecording | null>(null);
+  const [offlineRecording, setOfflineRecording] = useState(false);
 
   const [streamingSttModelId, setStreamingSttModelId] = useState(
     DEFAULT_STREAMING_STT_MODEL_ID
@@ -147,10 +146,17 @@ export default function App() {
     useState<StreamingTranscriptionResult | null>(null);
   const [streamingSampleRate, setStreamingSampleRate] =
     useState(DEFAULT_SAMPLE_RATE);
-  const [streamingChunkMs, setStreamingChunkMs] = useState(DEFAULT_SILENCE_MS);
+  const [streamingChunkMs, setStreamingChunkMs] = useState(
+    DEFAULT_STREAMING_CHUNK_MS
+  );
+  const [streamingRecording, setStreamingRecording] = useState(false);
+  const [streamingCaptureSummary, setStreamingCaptureSummary] = useState(
+    'No streaming result yet.'
+  );
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const streamingSessionRef = useRef<SttSession | null>(null);
+  const streamingRunTokenRef = useRef(0);
 
   const addLog = (message: string, level: LogLevel = 'info') => {
     setLogs((currentLogs) => {
@@ -180,6 +186,22 @@ export default function App() {
   );
 
   const normalizedAssetHost = assetHost.trim() || undefined;
+  const offlineClipSummary = offlineRecording
+    ? 'recording'
+    : offlineRecordedClip
+      ? `${(offlineRecordedClip.durationMs / 1000).toFixed(1)}s`
+      : 'none';
+
+  useEffect(() => {
+    return () => {
+      streamingRunTokenRef.current += 1;
+      if (streamingSessionRef.current) {
+        streamingSessionRef.current.stopMicrophone().catch(() => {});
+        streamingSessionRef.current.close().catch(() => {});
+        streamingSessionRef.current = null;
+      }
+    };
+  }, []);
 
   const handleLoadTtsModel = async () => {
     setTtsStatus('loading');
@@ -348,6 +370,8 @@ export default function App() {
     setOfflineSttStatus('loading');
     setOfflineSttLoadProgress(null);
     setOfflineTranscript('');
+    setOfflineRecordedClip(null);
+    setOfflineRecording(false);
     addLog(`Loading offline STT model ${offlineSttModelId}`);
 
     try {
@@ -368,26 +392,85 @@ export default function App() {
     }
   };
 
-  const handleOfflineTranscribe = async () => {
+  const handleStartOfflineRecording = async () => {
     if (!offlineSttModel) {
       addLog('Load the offline STT model first.', 'error');
       return;
     }
 
     const sampleRate = parsePositiveNumber(streamingSampleRate, 16000);
-    const silenceMs = parsePositiveNumber(streamingChunkMs, 1200);
-    const samples = buildSilenceSamples(sampleRate, silenceMs);
+    setOfflineRecording(true);
+    setOfflineSttStatus('running');
+    setOfflineRecordedClip(null);
+    setOfflineTranscript('');
+    addLog('Offline STT recording started. Speak now.');
+
+    try {
+      await offlineSttModel.startMicrophone({ sampleRate });
+      addLog('Recorder is live. Tap Stop Recording when you are done.', 'success');
+    } catch (error) {
+      setOfflineRecording(false);
+      setOfflineSttStatus('ready');
+      addLog(
+        error instanceof Error
+          ? error.message
+          : 'Failed to start microphone recording.',
+        'error'
+      );
+    }
+  };
+
+  const handleStopOfflineRecording = async () => {
+    if (!offlineRecording) {
+      addLog('Start recording first.', 'error');
+      return;
+    }
+
+    addLog('Stopping offline STT recording.');
+
+    try {
+      const clip = await offlineSttModel?.stopMicrophone();
+      if (!clip) {
+        throw new Error('Offline STT model is not loaded.');
+      }
+      setOfflineRecording(false);
+      setOfflineRecordedClip(clip);
+      setOfflineSttStatus('ready');
+      addLog(
+        `Recorded clip ready (${clip.audio.length} samples, ${(clip.durationMs / 1000).toFixed(1)}s).`,
+        'success'
+      );
+    } catch (error) {
+      setOfflineRecording(false);
+      setOfflineSttStatus('ready');
+      addLog(
+        error instanceof Error
+          ? error.message
+          : 'Failed to stop microphone recording.',
+        'error'
+      );
+    }
+  };
+
+  const handleOfflineTranscribeRecorded = async () => {
+    if (!offlineSttModel) {
+      addLog('Load the offline STT model first.', 'error');
+      return;
+    }
+
+    if (!offlineRecordedClip) {
+      addLog('Record a microphone clip first.', 'error');
+      return;
+    }
 
     setOfflineSttStatus('running');
+    setOfflineTranscript('');
     addLog(
-      `Running offline STT over ${samples.length} silent samples at ${sampleRate} Hz`
+      `Transcribing recorded clip (${offlineRecordedClip.audio.length} samples at ${offlineRecordedClip.sampleRate} Hz).`
     );
 
     try {
-      const result = await offlineSttModel.transcribe({
-        audio: samples,
-        sampleRate,
-      });
+      const result = await offlineSttModel.transcribe(offlineRecordedClip);
       setOfflineTranscript(result.text);
       setOfflineSttStatus('ready');
       addLog(`Offline STT result: "${result.text}"`, 'success');
@@ -404,6 +487,8 @@ export default function App() {
     setStreamingSttStatus('loading');
     setStreamingSttLoadProgress(null);
     setStreamingResult(null);
+    setStreamingRecording(false);
+    setStreamingCaptureSummary('No streaming result yet.');
     addLog(`Loading streaming STT model ${streamingSttModelId}`);
 
     try {
@@ -429,104 +514,102 @@ export default function App() {
       return;
     }
 
-    try {
-      if (streamingSessionRef.current) {
-        await streamingSessionRef.current.close();
-      }
-      const session = await streamingSttModel.createSession();
-      streamingSessionRef.current = session;
-      setStreamingResult(null);
-      setStreamingSttStatus('running');
-      addLog('Streaming STT session created.', 'success');
-    } catch (error) {
+    if (!streamingSttModel.supportsStreaming) {
       addLog(
-        error instanceof Error ? error.message : 'Failed to create streaming session.',
+        `Model ${streamingSttModel.modelId} does not support streaming sessions.`,
         'error'
       );
-    }
-  };
-
-  const handlePushStreamingChunk = async () => {
-    if (!streamingSessionRef.current) {
-      addLog('Create a streaming session first.', 'error');
       return;
     }
 
     const sampleRate = parsePositiveNumber(streamingSampleRate, 16000);
-    const silenceMs = parsePositiveNumber(streamingChunkMs, 1200);
-    const samples = buildSilenceSamples(sampleRate, silenceMs);
+    const chunkMs = parsePositiveNumber(streamingChunkMs, 250);
 
     try {
-      await streamingSessionRef.current.push({
-        audio: samples,
+      if (streamingSessionRef.current) {
+        await streamingSessionRef.current.stopMicrophone().catch(() => {});
+        await streamingSessionRef.current.close();
+      }
+      const runToken = streamingRunTokenRef.current + 1;
+      streamingRunTokenRef.current = runToken;
+      const session = await streamingSttModel.createSession();
+      streamingSessionRef.current = session;
+      setStreamingResult(null);
+      setStreamingSttStatus('running');
+      setStreamingRecording(true);
+      setStreamingCaptureSummary('Waiting for microphone');
+      await session.startMicrophone({
         sampleRate,
+        chunkMs,
+        onResult(partial) {
+          if (streamingRunTokenRef.current !== runToken) {
+            return;
+          }
+          setStreamingResult(partial);
+          setStreamingCaptureSummary(
+            partial.text || (partial.isEndpoint ? 'Endpoint detected' : 'Listening...')
+          );
+        },
       });
-      const partial = await streamingSessionRef.current.getResult();
-      setStreamingResult(partial);
-      addLog(
-        `Pushed streaming chunk (${samples.length} samples). Partial: "${partial.text}"`,
-        'success'
-      );
+      addLog('Streaming microphone session started.', 'success');
     } catch (error) {
+      streamingRunTokenRef.current += 1;
+      if (streamingSessionRef.current) {
+        await streamingSessionRef.current.stopMicrophone().catch(() => {});
+        await streamingSessionRef.current.close().catch(() => {});
+        streamingSessionRef.current = null;
+      }
+      setStreamingRecording(false);
+      setStreamingSttStatus(streamingSttModel ? 'ready' : 'idle');
+      setStreamingCaptureSummary('Streaming start failed.');
       addLog(
-        error instanceof Error ? error.message : 'Failed to push streaming chunk.',
+        error instanceof Error ? error.message : 'Failed to start streaming session.',
         'error'
       );
     }
   };
 
-  const handleFinishStreaming = async () => {
-    if (!streamingSessionRef.current) {
-      addLog('Create a streaming session first.', 'error');
+  const handleStopStreaming = async () => {
+    if (!streamingSessionRef.current || !streamingRecording) {
+      addLog('Start streaming first.', 'error');
       return;
     }
 
+    const session = streamingSessionRef.current;
+    const runToken = streamingRunTokenRef.current;
+    setStreamingCaptureSummary('Stopping streaming session');
     try {
-      const finalResult = await streamingSessionRef.current.finish();
+      const capture = await session.stopMicrophone();
+      const finalResult = await session.finish();
+      streamingRunTokenRef.current += 1;
+      await session.close();
+      streamingSessionRef.current = null;
+      setStreamingRecording(false);
       setStreamingResult(finalResult);
-      setStreamingSttStatus('ready');
+      setStreamingSttStatus(streamingSttModel ? 'ready' : 'idle');
+      setStreamingCaptureSummary(
+        finalResult.text ||
+          `${(capture.durationMs / 1000).toFixed(1)}s captured, native ${capture.callbackCount} callbacks/${capture.emittedChunkCount} emitted, max raw ${capture.maxRawRms.toFixed(3)}, max normalized ${capture.maxNormalizedRms.toFixed(3)}`
+      );
+      addLog(
+        `Streaming capture summary: native ${capture.callbackCount} callbacks/${capture.emittedChunkCount} emitted, input ${capture.inputSampleRate} Hz/${capture.inputChannels} ch, last input frames ${capture.lastInputFrameLength}, last raw ${capture.lastRawRms.toFixed(3)}, last normalized ${capture.lastNormalizedRms.toFixed(3)}, max raw ${capture.maxRawRms.toFixed(3)}, max normalized ${capture.maxNormalizedRms.toFixed(3)}.`,
+        'info'
+      );
       addLog(`Streaming STT final: "${finalResult.text}"`, 'success');
     } catch (error) {
-      addLog(
-        error instanceof Error ? error.message : 'Failed to finish streaming session.',
-        'error'
-      );
-    }
-  };
-
-  const handleResetStreaming = async () => {
-    if (!streamingSessionRef.current) {
-      addLog('Create a streaming session first.', 'error');
-      return;
-    }
-
-    try {
-      await streamingSessionRef.current.reset();
-      setStreamingResult(null);
-      addLog('Streaming STT session reset.', 'success');
-    } catch (error) {
-      addLog(
-        error instanceof Error ? error.message : 'Failed to reset streaming session.',
-        'error'
-      );
-    }
-  };
-
-  const handleCloseStreaming = async () => {
-    if (!streamingSessionRef.current) {
-      addLog('No streaming session is open.', 'error');
-      return;
-    }
-
-    try {
-      await streamingSessionRef.current.close();
-      streamingSessionRef.current = null;
-      setStreamingResult(null);
+      if (streamingRunTokenRef.current === runToken) {
+        streamingRunTokenRef.current += 1;
+      }
+      if (streamingSessionRef.current) {
+        await streamingSessionRef.current.stopMicrophone().catch(() => {});
+        await streamingSessionRef.current.close().catch(() => {});
+        streamingSessionRef.current = null;
+      }
+      setStreamingRecording(false);
       setStreamingSttStatus(streamingSttModel ? 'ready' : 'idle');
-      addLog('Streaming STT session closed.', 'success');
-    } catch (error) {
+      setStreamingCaptureSummary('Streaming stop failed.');
       addLog(
-        error instanceof Error ? error.message : 'Failed to close streaming session.',
+        error instanceof Error ? error.message : 'Failed to stop streaming session.',
         'error'
       );
     }
@@ -694,31 +777,48 @@ export default function App() {
                     : (offlineSttLoadProgress?.status ?? 'idle')
                 }
               />
-              <Metric label="Text" value={offlineTranscript || 'empty'} />
+              <Metric label="Clip" value={offlineClipSummary} />
             </View>
-            <View style={styles.inlineInputs}>
-              <InputField
-                label="Sample Rate"
-                value={streamingSampleRate}
-                onChangeText={setStreamingSampleRate}
-                keyboardType="decimal-pad"
-                compact
+            <InputField
+              label="Sample Rate"
+              value={streamingSampleRate}
+              onChangeText={setStreamingSampleRate}
+              keyboardType="decimal-pad"
+              compact
+            />
+            <Text style={styles.label}>Transcript</Text>
+            <Text style={styles.previewText}>
+              {offlineTranscript || 'No transcript yet.'}
+            </Text>
+            <View style={styles.buttonRow}>
+              <ActionButton
+                title="Load Model"
+                onPress={handleLoadOfflineStt}
+                disabled={offlineSttStatus === 'loading'}
               />
-              <InputField
-                label="Silence ms"
-                value={streamingChunkMs}
-                onChangeText={setStreamingChunkMs}
-                keyboardType="decimal-pad"
-                compact
+              <ActionButton
+                title="Start Recording"
+                onPress={handleStartOfflineRecording}
+                secondary
+                disabled={!offlineSttModel || offlineRecording}
               />
             </View>
             <View style={styles.buttonRow}>
-              <ActionButton title="Load Offline STT" onPress={handleLoadOfflineStt} />
-              <ActionButton title="Transcribe Silence" onPress={handleOfflineTranscribe} />
+              <ActionButton
+                title="Stop Recording"
+                onPress={handleStopOfflineRecording}
+                secondary
+                disabled={!offlineRecording}
+              />
+              <ActionButton
+                title="Transcribe"
+                onPress={handleOfflineTranscribeRecorded}
+                disabled={!offlineSttModel || offlineRecording || !offlineRecordedClip}
+              />
             </View>
             <Text style={styles.helpText}>
-              This uses a silent PCM clip so you can verify load and transcription
-              plumbing even before adding file-picker or mic capture UI.
+              Load the model once, record a clip, then transcribe the saved
+              microphone audio just like the web smoke page.
             </Text>
           </View>
 
@@ -744,26 +844,51 @@ export default function App() {
                 value={streamingResult?.isEndpoint ? 'yes' : 'no'}
               />
             </View>
+            <View style={styles.inlineInputs}>
+              <InputField
+                label="Sample Rate"
+                value={streamingSampleRate}
+                onChangeText={setStreamingSampleRate}
+                keyboardType="decimal-pad"
+                compact
+              />
+              <InputField
+                label="Chunk ms"
+                value={streamingChunkMs}
+                onChangeText={setStreamingChunkMs}
+                keyboardType="decimal-pad"
+                compact
+              />
+            </View>
             <Text style={styles.label}>Latest partial/final text</Text>
             <Text style={styles.previewText}>
               {streamingResult?.text || 'No streaming result yet.'}
             </Text>
+            <Text style={styles.helpText}>{streamingCaptureSummary}</Text>
             <View style={styles.buttonRow}>
-              <ActionButton title="Load Streaming STT" onPress={handleLoadStreamingStt} />
-              <ActionButton title="Start Session" onPress={handleStartStreaming} />
+              <ActionButton
+                title="Load Model"
+                onPress={handleLoadStreamingStt}
+                disabled={streamingSttStatus === 'loading'}
+              />
+              <ActionButton
+                title="Start Streaming"
+                onPress={handleStartStreaming}
+                secondary
+                disabled={!streamingSttModel || streamingRecording}
+              />
             </View>
             <View style={styles.buttonRow}>
-              <ActionButton title="Push Silence" onPress={handlePushStreamingChunk} secondary />
-              <ActionButton title="Finish" onPress={handleFinishStreaming} secondary />
-            </View>
-            <View style={styles.buttonRow}>
-              <ActionButton title="Reset" onPress={handleResetStreaming} secondary />
-              <ActionButton title="Close" onPress={handleCloseStreaming} secondary />
+              <ActionButton
+                title="Stop Streaming"
+                onPress={handleStopStreaming}
+                secondary
+                disabled={!streamingRecording}
+              />
             </View>
             <Text style={styles.helpText}>
-              This also uses silent PCM chunks. It is meant to verify session
-              lifecycle and partial/final result calls before wiring microphone
-              capture.
+              This matches the web smoke page: start live microphone streaming,
+              watch partials update, then stop to flush the final transcript.
             </Text>
           </View>
 
@@ -820,18 +945,28 @@ function ActionButton({
   title,
   onPress,
   secondary = false,
+  disabled = false,
 }: {
   title: string;
   onPress: () => void;
   secondary?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
+      disabled={disabled}
       onPress={onPress}
-      style={[styles.button, secondary && styles.buttonSecondary]}
+      style={[
+        styles.button,
+        secondary && styles.buttonSecondary,
+        disabled && styles.buttonDisabled,
+      ]}
     >
       <Text
-        style={[styles.buttonText, secondary && styles.buttonTextSecondary]}
+        style={[
+          styles.buttonText,
+          secondary && styles.buttonTextSecondary,
+        ]}
       >
         {title}
       </Text>
@@ -968,6 +1103,9 @@ const styles = StyleSheet.create({
   },
   buttonSecondary: {
     backgroundColor: '#ecf0e2',
+  },
+  buttonDisabled: {
+    opacity: 0.45,
   },
   buttonText: {
     color: '#f9f5ec',

@@ -1,8 +1,13 @@
+import { createMicrophoneCapture, type MicrophoneCapture } from "../audio/microphone.js";
 import { getPersistentId, setPersistentId } from "../util/persistentIdStorage.js";
 import { SttWorkerBridge } from "../worker/sttWorkerBridge.js";
 import type {
   DecodedAudio,
   LoadSttModelOptions,
+  SttMicrophoneCaptureResult,
+  SttMicrophoneOptions,
+  SttMicrophoneRecording,
+  SttMicrophoneRecordingOptions,
   StreamingTranscribeChunk,
   StreamingTranscriptionResult,
   TranscribeOptions,
@@ -108,6 +113,8 @@ async function normalizeAudioInput(options: TranscribeOptions): Promise<DecodedA
 }
 
 export class SttModel {
+  private microphoneCapture: MicrophoneCapture | null = null;
+
   private constructor(
     public readonly modelId: string,
     public readonly family: string,
@@ -143,6 +150,40 @@ export class SttModel {
     });
   }
 
+  async startMicrophone(options: SttMicrophoneRecordingOptions = {}): Promise<void> {
+    if (this.microphoneCapture?.isRecording) {
+      return;
+    }
+
+    const capture = await createMicrophoneCapture({
+      sampleRate: normalizeSampleRate(options.sampleRate),
+    });
+
+    try {
+      await capture.start();
+      this.microphoneCapture = capture;
+    } catch (error) {
+      await capture.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  async stopMicrophone(): Promise<SttMicrophoneRecording> {
+    if (!this.microphoneCapture?.isRecording) {
+      throw new Error("STT microphone recording is not active.");
+    }
+
+    const capture = this.microphoneCapture;
+    this.microphoneCapture = null;
+    const recorded = await capture.stop();
+
+    return {
+      audio: recorded.samples,
+      sampleRate: recorded.sampleRate,
+      durationMs: Math.round(recorded.durationSec * 1000),
+    };
+  }
+
   async createSession(): Promise<SttSession> {
     if (!this.supportsStreaming) {
       throw new Error(
@@ -163,6 +204,10 @@ export async function loadSttModel(
 }
 
 export class SttSession {
+  private microphoneCapture: MicrophoneCapture | null = null;
+  private microphoneQueue: Promise<void> = Promise.resolve();
+  private microphoneChunkCount = 0;
+
   constructor(
     public readonly modelId: string,
     private readonly sessionId: number,
@@ -174,6 +219,53 @@ export class SttSession {
       samples: options.audio,
       sampleRate: options.sampleRate ?? TARGET_SAMPLE_RATE,
     });
+  }
+
+  async startMicrophone(options: SttMicrophoneOptions = {}): Promise<void> {
+    if (this.microphoneCapture?.isRecording) {
+      return;
+    }
+
+    const capture = await createMicrophoneCapture({
+      sampleRate: normalizeSampleRate(options.sampleRate),
+    });
+
+    this.microphoneQueue = Promise.resolve();
+    this.microphoneChunkCount = 0;
+
+    try {
+      await capture.start({
+        onChunk: (samples, sampleRate) => {
+          this.microphoneChunkCount += 1;
+          this.microphoneQueue = this.microphoneQueue.then(async () => {
+            await this.push({ audio: samples, sampleRate });
+            const result = await this.getResult();
+            await options.onResult?.(result);
+          });
+        },
+      });
+      this.microphoneCapture = capture;
+    } catch (error) {
+      await capture.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  async stopMicrophone(): Promise<SttMicrophoneCaptureResult> {
+    if (!this.microphoneCapture?.isRecording) {
+      throw new Error("Streaming STT microphone capture is not active.");
+    }
+
+    const capture = this.microphoneCapture;
+    this.microphoneCapture = null;
+    const recorded = await capture.stop();
+    await this.microphoneQueue;
+
+    return {
+      durationMs: Math.round(recorded.durationSec * 1000),
+      sampleRate: recorded.sampleRate,
+      chunkCount: this.microphoneChunkCount,
+    };
   }
 
   async getResult(): Promise<StreamingTranscriptionResult> {
@@ -189,6 +281,16 @@ export class SttSession {
   }
 
   async close(): Promise<void> {
+    if (this.microphoneCapture) {
+      await this.microphoneCapture.close().catch(() => {});
+      this.microphoneCapture = null;
+    }
     await SttWorkerBridge.closeSession(this.sessionId);
   }
+}
+
+function normalizeSampleRate(sampleRate: number | undefined): number {
+  return typeof sampleRate === "number" && Number.isFinite(sampleRate)
+    ? Math.max(1, Math.trunc(sampleRate))
+    : TARGET_SAMPLE_RATE;
 }

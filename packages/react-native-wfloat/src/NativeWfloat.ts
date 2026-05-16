@@ -83,6 +83,16 @@ export type SttSessionNativeOptions = {
   sessionId: number;
 };
 
+export type SttMicrophoneRecordingNativeOptions = {
+  sampleRate: number;
+};
+
+export type SttSessionMicrophoneNativeOptions = {
+  sessionId: number;
+  sampleRate: number;
+  chunkMs: number;
+};
+
 export type PushSttSessionAudioNativeOptions = {
   sessionId: number;
   samples: number[];
@@ -125,6 +135,26 @@ export type NativeLoadSttModelResult = {
   supportsStreaming: boolean;
 };
 
+export type NativeSttMicrophoneCaptureResult = {
+  durationMs: number;
+  sampleRate: number;
+  callbackCount: number;
+  emittedChunkCount: number;
+  inputChannels: number;
+  inputSampleRate: number;
+  lastInputFrameLength: number;
+  lastRawRms: number;
+  lastNormalizedRms: number;
+  maxRawRms: number;
+  maxNormalizedRms: number;
+};
+
+export type NativeSttMicrophoneRecordingResult = {
+  durationMs: number;
+  sampleRate: number;
+  samples: number[];
+};
+
 export type NativeLoadModelProgressEvent = {
   status: string;
   progress?: number;
@@ -152,8 +182,18 @@ export interface Spec extends TurboModule {
     options: GenerateDialogueNativeOptions
   ): Promise<NativeGenerateResult>;
   transcribe(options: TranscribeNativeOptions): Promise<NativeTranscriptionResult>;
+  startSttMicrophoneRecording(
+    options: SttMicrophoneRecordingNativeOptions
+  ): Promise<void>;
+  stopSttMicrophoneRecording(): Promise<NativeSttMicrophoneRecordingResult>;
   createSttSession(): Promise<number>;
   pushSttSessionAudio(options: PushSttSessionAudioNativeOptions): Promise<void>;
+  startSttSessionMicrophone(
+    options: SttSessionMicrophoneNativeOptions
+  ): Promise<void>;
+  stopSttSessionMicrophone(
+    options: SttSessionNativeOptions
+  ): Promise<NativeSttMicrophoneCaptureResult>;
   getSttSessionResult(
     options: SttSessionNativeOptions
   ): Promise<NativeStreamingTranscriptionResult>;

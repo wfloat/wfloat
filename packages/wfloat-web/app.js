@@ -1,4 +1,4 @@
-import { createMicrophoneCapture, loadSttModel, loadTtsModel } from "./dist/index.js";
+import { loadSttModel, loadTtsModel } from "./dist/index.js";
 
 const elements = {
   assetHost: document.getElementById("assetHost"),
@@ -42,11 +42,9 @@ const elements = {
 let ttsModel = null;
 let sttModel = null;
 let lastResult = null;
-let micCapture = null;
 let recordedMicAudio = null;
+let offlineMicrophoneRecording = false;
 let streamingSession = null;
-let streamingMicCapture = null;
-let streamingQueue = Promise.resolve();
 let streamingStartedAt = 0;
 
 function formatError(error) {
@@ -95,7 +93,7 @@ function setSttButtons({ loaded, busy }) {
   elements.loadStt.disabled = busy;
   elements.transcribe.disabled = !loaded || busy;
   elements.sttMicStart.disabled = !loaded || busy;
-  elements.sttMicStop.disabled = !loaded || busy || !micCapture?.isRecording;
+  elements.sttMicStop.disabled = !loaded || busy || !offlineMicrophoneRecording;
   elements.sttStreamingStart.disabled = !loaded || busy || !sttModel?.supportsStreaming || Boolean(streamingSession);
   elements.sttStreamingStop.disabled = !loaded || busy || !streamingSession;
 }
@@ -264,16 +262,13 @@ async function startMicCapture() {
   elements.sttProgress.value = 0;
 
   try {
-    if (!micCapture) {
-      micCapture = await createMicrophoneCapture({ sampleRate: 16000 });
-    }
-
     recordedMicAudio = null;
-    await micCapture.start();
+    await sttModel.startMicrophone({ sampleRate: 16000 });
+    offlineMicrophoneRecording = true;
     elements.sttSummary.textContent = "Recording microphone";
     elements.sttTiming.textContent = "Recording in progress";
     appendLog("Microphone capture started", {
-      sampleRate: micCapture.sampleRate,
+      sampleRate: 16000,
     });
   } catch (error) {
     elements.sttSummary.textContent = "Microphone start failed";
@@ -285,7 +280,7 @@ async function startMicCapture() {
 }
 
 async function stopMicCapture() {
-  if (!micCapture?.isRecording) {
+  if (!offlineMicrophoneRecording) {
     appendLog("Cannot stop mic capture because recording is not active");
     return;
   }
@@ -294,13 +289,14 @@ async function stopMicCapture() {
   elements.sttSummary.textContent = "Stopping microphone";
 
   try {
-    recordedMicAudio = await micCapture.stop();
+    recordedMicAudio = await sttModel.stopMicrophone();
+    offlineMicrophoneRecording = false;
     elements.sttSummary.textContent = "Microphone clip ready";
-    elements.sttTiming.textContent = `${Math.round(recordedMicAudio.durationSec * 1000)} ms recorded`;
+    elements.sttTiming.textContent = `${recordedMicAudio.durationMs} ms recorded`;
     appendLog("Microphone capture stopped", {
-      durationSec: recordedMicAudio.durationSec,
+      durationMs: recordedMicAudio.durationMs,
       sampleRate: recordedMicAudio.sampleRate,
-      samples: recordedMicAudio.samples.length,
+      samples: recordedMicAudio.audio.length,
     });
   } catch (error) {
     elements.sttSummary.textContent = "Microphone stop failed";
@@ -333,24 +329,15 @@ async function startStreamingSession() {
 
   try {
     streamingSession = await sttModel.createSession();
-    streamingMicCapture = await createMicrophoneCapture({ sampleRate: 16000 });
-    streamingQueue = Promise.resolve();
     streamingStartedAt = performance.now();
 
-    await streamingMicCapture.start({
-      onChunk(samples, sampleRate) {
-        if (!streamingSession) {
-          return;
-        }
-
-        streamingQueue = streamingQueue.then(async () => {
-          await streamingSession.push({ audio: samples, sampleRate });
-          const partial = await streamingSession.getResult();
-          elements.sttStreamingTranscript.textContent = partial.text || "(listening...)";
-          elements.sttStreamingSummary.textContent = partial.isEndpoint
-            ? "Endpoint detected"
-            : "Streaming microphone";
-        });
+    await streamingSession.startMicrophone({
+      sampleRate: 16000,
+      onResult(partial) {
+        elements.sttStreamingTranscript.textContent = partial.text || "(listening...)";
+        elements.sttStreamingSummary.textContent = partial.isEndpoint
+          ? "Endpoint detected"
+          : "Streaming microphone";
       },
     });
 
@@ -361,10 +348,6 @@ async function startStreamingSession() {
     });
   } catch (error) {
     elements.sttStreamingSummary.textContent = "Streaming start failed";
-    if (streamingMicCapture) {
-      await streamingMicCapture.close().catch(() => {});
-      streamingMicCapture = null;
-    }
     if (streamingSession) {
       await streamingSession.close().catch(() => {});
       streamingSession = null;
@@ -377,7 +360,7 @@ async function startStreamingSession() {
 }
 
 async function stopStreamingSession() {
-  if (!streamingSession || !streamingMicCapture) {
+  if (!streamingSession) {
     appendLog("Cannot stop streaming because no session is active");
     return;
   }
@@ -386,20 +369,17 @@ async function stopStreamingSession() {
   elements.sttStreamingSummary.textContent = "Stopping streaming session";
 
   try {
-    const mic = streamingMicCapture;
     const session = streamingSession;
-    streamingMicCapture = null;
     streamingSession = null;
 
-    const recordedAudio = await mic.stop();
-    await streamingQueue;
+    const recordedAudio = await session.stopMicrophone();
     const finalResult = await session.finish();
     await session.close();
 
     const elapsedMs = Math.round(performance.now() - streamingStartedAt);
     elements.sttStreamingSummary.textContent = "Streaming complete";
     elements.sttStreamingTiming.textContent =
-      `${elapsedMs} ms, ${Math.round(recordedAudio.durationSec * 1000)} ms captured`;
+      `${elapsedMs} ms, ${recordedAudio.durationMs} ms captured, ${recordedAudio.chunkCount} chunks`;
     elements.sttStreamingTranscript.textContent = finalResult.text || "(empty transcript)";
 
     appendLog("Streaming STT result", {
@@ -441,7 +421,7 @@ async function transcribe() {
       ? {
           modelId: elements.sttModelId.value.trim(),
           sampleRate: recordedMicAudio.sampleRate,
-          samples: recordedMicAudio.samples.length,
+          samples: recordedMicAudio.audio.length,
           source: "microphone",
         }
       : {
@@ -456,7 +436,7 @@ async function transcribe() {
   try {
     const result = recordedMicAudio
       ? await sttModel.transcribe({
-          audio: recordedMicAudio.samples,
+          audio: recordedMicAudio.audio,
           sampleRate: recordedMicAudio.sampleRate,
         })
       : await sttModel.transcribe({ audio: file });

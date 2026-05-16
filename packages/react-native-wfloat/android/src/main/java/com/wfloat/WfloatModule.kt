@@ -533,6 +533,20 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  override fun startSttMicrophoneRecording(options: ReadableMap, promise: Promise) {
+    promise.reject(
+      "unsupported_platform",
+      "STT microphone recording is currently implemented on iOS. Use transcribe(...) with your own Android audio capture for now."
+    )
+  }
+
+  override fun stopSttMicrophoneRecording(promise: Promise) {
+    promise.reject(
+      "unsupported_platform",
+      "STT microphone recording is currently implemented on iOS."
+    )
+  }
+
   override fun createSttSession(promise: Promise) {
     val recognizer = onlineRecognizer
     val modelId = loadedSttModelId
@@ -581,6 +595,20 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         promise.reject("session_push_failed", error.message ?: "Failed to push session audio.", error)
       }
     }
+  }
+
+  override fun startSttSessionMicrophone(options: ReadableMap, promise: Promise) {
+    promise.reject(
+      "unsupported_platform",
+      "Streaming STT microphone capture is currently implemented on iOS. Use push(...) with your own Android audio capture for now."
+    )
+  }
+
+  override fun stopSttSessionMicrophone(options: ReadableMap, promise: Promise) {
+    promise.reject(
+      "unsupported_platform",
+      "Streaming STT microphone capture is currently implemented on iOS."
+    )
   }
 
   override fun getSttSessionResult(options: ReadableMap, promise: Promise) {
