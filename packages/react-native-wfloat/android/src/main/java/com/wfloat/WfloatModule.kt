@@ -1,6 +1,12 @@
 package com.wfloat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.net.Uri
+import android.os.Build
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -34,8 +40,10 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 private const val DEFAULT_INTENSITY = 0.5
 private const val DEFAULT_SPEED = 1.0
@@ -43,6 +51,9 @@ private const val DEFAULT_DIALOGUE_SILENCE_SEC = 0.2
 private const val DEFAULT_SENTENCE_SILENCE_SEC = 0.1
 private const val DEFAULT_DOWNLOAD_PROGRESS_DELTA = 0.01
 private const val READY_MARKER_FILE_NAME = ".ready"
+private const val DEFAULT_STT_SAMPLE_RATE = 16000
+private const val DEFAULT_STREAMING_STT_CHUNK_MS = 250
+private const val PCM_16BIT_FLOAT_SCALE = 32768.0f
 
 private data class PreparedTextPayload(
   val rawTextChunks: List<String>,
@@ -125,6 +136,31 @@ private data class StreamingSttResult(
   val json: String,
 )
 
+private data class SttMicrophoneRecordingState(
+  val audioRecord: AudioRecord,
+  val running: AtomicBoolean,
+  val thread: Thread,
+  val chunks: MutableList<FloatArray>,
+  val sampleRate: Int,
+  val startedAtNanos: Long,
+)
+
+private data class StreamingSttMicrophoneState(
+  val audioRecord: AudioRecord,
+  val running: AtomicBoolean,
+  val thread: Thread,
+  val sessionId: Int,
+  val sampleRate: Int,
+  val startedAtNanos: Long,
+  var callbackCount: Int = 0,
+  var emittedChunkCount: Int = 0,
+  var lastInputFrameLength: Int = 0,
+  var lastRawRms: Double = 0.0,
+  var lastNormalizedRms: Double = 0.0,
+  var maxRawRms: Double = 0.0,
+  var maxNormalizedRms: Double = 0.0,
+)
+
 private enum class GenerationOutcome {
   COMPLETED,
   CANCELLED,
@@ -174,6 +210,8 @@ class WfloatModule(reactContext: ReactApplicationContext) :
 
   private val sttSessions = LinkedHashMap<Int, OnlineStream>()
   private var nextSttSessionId = 1
+  private var sttMicrophoneRecording: SttMicrophoneRecordingState? = null
+  private var streamingSttMicrophone: StreamingSttMicrophoneState? = null
 
   override fun getName(): String {
     return NAME
@@ -181,6 +219,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
 
   override fun invalidate() {
     cancelCurrentSpeechSession()
+    stopAllSttMicrophones()
     closeAllSttSessions()
 
     synchronized(stateLock) {
@@ -425,6 +464,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         }
 
         emitLoadModelProgress("loading", null)
+        stopAllSttMicrophones()
         closeAllSttSessions()
 
         val resolvedPaths = fileSet.copy(
@@ -534,17 +574,77 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   }
 
   override fun startSttMicrophoneRecording(options: ReadableMap, promise: Promise) {
-    promise.reject(
-      "unsupported_platform",
-      "STT microphone recording is currently implemented on iOS. Use transcribe(...) with your own Android audio capture for now."
-    )
+    if (!hasRecordAudioPermission()) {
+      promise.reject("permission_denied", "Microphone permission is required for STT recording.")
+      return
+    }
+
+    val sampleRate: Int
+    try {
+      sampleRate = readOptionalPositiveInt(options, "sampleRate", DEFAULT_STT_SAMPLE_RATE)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    val capture: SttMicrophoneRecordingState
+    synchronized(stateLock) {
+      if (sttMicrophoneRecording != null || streamingSttMicrophone != null) {
+        promise.reject("microphone_in_use", "An STT microphone capture is already active.")
+        return
+      }
+
+      try {
+        capture = createSttMicrophoneRecordingState(sampleRate)
+        sttMicrophoneRecording = capture
+      } catch (error: Throwable) {
+        promise.reject("microphone_start_failed", error.message ?: "Failed to start microphone recording.", error)
+        return
+      }
+    }
+
+    try {
+      capture.audioRecord.startRecording()
+      capture.thread.start()
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      synchronized(stateLock) {
+        if (sttMicrophoneRecording === capture) {
+          sttMicrophoneRecording = null
+        }
+      }
+      releaseAudioRecord(capture.audioRecord)
+      promise.reject("microphone_start_failed", error.message ?: "Failed to start microphone recording.", error)
+    }
   }
 
   override fun stopSttMicrophoneRecording(promise: Promise) {
-    promise.reject(
-      "unsupported_platform",
-      "STT microphone recording is currently implemented on iOS."
-    )
+    val capture = synchronized(stateLock) {
+      val activeCapture = sttMicrophoneRecording
+      sttMicrophoneRecording = null
+      activeCapture
+    }
+
+    if (capture == null) {
+      promise.reject("microphone_not_active", "STT microphone recording is not active.")
+      return
+    }
+
+    workQueue.execute {
+      try {
+        stopRecordingCapture(capture)
+        val samples = concatenateFloatChunks(capture.chunks)
+        promise.resolve(
+          Arguments.createMap().apply {
+            putDouble("durationMs", elapsedMillis(capture.startedAtNanos).toDouble())
+            putDouble("sampleRate", capture.sampleRate.toDouble())
+            putArray("samples", floatArrayToWritableArray(samples))
+          }
+        )
+      } catch (error: Throwable) {
+        promise.reject("microphone_stop_failed", error.message ?: "Failed to stop microphone recording.", error)
+      }
+    }
   }
 
   override fun createSttSession(promise: Promise) {
@@ -598,17 +698,121 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   }
 
   override fun startSttSessionMicrophone(options: ReadableMap, promise: Promise) {
-    promise.reject(
-      "unsupported_platform",
-      "Streaming STT microphone capture is currently implemented on iOS. Use push(...) with your own Android audio capture for now."
-    )
+    val recognizer = onlineRecognizer
+    if (recognizer == null) {
+      promise.reject("not_loaded", "Streaming STT model is not loaded.")
+      return
+    }
+    if (!hasRecordAudioPermission()) {
+      promise.reject("permission_denied", "Microphone permission is required for streaming STT.")
+      return
+    }
+
+    val sessionId: Int
+    val sampleRate: Int
+    val chunkMs: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+      sampleRate = readOptionalPositiveInt(options, "sampleRate", DEFAULT_STT_SAMPLE_RATE)
+      chunkMs = readOptionalPositiveInt(options, "chunkMs", DEFAULT_STREAMING_STT_CHUNK_MS)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    synchronized(stateLock) {
+      if (!sttSessions.containsKey(sessionId)) {
+        promise.reject("unknown_session", "Unknown STT session: $sessionId")
+        return
+      }
+      if (sttMicrophoneRecording != null || streamingSttMicrophone != null) {
+        promise.reject("microphone_in_use", "An STT microphone capture is already active.")
+        return
+      }
+    }
+
+    val capture: StreamingSttMicrophoneState
+    synchronized(stateLock) {
+      try {
+        capture = createStreamingSttMicrophoneState(
+          sessionId = sessionId,
+          sampleRate = sampleRate,
+          chunkMs = chunkMs,
+          recognizer = recognizer
+        )
+        streamingSttMicrophone = capture
+      } catch (error: Throwable) {
+        promise.reject("microphone_start_failed", error.message ?: "Failed to start streaming microphone capture.", error)
+        return
+      }
+    }
+
+    try {
+      capture.audioRecord.startRecording()
+      capture.thread.start()
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      synchronized(stateLock) {
+        if (streamingSttMicrophone === capture) {
+          streamingSttMicrophone = null
+        }
+      }
+      releaseAudioRecord(capture.audioRecord)
+      promise.reject("microphone_start_failed", error.message ?: "Failed to start streaming microphone capture.", error)
+    }
   }
 
   override fun stopSttSessionMicrophone(options: ReadableMap, promise: Promise) {
-    promise.reject(
-      "unsupported_platform",
-      "Streaming STT microphone capture is currently implemented on iOS."
-    )
+    val sessionId: Int
+    try {
+      sessionId = readRequiredNonNegativeInt(options, "sessionId")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    val capture: StreamingSttMicrophoneState?
+    synchronized(stateLock) {
+      val activeCapture = streamingSttMicrophone
+      if (activeCapture != null && activeCapture.sessionId != sessionId) {
+        promise.reject(
+          "microphone_session_mismatch",
+          "Streaming microphone capture is active for a different STT session."
+        )
+        return
+      }
+      capture = if (activeCapture == null) {
+        null
+      } else {
+        streamingSttMicrophone = null
+        activeCapture
+      }
+    }
+
+    if (capture == null) {
+      promise.reject("microphone_not_active", "Streaming STT microphone capture is not active.")
+      return
+    }
+
+    stopStreamingCapture(capture)
+
+    workQueue.execute {
+      promise.resolve(
+        Arguments.createMap().apply {
+          putDouble("durationMs", elapsedMillis(capture.startedAtNanos).toDouble())
+          putDouble("sampleRate", capture.sampleRate.toDouble())
+          putDouble("callbackCount", capture.callbackCount.toDouble())
+          putDouble("emittedChunkCount", capture.emittedChunkCount.toDouble())
+          putDouble("inputChannels", 1.0)
+          putDouble("inputSampleRate", capture.sampleRate.toDouble())
+          putDouble("lastInputFrameLength", capture.lastInputFrameLength.toDouble())
+          putDouble("lastRawRms", capture.lastRawRms)
+          putDouble("lastNormalizedRms", capture.lastNormalizedRms)
+          putDouble("maxRawRms", capture.maxRawRms)
+          putDouble("maxNormalizedRms", capture.maxNormalizedRms)
+        }
+      )
+    }
   }
 
   override fun getSttSessionResult(options: ReadableMap, promise: Promise) {
@@ -716,6 +920,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       return
     }
 
+    stopStreamingMicCaptureForSession(sessionId)
     workQueue.execute {
       synchronized(stateLock) {
         sttSessions.remove(sessionId)?.release()
@@ -1432,10 +1637,224 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   }
 
   private fun closeAllSttSessions() {
+    stopAllSttMicrophones()
     synchronized(stateLock) {
       sttSessions.values.forEach { it.release() }
       sttSessions.clear()
     }
+  }
+
+  private fun hasRecordAudioPermission(): Boolean {
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+      reactApplicationContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+      PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun createSttAudioRecord(sampleRate: Int, frameCount: Int): AudioRecord {
+    val minBufferSizeBytes = AudioRecord.getMinBufferSize(
+      sampleRate,
+      AudioFormat.CHANNEL_IN_MONO,
+      AudioFormat.ENCODING_PCM_16BIT
+    )
+    if (minBufferSizeBytes <= 0) {
+      throw IllegalStateException("Failed to determine microphone buffer size for $sampleRate Hz.")
+    }
+
+    val requestedBufferSizeBytes = frameCount * 2
+    val bufferSizeBytes = maxOf(minBufferSizeBytes, requestedBufferSizeBytes)
+    val audioRecord = AudioRecord(
+      MediaRecorder.AudioSource.VOICE_RECOGNITION,
+      sampleRate,
+      AudioFormat.CHANNEL_IN_MONO,
+      AudioFormat.ENCODING_PCM_16BIT,
+      bufferSizeBytes
+    )
+
+    if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+      releaseAudioRecord(audioRecord)
+      throw IllegalStateException("Failed to initialize Android microphone capture.")
+    }
+
+    return audioRecord
+  }
+
+  private fun createSttMicrophoneRecordingState(sampleRate: Int): SttMicrophoneRecordingState {
+    val chunkFrames = maxOf(1, sampleRate / 10)
+    val audioRecord = createSttAudioRecord(sampleRate, chunkFrames)
+    val running = AtomicBoolean(true)
+    val chunks = mutableListOf<FloatArray>()
+    val thread = Thread({
+      val shortBuffer = ShortArray(chunkFrames)
+      while (running.get()) {
+        val readCount = audioRecord.read(shortBuffer, 0, shortBuffer.size)
+        if (readCount > 0) {
+          chunks.add(shortArrayToFloatArray(shortBuffer, readCount))
+        }
+      }
+    }, "WfloatSttMicrophoneRecording")
+
+    return SttMicrophoneRecordingState(
+      audioRecord = audioRecord,
+      running = running,
+      thread = thread,
+      chunks = chunks,
+      sampleRate = sampleRate,
+      startedAtNanos = System.nanoTime()
+    )
+  }
+
+  private fun createStreamingSttMicrophoneState(
+    sessionId: Int,
+    sampleRate: Int,
+    chunkMs: Int,
+    recognizer: OnlineRecognizer,
+  ): StreamingSttMicrophoneState {
+    val chunkFrames = maxOf(1, (sampleRate * chunkMs) / 1000)
+    val audioRecord = createSttAudioRecord(sampleRate, chunkFrames)
+    val running = AtomicBoolean(true)
+    lateinit var capture: StreamingSttMicrophoneState
+
+    val thread = Thread({
+      val shortBuffer = ShortArray(chunkFrames)
+      while (running.get()) {
+        val readCount = audioRecord.read(shortBuffer, 0, shortBuffer.size)
+        if (readCount <= 0) {
+          continue
+        }
+
+        val samples = shortArrayToFloatArray(shortBuffer, readCount)
+        val normalizedRms = rms(samples)
+        val rawRms = normalizedRms * PCM_16BIT_FLOAT_SCALE.toDouble()
+
+        synchronized(capture) {
+          capture.callbackCount += 1
+          capture.emittedChunkCount += 1
+          capture.lastInputFrameLength = readCount
+          capture.lastRawRms = rawRms
+          capture.lastNormalizedRms = normalizedRms
+          capture.maxRawRms = maxOf(capture.maxRawRms, rawRms)
+          capture.maxNormalizedRms = maxOf(capture.maxNormalizedRms, normalizedRms)
+        }
+
+        workQueue.execute {
+          try {
+            val session = requireSttSession(sessionId)
+            session.acceptWaveform(samples, sampleRate)
+            decodeOnlineSession(recognizer, session)
+          } catch (_: Throwable) {
+            // The JS side can surface session errors through getResult/finish/stop.
+          }
+        }
+      }
+    }, "WfloatStreamingSttMicrophone")
+
+    capture = StreamingSttMicrophoneState(
+      audioRecord = audioRecord,
+      running = running,
+      thread = thread,
+      sessionId = sessionId,
+      sampleRate = sampleRate,
+      startedAtNanos = System.nanoTime()
+    )
+    return capture
+  }
+
+  private fun stopAllSttMicrophones() {
+    val recordingCapture: SttMicrophoneRecordingState?
+    val streamingCapture: StreamingSttMicrophoneState?
+    synchronized(stateLock) {
+      recordingCapture = sttMicrophoneRecording
+      streamingCapture = streamingSttMicrophone
+      sttMicrophoneRecording = null
+      streamingSttMicrophone = null
+    }
+
+    recordingCapture?.let { stopRecordingCapture(it) }
+    streamingCapture?.let { stopStreamingCapture(it) }
+  }
+
+  private fun stopStreamingMicCaptureForSession(sessionId: Int) {
+    val capture = synchronized(stateLock) {
+      val activeCapture = streamingSttMicrophone
+      if (activeCapture?.sessionId == sessionId) {
+        streamingSttMicrophone = null
+        activeCapture
+      } else {
+        null
+      }
+    }
+
+    capture?.let { stopStreamingCapture(it) }
+  }
+
+  private fun stopRecordingCapture(capture: SttMicrophoneRecordingState) {
+    capture.running.set(false)
+    stopAudioRecord(capture.audioRecord)
+    capture.thread.join(1000)
+    releaseAudioRecord(capture.audioRecord)
+  }
+
+  private fun stopStreamingCapture(capture: StreamingSttMicrophoneState) {
+    capture.running.set(false)
+    stopAudioRecord(capture.audioRecord)
+    capture.thread.join(1000)
+    releaseAudioRecord(capture.audioRecord)
+  }
+
+  private fun stopAudioRecord(audioRecord: AudioRecord) {
+    try {
+      audioRecord.stop()
+    } catch (_: Throwable) {
+    }
+  }
+
+  private fun releaseAudioRecord(audioRecord: AudioRecord) {
+    try {
+      audioRecord.release()
+    } catch (_: Throwable) {
+    }
+  }
+
+  private fun shortArrayToFloatArray(samples: ShortArray, sampleCount: Int): FloatArray {
+    val output = FloatArray(sampleCount)
+    for (index in 0 until sampleCount) {
+      output[index] = samples[index].toFloat() / PCM_16BIT_FLOAT_SCALE
+    }
+    return output
+  }
+
+  private fun rms(samples: FloatArray): Double {
+    if (samples.isEmpty()) {
+      return 0.0
+    }
+
+    var sumSquares = 0.0
+    samples.forEach { sample ->
+      sumSquares += (sample * sample).toDouble()
+    }
+    return sqrt(sumSquares / samples.size.toDouble())
+  }
+
+  private fun concatenateFloatChunks(chunks: List<FloatArray>): FloatArray {
+    val totalLength = chunks.sumOf { it.size }
+    val output = FloatArray(totalLength)
+    var offset = 0
+    chunks.forEach { chunk ->
+      System.arraycopy(chunk, 0, output, offset, chunk.size)
+      offset += chunk.size
+    }
+    return output
+  }
+
+  private fun floatArrayToWritableArray(samples: FloatArray) =
+    Arguments.createArray().apply {
+      samples.forEach { sample ->
+        pushDouble(sample.toDouble())
+      }
+    }
+
+  private fun elapsedMillis(startedAtNanos: Long): Long {
+    return (System.nanoTime() - startedAtNanos) / 1_000_000L
   }
 
   private fun cancelCurrentSpeechSession() {
@@ -1818,6 +2237,18 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     }
 
     private fun readRequiredPositiveInt(map: ReadableMap, key: String): Int {
+      val value = readRequiredNonNegativeInt(map, key)
+      if (value <= 0) {
+        throw IllegalArgumentException("$key must be a positive integer.")
+      }
+      return value
+    }
+
+    private fun readOptionalPositiveInt(map: ReadableMap, key: String, fallback: Int): Int {
+      if (!map.hasKey(key) || map.isNull(key)) {
+        return fallback
+      }
+
       val value = readRequiredNonNegativeInt(map, key)
       if (value <= 0) {
         throw IllegalArgumentException("$key must be a positive integer.")

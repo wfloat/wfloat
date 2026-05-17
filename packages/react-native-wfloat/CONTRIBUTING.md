@@ -26,25 +26,36 @@ Install dependencies from the repository root:
 yarn
 ```
 
-## Refreshing Android JNI libraries
+## Native artifacts
 
-The `install-android-jni-libs.sh` script is for maintainers of this package, not for application developers integrating the SDK.
+Native build artifacts are not tracked in git. Maintainers stage real native files into this package before running `npm pack` or `npm publish`.
 
-Use it only when updating the Android native assets before publishing a new package release.
-
-The script refreshes the native libraries under `android/src/main/jniLibs/<abi>`.
+Build native artifacts from `../../vendor/sherpa-onnx`:
 
 ```sh
-./install-android-jni-libs.sh
+yarn rn:build-natives
 ```
 
-You can also pass an explicit version:
+Copy the built iOS `.xcframework` directories and Android `.so` files into this package:
 
 ```sh
-./install-android-jni-libs.sh 1.13.1
+yarn rn:stage-natives
 ```
 
-The installer downloads the combined Android archive from the Wfloat registry and copies the `.so` files into the matching ABI directories.
+Use platform arguments when you only need one side:
+
+```sh
+yarn rn:build-natives ios
+yarn rn:stage-natives android
+```
+
+Before publishing, verify the tarball contains the staged native files:
+
+```sh
+npm pack --dry-run
+```
+
+The older `install-android-jni-libs.sh` registry downloader is kept as a temporary maintainer fallback for refreshing Android `.so` files from a prebuilt archive.
 
 ### iOS native changes
 

@@ -220,9 +220,15 @@ building voice pickers and validating user input.
 - Current React Native STT families:
   - `openai/whisper-tiny-en` for offline `transcribe(...)`
   - `k2-fsa/streaming-zipformer-en` for streaming `createSession()`
-- Microphone capture helpers are currently implemented for iOS. Android STT
-  model loading and manual audio APIs are present, but Android microphone
-  capture still needs the matching package-owned native implementation.
+- React Native currently keeps one native STT model loaded at a time. Loading
+  an offline model replaces any streaming model, and loading a streaming model
+  replaces any offline model.
+- Microphone capture helpers are package-owned on iOS and Android. Android
+  requests `RECORD_AUDIO` at runtime before native capture starts.
+- Android Emulator microphone testing requires host microphone input to be
+  enabled in the emulator's extended controls. If permission is granted but STT
+  hears silence, check `Extended controls > Microphone > Virtual microphone
+  uses host audio input`, then restart the emulator if needed.
 
 ## Contributing
 

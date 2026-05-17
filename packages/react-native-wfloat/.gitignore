@@ -1,6 +1,5 @@
-ios/onnxruntime.xcframework
-ios/sherpa-onnx.xcframework
 ios/resources/
+ios/*.xcframework
 android/src/main/jniLibs/*/*.so
 android/src/main/assets
 .npmrc

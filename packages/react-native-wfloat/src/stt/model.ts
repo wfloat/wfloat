@@ -3,6 +3,7 @@ import Wfloat, {
   type NativeStreamingTranscriptionResult,
   type NativeTranscriptionResult,
 } from '../NativeWfloat';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { getSttModelAssets } from '../modelAssets';
 import type {
   LoadSttModelOptions,
@@ -114,6 +115,27 @@ function mapStreamingResult(
   };
 }
 
+async function ensureMicrophonePermission(): Promise<void> {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+
+  const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+  if (!permission) {
+    throw new Error('Android RECORD_AUDIO permission is not available in this React Native runtime.');
+  }
+
+  const hasPermission = await PermissionsAndroid.check(permission);
+  if (hasPermission) {
+    return;
+  }
+
+  const result = await PermissionsAndroid.request(permission);
+  if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+    throw new Error('Microphone permission is required for STT microphone capture.');
+  }
+}
+
 export class SttSession {
   private microphoneResultPoll: ReturnType<typeof globalThis.setInterval> | null = null;
   private microphoneResultPollGeneration = 0;
@@ -136,6 +158,7 @@ export class SttSession {
 
   async startMicrophone(options: SttMicrophoneOptions = {}): Promise<void> {
     this.stopMicrophoneResultPolling();
+    await ensureMicrophonePermission();
 
     const sampleRate =
       typeof options.sampleRate === 'number' && Number.isFinite(options.sampleRate)
@@ -285,6 +308,8 @@ export class SttModel {
   }
 
   async startMicrophone(options: SttMicrophoneRecordingOptions = {}): Promise<void> {
+    await ensureMicrophonePermission();
+
     const sampleRate =
       typeof options.sampleRate === 'number' && Number.isFinite(options.sampleRate)
         ? Math.max(1, Math.trunc(options.sampleRate))

@@ -69,6 +69,7 @@ swift-api-examples/k2fsa-*
 run-*.sh
 two-pass-*.sh
 build-*
+!build-android-*.sh
 !build-wasm-simd-tts.sh
 !build-wasm-simd-speech.sh
 
