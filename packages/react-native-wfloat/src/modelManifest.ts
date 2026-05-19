@@ -41,6 +41,12 @@ export type SttModelManifest = BaseModelManifest & {
   };
 };
 
+export type VadModelManifest = BaseModelManifest & {
+  files?: {
+    model?: ModelManifestFile;
+  };
+};
+
 const MODEL_ASSET_HOST = 'https://wfloat.com';
 const MODEL_ASSET_PATH = '/api/model-assets';
 const WFLOAT_REACT_NATIVE_VERSION = '1.0.2';
@@ -108,4 +114,14 @@ export async function fetchSttModelManifest(args: {
   host?: string;
 }): Promise<SttModelManifest> {
   return (await fetchModelManifest(args)) as SttModelManifest;
+}
+
+export async function fetchVadModelManifest(args: {
+  modelName: string;
+  platform?: string;
+  version?: string;
+  persistentId?: string;
+  host?: string;
+}): Promise<VadModelManifest> {
+  return (await fetchModelManifest(args)) as VadModelManifest;
 }

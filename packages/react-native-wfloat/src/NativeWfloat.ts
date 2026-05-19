@@ -25,6 +25,16 @@ export type LoadSttModelNativeOptions = {
   task: string;
 };
 
+export type LoadVadModelNativeOptions = {
+  modelId: string;
+  family: string;
+  modelUrl: string;
+  threshold: number;
+  minSilenceDurationSec: number;
+  minSpeechDurationSec: number;
+  maxSpeechDurationSec: number;
+};
+
 export type GenerateNativeOptions = {
   requestId: number;
   text: string;
@@ -77,6 +87,11 @@ export type TranscribeNativeOptions = {
   language: string;
   task: string;
   hotwords: string;
+};
+
+export type VadDetectNativeOptions = {
+  samples: number[];
+  sampleRate: number;
 };
 
 export type SttSessionNativeOptions = {
@@ -135,6 +150,26 @@ export type NativeLoadSttModelResult = {
   supportsStreaming: boolean;
 };
 
+export type NativeLoadVadModelResult = {
+  family: string;
+};
+
+export type NativeVadSegment = {
+  startSec: number;
+  durationSec: number;
+  endSec: number;
+  startSample: number;
+  sampleCount: number;
+  sampleRate: number;
+  audio: number[];
+};
+
+export type NativeVadDetectionResult = {
+  modelId: string;
+  segments: NativeVadSegment[];
+  speechRatio: number;
+};
+
 export type NativeSttMicrophoneCaptureResult = {
   durationMs: number;
   sampleRate: number;
@@ -177,11 +212,13 @@ export type NativeSpeechPlaybackFinishedEvent = {
 export interface Spec extends TurboModule {
   loadModel(options: LoadModelNativeOptions): Promise<void>;
   loadSttModel(options: LoadSttModelNativeOptions): Promise<NativeLoadSttModelResult>;
+  loadVadModel(options: LoadVadModelNativeOptions): Promise<NativeLoadVadModelResult>;
   generate(options: GenerateNativeOptions): Promise<NativeGenerateResult>;
   generateDialogue(
     options: GenerateDialogueNativeOptions
   ): Promise<NativeGenerateResult>;
   transcribe(options: TranscribeNativeOptions): Promise<NativeTranscriptionResult>;
+  detectVad(options: VadDetectNativeOptions): Promise<NativeVadDetectionResult>;
   startSttMicrophoneRecording(
     options: SttMicrophoneRecordingNativeOptions
   ): Promise<void>;

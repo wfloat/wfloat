@@ -1,4 +1,8 @@
-import { fetchSttModelManifest, fetchTtsModelManifest } from './modelManifest';
+import {
+  fetchSttModelManifest,
+  fetchTtsModelManifest,
+  fetchVadModelManifest,
+} from './modelManifest';
 
 export type ModelAssetsResponse = {
   model_onnx: string;
@@ -17,6 +21,11 @@ export type SttModelAssetsResponse = {
   joiner?: string;
   uncached_decoder?: string;
   cached_decoder?: string;
+};
+
+export type VadModelAssetsResponse = {
+  family: string;
+  model: string;
 };
 
 export async function getModelAssets(
@@ -81,5 +90,32 @@ export async function getSttModelAssets(
     joiner: files.joiner?.url,
     uncached_decoder: files.uncached_decoder?.url,
     cached_decoder: files.cached_decoder?.url,
+  };
+}
+
+export async function getVadModelAssets(
+  modelId: string,
+  modelAssetHost?: string
+): Promise<VadModelAssetsResponse> {
+  const trimmedModelId = modelId.trim();
+  if (!trimmedModelId) {
+    throw new Error('modelId is required.');
+  }
+
+  const data = await fetchVadModelManifest({
+    modelName: trimmedModelId,
+    host: modelAssetHost,
+  });
+  const files =
+    data.files && typeof data.files === 'object' ? data.files : undefined;
+  const family = typeof data.family === 'string' ? data.family : '';
+
+  if (!family || !files?.model?.url) {
+    throw new Error('VAD model asset manifest is missing required fields.');
+  }
+
+  return {
+    family,
+    model: files.model.url,
   };
 }

@@ -47,6 +47,13 @@ export type SttModelManifest = BaseModelManifest & {
   runtime?: ModelManifestRuntime;
 };
 
+export type VadModelManifest = BaseModelManifest & {
+  files?: {
+    model?: ModelManifestFile;
+  };
+  runtime?: ModelManifestRuntime;
+};
+
 const DEFAULT_MODEL_ASSET_HOST = "https://wfloat.com";
 const MODEL_ASSET_PATH = "/api/model-assets";
 
@@ -111,4 +118,15 @@ export async function fetchSttModelManifest(args: {
   modelAssetHost?: string;
 }): Promise<SttModelManifest> {
   return (await fetchModelManifest(args)) as SttModelManifest;
+}
+
+export async function fetchVadModelManifest(args: {
+  modelName: string;
+  platform: string;
+  version: string;
+  sherpaOnnxVersion?: string;
+  persistentId?: string;
+  modelAssetHost?: string;
+}): Promise<VadModelManifest> {
+  return (await fetchModelManifest(args)) as VadModelManifest;
 }

@@ -1,5 +1,6 @@
 import type { TranscriptionResult } from "../stt/types.js";
 import type { LoadModelProgressEvent, TtsEmotion } from "../tts/types.js";
+import type { VadDetectionResult } from "../vad/types.js";
 
 export type WorkerRequestTemplate =
   | { type: "speech-load-model"; modelId: string; persistentId?: string; modelAssetHost?: string }
@@ -43,6 +44,21 @@ export type WorkerRequestTemplate =
   | {
       type: "stt-session-close";
       sessionId: number;
+    }
+  | {
+      type: "vad-load-model";
+      modelId: string;
+      persistentId?: string;
+      modelAssetHost?: string;
+      threshold?: number;
+      minSilenceDurationSec?: number;
+      minSpeechDurationSec?: number;
+      maxSpeechDurationSec?: number;
+    }
+  | {
+      type: "vad-detect";
+      samples: Float32Array;
+      sampleRate: number;
     };
 
 export type WorkerRequest = WorkerRequestTemplate & { id: number };
@@ -120,6 +136,22 @@ export type WorkerResponse =
   | {
       id: number;
       type: "stt-session-close-done";
+    }
+  | {
+      id: number;
+      type: "vad-load-model-progress";
+      event: LoadModelProgressEvent;
+    }
+  | {
+      id: number;
+      type: "vad-load-model-done";
+      family: string;
+      persistentId?: string;
+    }
+  | {
+      id: number;
+      type: "vad-detect-done";
+      result: VadDetectionResult;
     };
 
 export type SpeechGenerateWorkerOptions = {
@@ -172,5 +204,13 @@ export type SttModelAssetsResponse = {
   joiner?: string;
   uncached_decoder?: string;
   cached_decoder?: string;
+  persistent_id?: string;
+};
+
+export type VadModelAssetsResponse = {
+  family: string;
+  model: string;
+  wasm_binary: string;
+  wasm_data?: string;
   persistent_id?: string;
 };

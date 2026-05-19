@@ -337,6 +337,38 @@
       </section>
 
       <section>
+        <h2>VAD Smoke</h2>
+        <p class="hint">
+          This uses the shared sherpa speech runtime with a Silero VAD model.
+        </p>
+
+        <div class="grid">
+          <div class="field">
+            <label for="vadModelId">Model ID</label>
+            <input id="vadModelId" value="silero-vad" />
+          </div>
+          <div class="field">
+            <label for="vadAudio">Audio File</label>
+            <input id="vadAudio" type="file" accept="audio/*" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="loadVad">Load VAD Model</button>
+          <button id="detectVad" class="secondary" disabled>Detect Speech</button>
+        </div>
+
+        <div class="status">
+          <div class="status-row">
+            <strong id="vadSummary">Idle</strong>
+            <span id="vadTiming">No VAD result yet</span>
+          </div>
+          <progress id="vadProgress" max="100" value="0"></progress>
+          <pre id="vadResult"></pre>
+        </div>
+      </section>
+
+      <section>
         <h2>Log</h2>
         <div class="actions">
           <button id="clearLog" class="ghost">Clear Log</button>

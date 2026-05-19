@@ -6,9 +6,10 @@ import {
   prepareWfloatText,
 } from "../wasm/sherpa-onnx-tts.js";
 import { createOnlineRecognizer, OfflineRecognizer } from "../wasm/sherpa-onnx-asr.js";
+import { createVad } from "../wasm/sherpa-onnx-vad.js";
 import { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "../tts/catalog.js";
 import type { TtsEmotion } from "../tts/types.js";
-import { fetchSttModelManifest, fetchTtsModelManifest } from "../modelManifest.js";
+import { fetchSttModelManifest, fetchTtsModelManifest, fetchVadModelManifest } from "../modelManifest.js";
 // @ts-ignore
 import createSherpaSpeechModule from "../wasm/sherpa-onnx-wasm-main-speech.js";
 import {
@@ -16,6 +17,7 @@ import {
   SpeechGenerateDialogueWorkerOptions,
   SpeechGenerateWorkerOptions,
   SttModelAssetsResponse,
+  VadModelAssetsResponse,
   WorkerRequest,
   WorkerResponse,
 } from "./workerTypes.js";
@@ -32,6 +34,9 @@ let EARLY_STOP_MESSAGE_ID: number | null = null;
 let TTS_MODEL_ASSET_URLS: ModelAssetsResponse | null = null;
 let STT_MODEL_ASSET_URLS: SttModelAssetsResponse | null = null;
 let STT_MODEL_ID: string | null = null;
+let VAD: ReturnType<typeof createVad> | null = null;
+let VAD_MODEL_ASSET_URLS: VadModelAssetsResponse | null = null;
+let VAD_MODEL_ID: string | null = null;
 let NEXT_STT_SESSION_ID = 1;
 const STT_SESSIONS = new Map<number, ReturnType<ReturnType<typeof createOnlineRecognizer>["createStream"]>>();
 let INSTALLED_ESPEAK_ARCHIVE_URL: string | null = null;
@@ -144,6 +149,38 @@ async function getSttModelAssets(
   if (data.files.cached_decoder?.url) response.cached_decoder = data.files.cached_decoder.url;
 
   return response;
+}
+
+async function getVadModelAssets(
+  modelId: string,
+  platform: string,
+  version: string,
+  sherpaOnnxVersion: string,
+  modelAssetHost?: string,
+  persistentId?: string,
+): Promise<VadModelAssetsResponse> {
+  const data = await fetchVadModelManifest({
+    modelName: modelId,
+    platform,
+    version,
+    sherpaOnnxVersion,
+    modelAssetHost,
+    persistentId,
+  });
+
+  assertPinnedSherpaRuntimeVersion(data.runtime?.version, sherpaOnnxVersion, modelId);
+
+  if (!data.family || !data.files?.model?.url || !data.runtime?.wasm_binary?.url) {
+    throw new Error("VAD model asset manifest is missing required URLs.");
+  }
+
+  return {
+    family: data.family,
+    model: data.files.model.url,
+    wasm_binary: data.runtime.wasm_binary.url,
+    wasm_data: data.runtime.wasm_data?.url,
+    persistent_id: data.persistent_id,
+  };
 }
 
 function assertCompatibleSpeechRuntime(nextRuntime: {
@@ -441,6 +478,22 @@ function postResponse(message: WorkerResponse, transfer: Transferable[] = []): v
   (
     self as unknown as { postMessage: (value: WorkerResponse, transfer: Transferable[]) => void }
   ).postMessage(message, transfer);
+}
+
+function describeUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 async function handleLoadSpeechModel(
@@ -966,6 +1019,175 @@ async function handleSttSessionClose(id: number, sessionId: number): Promise<voi
   postResponse({ id, type: "stt-session-close-done" });
 }
 
+function finiteNumberOrDefault(value: number | undefined, defaultValue: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : defaultValue;
+}
+
+function buildVadConfig(options: {
+  family: string;
+  modelPath: string;
+  threshold?: number;
+  minSilenceDurationSec?: number;
+  minSpeechDurationSec?: number;
+  maxSpeechDurationSec?: number;
+}) {
+  const common = {
+    threshold: finiteNumberOrDefault(options.threshold, 0.5),
+    minSilenceDuration: finiteNumberOrDefault(options.minSilenceDurationSec, 0.5),
+    minSpeechDuration: finiteNumberOrDefault(options.minSpeechDurationSec, 0.25),
+    maxSpeechDuration: finiteNumberOrDefault(options.maxSpeechDurationSec, 20),
+  };
+  const normalizedFamily = options.family.toLowerCase().replace(/_/g, "-");
+
+  if (normalizedFamily === "silero" || normalizedFamily === "silero-vad") {
+    return {
+      sileroVad: {
+        model: options.modelPath,
+        ...common,
+        windowSize: 512,
+      },
+      tenVad: {
+        model: "",
+        ...common,
+        windowSize: 256,
+      },
+      sampleRate: 16000,
+      numThreads: 1,
+      provider: "cpu",
+      debug: 0,
+      bufferSizeInSeconds: 30,
+    };
+  }
+
+  if (normalizedFamily === "ten-vad" || normalizedFamily === "tenvad") {
+    return {
+      sileroVad: {
+        model: "",
+        ...common,
+        windowSize: 512,
+      },
+      tenVad: {
+        model: options.modelPath,
+        ...common,
+        windowSize: 256,
+      },
+      sampleRate: 16000,
+      numThreads: 1,
+      provider: "cpu",
+      debug: 0,
+      bufferSizeInSeconds: 30,
+    };
+  }
+
+  throw new Error(`Unsupported VAD family: ${options.family}`);
+}
+
+async function handleLoadVadModel(
+  id: number,
+  options: Extract<WorkerRequest, { type: "vad-load-model" }>,
+): Promise<void> {
+  VAD_MODEL_ASSET_URLS = await getVadModelAssets(
+    options.modelId,
+    WEB_PLATFORM,
+    WFLOAT_WEB_VERSION,
+    SHERPA_ONNX_VERSION,
+    options.modelAssetHost,
+    options.persistentId,
+  );
+  VAD_MODEL_ID = options.modelId;
+
+  if (VAD) {
+    VAD.free();
+    VAD = null;
+  }
+
+  const sherpaModule = await getSherpaSpeechModule({
+    wasm_binary: VAD_MODEL_ASSET_URLS.wasm_binary,
+    wasm_data: VAD_MODEL_ASSET_URLS.wasm_data,
+  });
+  const targetName = getFileNameFromUrl(VAD_MODEL_ASSET_URLS.model, "VAD model");
+  await writeModuleFileFromUrl(sherpaModule, VAD_MODEL_ASSET_URLS.model, targetName);
+
+  postResponse({
+    id,
+    type: "vad-load-model-progress",
+    event: {
+      status: "downloading",
+      progress: 1,
+    },
+  });
+
+  postResponse({
+    id,
+    type: "vad-load-model-progress",
+    event: { status: "loading" },
+  });
+
+  VAD = createVad(
+    sherpaModule,
+    buildVadConfig({
+      family: VAD_MODEL_ASSET_URLS.family,
+      modelPath: `/${targetName}`,
+      threshold: options.threshold,
+      minSilenceDurationSec: options.minSilenceDurationSec,
+      minSpeechDurationSec: options.minSpeechDurationSec,
+      maxSpeechDurationSec: options.maxSpeechDurationSec,
+    }),
+  );
+
+  postResponse({
+    id,
+    type: "vad-load-model-done",
+    family: VAD_MODEL_ASSET_URLS.family,
+    persistentId: VAD_MODEL_ASSET_URLS.persistent_id,
+  });
+}
+
+async function handleVadDetect(
+  id: number,
+  samples: Float32Array,
+  sampleRate: number,
+): Promise<void> {
+  if (!VAD || !VAD_MODEL_ASSET_URLS || !VAD_MODEL_ID) {
+    throw new Error("VAD model is not loaded. Call loadVadModel(...) first.");
+  }
+
+  VAD.reset();
+
+  const windowSize = VAD_MODEL_ASSET_URLS.family.toLowerCase().includes("ten") ? 256 : 512;
+  for (let offset = 0; offset < samples.length; offset += windowSize) {
+    VAD.acceptWaveform(samples.subarray(offset, Math.min(offset + windowSize, samples.length)));
+  }
+  VAD.flush();
+
+  let speechSampleCount = 0;
+  const segments = [];
+  while (!VAD.isEmpty()) {
+    const segment = VAD.front();
+    speechSampleCount += segment.samples.length;
+    segments.push({
+      startSec: segment.start / sampleRate,
+      durationSec: segment.samples.length / sampleRate,
+      endSec: (segment.start + segment.samples.length) / sampleRate,
+      startSample: segment.start,
+      sampleCount: segment.samples.length,
+      sampleRate,
+      audio: segment.samples,
+    });
+    VAD.pop();
+  }
+
+  postResponse({
+    id,
+    type: "vad-detect-done",
+    result: {
+      modelId: VAD_MODEL_ID,
+      segments,
+      speechRatio: samples.length > 0 ? Math.min(speechSampleCount / samples.length, 1) : 0,
+    },
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -1388,12 +1610,21 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       await handleSttSessionClose(message.id, message.sessionId);
       return;
     }
+
+    if (message.type === "vad-load-model") {
+      await handleLoadVadModel(message.id, message);
+      return;
+    }
+
+    if (message.type === "vad-detect") {
+      await handleVadDetect(message.id, message.samples, message.sampleRate);
+      return;
+    }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
     postResponse({
       id: message.id,
       type: "request-error",
-      error: errorMessage,
+      error: describeUnknownError(error),
     });
   }
 };

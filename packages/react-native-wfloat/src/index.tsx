@@ -1,5 +1,6 @@
 export { TtsModel, loadTtsModel } from './tts/model';
 export { SttModel, SttSession, loadSttModel } from './stt/model';
+export { VadModel, loadVadModel } from './vad/model';
 export type {
   AudioResult,
   LoadModelProgressEvent,
@@ -26,4 +27,10 @@ export type {
   TranscriptionSegment,
   TranscriptionToken,
 } from './stt/types';
+export type {
+  LoadVadModelOptions,
+  VadDetectOptions,
+  VadDetectionResult,
+  VadSegment,
+} from './vad/types';
 export { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from './tts/catalog';

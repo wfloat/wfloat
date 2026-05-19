@@ -79,11 +79,14 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 @property (nonatomic, assign) const SherpaOnnxOfflineTts *tts;
 @property (nonatomic, assign) const SherpaOnnxOfflineRecognizer *offlineRecognizer;
 @property (nonatomic, assign) const SherpaOnnxOnlineRecognizer *onlineRecognizer;
+@property (nonatomic, assign) const SherpaOnnxVoiceActivityDetector *vad;
 @property (nonatomic, copy) NSString *loadedModelPath;
 @property (nonatomic, copy) NSString *loadedTokensPath;
 @property (nonatomic, copy) NSString *loadedDataDir;
 @property (nonatomic, copy) NSString *loadedSttModelId;
 @property (nonatomic, copy) NSString *loadedSttFamily;
+@property (nonatomic, copy) NSString *loadedVadModelId;
+@property (nonatomic, copy) NSString *loadedVadFamily;
 @property (strong, nonatomic) NSURLSession *loadModelSession;
 @property (nonatomic, copy) RCTPromiseResolveBlock loadModelResolve;
 @property (nonatomic, copy) RCTPromiseRejectBlock loadModelReject;
@@ -164,6 +167,11 @@ RCT_EXPORT_MODULE()
   if (self.onlineRecognizer) {
     SherpaOnnxDestroyOnlineRecognizer(self.onlineRecognizer);
     self.onlineRecognizer = nil;
+  }
+
+  if (self.vad) {
+    SherpaOnnxDestroyVoiceActivityDetector(self.vad);
+    self.vad = nil;
   }
 
   [self.loadModelSession invalidateAndCancel];
@@ -1198,6 +1206,77 @@ RCT_EXPORT_MODULE()
   return YES;
 }
 
+- (BOOL)loadVadWithModelPath:(NSString *)modelPath
+                      family:(NSString *)family
+                    modelId:(NSString *)modelId
+                   threshold:(float)threshold
+       minSilenceDurationSec:(float)minSilenceDurationSec
+        minSpeechDurationSec:(float)minSpeechDurationSec
+        maxSpeechDurationSec:(float)maxSpeechDurationSec
+                       error:(NSError **)error {
+  NSString *normalizedFamily = [[family lowercaseString] stringByReplacingOccurrencesOfString:@"_"
+                                                                                   withString:@"-"];
+  BOOL isSilero = [normalizedFamily isEqualToString:@"silero"] ||
+      [normalizedFamily isEqualToString:@"silero-vad"];
+  BOOL isTen = [normalizedFamily isEqualToString:@"ten-vad"] ||
+      [normalizedFamily isEqualToString:@"tenvad"];
+  if (!isSilero && !isTen) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:304
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     [NSString stringWithFormat:@"Unsupported VAD family: %@", family],
+                               }];
+    }
+    return NO;
+  }
+
+  SherpaOnnxVadModelConfig config;
+  memset(&config, 0, sizeof(config));
+  if (isSilero) {
+    config.silero_vad.model = modelPath.UTF8String;
+    config.silero_vad.threshold = threshold;
+    config.silero_vad.min_silence_duration = minSilenceDurationSec;
+    config.silero_vad.min_speech_duration = minSpeechDurationSec;
+    config.silero_vad.window_size = 512;
+    config.silero_vad.max_speech_duration = maxSpeechDurationSec;
+  } else {
+    config.ten_vad.model = modelPath.UTF8String;
+    config.ten_vad.threshold = threshold;
+    config.ten_vad.min_silence_duration = minSilenceDurationSec;
+    config.ten_vad.min_speech_duration = minSpeechDurationSec;
+    config.ten_vad.window_size = 256;
+    config.ten_vad.max_speech_duration = maxSpeechDurationSec;
+  }
+  config.sample_rate = 16000;
+  config.num_threads = 1;
+  config.provider = "cpu";
+  config.debug = 0;
+
+  const SherpaOnnxVoiceActivityDetector *detector =
+      SherpaOnnxCreateVoiceActivityDetector(&config, 30.0f);
+  if (!detector) {
+    if (error) {
+      *error = [NSError errorWithDomain:WfloatErrorDomain
+                                   code:305
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey : @"Failed to initialize VAD model.",
+                               }];
+    }
+    return NO;
+  }
+
+  if (self.vad) {
+    SherpaOnnxDestroyVoiceActivityDetector(self.vad);
+  }
+
+  self.vad = detector;
+  self.loadedVadModelId = modelId;
+  self.loadedVadFamily = family;
+  return YES;
+}
+
 - (NSDictionary *)offlineTranscriptionResultDictionary:
                     (const SherpaOnnxOfflineRecognizerResult *)result
                                               modelId:(NSString *)modelId {
@@ -1997,6 +2076,180 @@ RCT_EXPORT_MODULE()
         reject(@"transcribe_failed", @"Failed to transcribe audio.", nil);
         return;
       }
+      resolve(payload);
+    });
+  });
+}
+
+- (void)loadVadModel:(JS::NativeWfloat::LoadVadModelNativeOptions &)options
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  NSString *modelId = options.modelId();
+  NSString *family = options.family();
+  NSString *modelURL = options.modelUrl();
+  double thresholdValue = options.threshold();
+  double minSilenceDurationValue = options.minSilenceDurationSec();
+  double minSpeechDurationValue = options.minSpeechDurationSec();
+  double maxSpeechDurationValue = options.maxSpeechDurationSec();
+  if (modelId.length == 0 || family.length == 0 || modelURL.length == 0) {
+    reject(@"invalid_arguments", @"modelId, family, and modelUrl are required.", nil);
+    return;
+  }
+
+  if (!isfinite(thresholdValue) || !isfinite(minSilenceDurationValue) ||
+      !isfinite(minSpeechDurationValue) || !isfinite(maxSpeechDurationValue)) {
+    reject(@"invalid_arguments", @"VAD timing options must be finite numbers.", nil);
+    return;
+  }
+
+  if (self.loadModelResolve != nil || self.loadModelReject != nil || self.sttLoadInProgress) {
+    reject(@"load_in_progress", @"A loadModel operation is already in progress.", nil);
+    return;
+  }
+
+  self.sttLoadInProgress = YES;
+
+  dispatch_async(self.workQueue, ^{
+    @autoreleasepool {
+      NSError *filesystemError = nil;
+      NSString *directoryPath = [self cacheDirectoryForModelId:modelId];
+      if (![self ensureDirectoryExistsAtPath:directoryPath error:&filesystemError]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          self.sttLoadInProgress = NO;
+          reject(@"filesystem_error", filesystemError.localizedDescription, filesystemError);
+        });
+        return;
+      }
+
+      NSString *fileName = [self fileNameFromURLString:modelURL error:&filesystemError];
+      if (filesystemError || fileName.length == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          self.sttLoadInProgress = NO;
+          reject(@"invalid_url", filesystemError.localizedDescription, filesystemError);
+        });
+        return;
+      }
+
+      NSString *modelPath = [directoryPath stringByAppendingPathComponent:fileName];
+      if (![[NSFileManager defaultManager] fileExistsAtPath:modelPath]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self emitLoadModelProgressWithStatus:@"downloading" progress:@0];
+        });
+        NSError *downloadError = nil;
+        if (![self downloadURLString:modelURL toPath:modelPath error:&downloadError]) {
+          dispatch_async(dispatch_get_main_queue(), ^{
+            self.sttLoadInProgress = NO;
+            reject(@"download_failed",
+                   downloadError.localizedDescription ?: @"Failed to download VAD asset.",
+                   downloadError);
+          });
+          return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self emitLoadModelProgressWithStatus:@"downloading" progress:@1];
+        });
+      }
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [self emitLoadModelProgressWithStatus:@"loading" progress:nil];
+      });
+
+      NSError *loadError = nil;
+      BOOL didLoad = [self loadVadWithModelPath:modelPath
+                                         family:family
+                                        modelId:modelId
+                                      threshold:(float)thresholdValue
+                          minSilenceDurationSec:(float)minSilenceDurationValue
+                           minSpeechDurationSec:(float)minSpeechDurationValue
+                           maxSpeechDurationSec:(float)maxSpeechDurationValue
+                                          error:&loadError];
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (!didLoad) {
+          self.sttLoadInProgress = NO;
+          reject(@"load_failed", loadError.localizedDescription ?: @"Failed to load VAD model.", loadError);
+          return;
+        }
+
+        [self emitLoadModelProgressWithStatus:@"completed" progress:nil];
+        self.sttLoadInProgress = NO;
+        resolve(@{@"family" : family});
+      });
+    }
+  });
+}
+
+- (void)detectVad:(JS::NativeWfloat::VadDetectNativeOptions &)options
+          resolve:(RCTPromiseResolveBlock)resolve
+           reject:(RCTPromiseRejectBlock)reject {
+  if (!self.vad || self.loadedVadModelId.length == 0) {
+    reject(@"not_loaded", @"VAD model is not loaded. Call loadVadModel(...) first.", nil);
+    return;
+  }
+
+  double sampleRateValue = options.sampleRate();
+  if (!isfinite(sampleRateValue) || sampleRateValue <= 0 ||
+      floor(sampleRateValue) != sampleRateValue) {
+    reject(@"invalid_arguments", @"sampleRate must be a positive integer.", nil);
+    return;
+  }
+
+  auto nativeSamples = options.samples();
+  std::vector<float> samples;
+  samples.reserve(nativeSamples.size());
+  for (facebook::react::LazyVector<double>::size_type index = 0; index < nativeSamples.size();
+       index += 1) {
+    double value = nativeSamples[index];
+    if (!isfinite(value)) {
+      reject(@"invalid_arguments", @"samples must contain only finite numbers.", nil);
+      return;
+    }
+    samples.push_back((float)value);
+  }
+
+  dispatch_async(self.workQueue, ^{
+    SherpaOnnxVoiceActivityDetectorReset(self.vad);
+    int32_t windowSize = [self.loadedVadFamily.lowercaseString containsString:@"ten"] ? 256 : 512;
+    for (size_t offset = 0; offset < samples.size(); offset += windowSize) {
+      size_t count = MIN((size_t)windowSize, samples.size() - offset);
+      SherpaOnnxVoiceActivityDetectorAcceptWaveform(
+          self.vad, samples.data() + offset, (int32_t)count);
+    }
+    SherpaOnnxVoiceActivityDetectorFlush(self.vad);
+
+    NSMutableArray<NSDictionary *> *segments = [NSMutableArray array];
+    int32_t speechSampleCount = 0;
+    while (SherpaOnnxVoiceActivityDetectorEmpty(self.vad) == 0) {
+      const SherpaOnnxSpeechSegment *segment = SherpaOnnxVoiceActivityDetectorFront(self.vad);
+      if (segment) {
+        NSMutableArray<NSNumber *> *audio = [NSMutableArray arrayWithCapacity:segment->n];
+        for (int32_t index = 0; index < segment->n; index += 1) {
+          [audio addObject:@(segment->samples[index])];
+        }
+        speechSampleCount += segment->n;
+        [segments addObject:@{
+          @"startSec" : @((double)segment->start / sampleRateValue),
+          @"durationSec" : @((double)segment->n / sampleRateValue),
+          @"endSec" : @((double)(segment->start + segment->n) / sampleRateValue),
+          @"startSample" : @(segment->start),
+          @"sampleCount" : @(segment->n),
+          @"sampleRate" : @(sampleRateValue),
+          @"audio" : audio,
+        }];
+        SherpaOnnxDestroySpeechSegment(segment);
+      }
+      SherpaOnnxVoiceActivityDetectorPop(self.vad);
+    }
+
+    NSDictionary *payload = @{
+      @"modelId" : self.loadedVadModelId ?: @"",
+      @"segments" : segments,
+      @"speechRatio" : samples.size() > 0
+          ? @(MIN((double)speechSampleCount / (double)samples.size(), 1.0))
+          : @0,
+    };
+
+    dispatch_async(dispatch_get_main_queue(), ^{
       resolve(payload);
     });
   });

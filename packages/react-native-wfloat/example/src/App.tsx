@@ -15,6 +15,7 @@ import {
   VALID_EMOTIONS,
   loadSttModel,
   loadTtsModel,
+  loadVadModel,
   type LoadModelProgressEvent,
   type StreamingTranscriptionResult,
   type SttMicrophoneRecording,
@@ -23,6 +24,7 @@ import {
   type TtsEmotion,
   type TtsModel,
   type TtsProgressEvent,
+  type VadModel,
 } from '@wfloat/react-native-wfloat';
 
 type ExampleStatus = 'idle' | 'loading' | 'ready' | 'running';
@@ -37,6 +39,7 @@ type LogEntry = {
 const DEFAULT_TTS_MODEL_ID = 'wfloat/wfloat-tts';
 const DEFAULT_OFFLINE_STT_MODEL_ID = 'openai/whisper-tiny-en';
 const DEFAULT_STREAMING_STT_MODEL_ID = 'k2-fsa/streaming-zipformer-en';
+const DEFAULT_VAD_MODEL_ID = 'silero-vad';
 const DEFAULT_TEXT =
   'Wfloat on React Native is now generating speech directly on device.';
 const DEFAULT_VOICE_ID = 'narrator_woman';
@@ -153,6 +156,13 @@ export default function App() {
   const [streamingCaptureSummary, setStreamingCaptureSummary] = useState(
     'No streaming result yet.'
   );
+
+  const [vadModelId, setVadModelId] = useState(DEFAULT_VAD_MODEL_ID);
+  const [vadModel, setVadModel] = useState<VadModel | null>(null);
+  const [vadStatus, setVadStatus] = useState<ExampleStatus>('idle');
+  const [vadLoadProgress, setVadLoadProgress] =
+    useState<LoadModelProgressEvent | null>(null);
+  const [vadSummary, setVadSummary] = useState('No VAD result yet.');
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const streamingSessionRef = useRef<SttSession | null>(null);
@@ -480,6 +490,68 @@ export default function App() {
         error instanceof Error ? error.message : 'Offline transcription failed.',
         'error'
       );
+    }
+  };
+
+  const handleLoadVad = async () => {
+    setVadStatus('loading');
+    setVadLoadProgress(null);
+    setVadSummary('No VAD result yet.');
+    addLog(`Loading VAD model ${vadModelId}`);
+
+    try {
+      const model = await loadVadModel(vadModelId, {
+        modelAssetHost: normalizedAssetHost,
+        onProgress: (event) => setVadLoadProgress(event),
+      });
+      setVadModel(model);
+      setVadStatus('ready');
+      addLog('VAD model loaded successfully.', 'success');
+    } catch (error) {
+      setVadStatus('idle');
+      addLog(
+        error instanceof Error ? error.message : 'Failed to load VAD model.',
+        'error'
+      );
+    }
+  };
+
+  const handleDetectVadOnRecordedClip = async () => {
+    if (!vadModel) {
+      addLog('Load the VAD model first.', 'error');
+      return;
+    }
+
+    if (!offlineRecordedClip) {
+      addLog('Record an offline STT microphone clip first.', 'error');
+      return;
+    }
+
+    setVadStatus('running');
+    setVadSummary('Detecting speech in recorded clip.');
+    addLog(
+      `Running VAD on recorded clip (${offlineRecordedClip.audio.length} samples at ${offlineRecordedClip.sampleRate} Hz).`
+    );
+
+    try {
+      const result = await vadModel.detect({
+        audio: offlineRecordedClip.audio,
+        sampleRate: offlineRecordedClip.sampleRate,
+      });
+      const firstSegment = result.segments[0];
+      setVadStatus('ready');
+      setVadSummary(
+        firstSegment
+          ? `${result.segments.length} segments, speech ratio ${result.speechRatio.toFixed(3)}, first ${firstSegment.startSec.toFixed(2)}-${firstSegment.endSec.toFixed(2)}s`
+          : `0 segments, speech ratio ${result.speechRatio.toFixed(3)}`
+      );
+      addLog(
+        `VAD result: ${result.segments.length} segments, speech ratio ${result.speechRatio.toFixed(3)}.`,
+        'success'
+      );
+    } catch (error) {
+      setVadStatus('ready');
+      addLog(error instanceof Error ? error.message : 'VAD failed.', 'error');
     }
   };
 
@@ -819,6 +891,47 @@ export default function App() {
             <Text style={styles.helpText}>
               Load the model once, record a clip, then transcribe the saved
               microphone audio just like the web smoke page.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>VAD</Text>
+            <InputField
+              label="VAD Model ID"
+              value={vadModelId}
+              onChangeText={setVadModelId}
+            />
+            <View style={styles.metricsRow}>
+              <Metric label="Status" value={vadStatus} />
+              <Metric
+                label="Load"
+                value={
+                  vadLoadProgress?.status === 'downloading'
+                    ? `${Math.round(vadLoadProgress.progress * 100)}%`
+                    : (vadLoadProgress?.status ?? 'idle')
+                }
+              />
+              <Metric label="Clip" value={offlineClipSummary} />
+            </View>
+            <Text style={styles.label}>Detection result</Text>
+            <Text style={styles.previewText}>{vadSummary}</Text>
+            <View style={styles.buttonRow}>
+              <ActionButton
+                title="Load VAD"
+                onPress={handleLoadVad}
+                disabled={vadStatus === 'loading'}
+              />
+              <ActionButton
+                title="Detect Clip"
+                onPress={handleDetectVadOnRecordedClip}
+                secondary
+                disabled={!vadModel || !offlineRecordedClip || vadStatus === 'running'}
+              />
+            </View>
+            <Text style={styles.helpText}>
+              Record an Offline STT clip first, then run VAD on the same saved
+              microphone audio. This keeps the smoke test simple without adding
+              a file picker.
             </Text>
           </View>
 

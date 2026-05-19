@@ -1,4 +1,4 @@
-import { loadSttModel, loadTtsModel } from "./dist/index.js";
+import { loadSttModel, loadTtsModel, loadVadModel } from "./dist/index.js";
 
 const elements = {
   assetHost: document.getElementById("assetHost"),
@@ -32,15 +32,24 @@ const elements = {
   sttTiming: document.getElementById("sttTiming"),
   transcript: document.getElementById("transcript"),
   transcribe: document.getElementById("transcribe"),
+  detectVad: document.getElementById("detectVad"),
   loadStt: document.getElementById("loadStt"),
+  loadVad: document.getElementById("loadVad"),
   summary: document.getElementById("summary"),
   text: document.getElementById("text"),
   timing: document.getElementById("timing"),
+  vadAudio: document.getElementById("vadAudio"),
+  vadModelId: document.getElementById("vadModelId"),
+  vadProgress: document.getElementById("vadProgress"),
+  vadResult: document.getElementById("vadResult"),
+  vadSummary: document.getElementById("vadSummary"),
+  vadTiming: document.getElementById("vadTiming"),
   voice: document.getElementById("voice"),
 };
 
 let ttsModel = null;
 let sttModel = null;
+let vadModel = null;
 let lastResult = null;
 let recordedMicAudio = null;
 let offlineMicrophoneRecording = false;
@@ -96,6 +105,11 @@ function setSttButtons({ loaded, busy }) {
   elements.sttMicStop.disabled = !loaded || busy || !offlineMicrophoneRecording;
   elements.sttStreamingStart.disabled = !loaded || busy || !sttModel?.supportsStreaming || Boolean(streamingSession);
   elements.sttStreamingStop.disabled = !loaded || busy || !streamingSession;
+}
+
+function setVadButtons({ loaded, busy }) {
+  elements.loadVad.disabled = busy;
+  elements.detectVad.disabled = !loaded || busy;
 }
 
 function readSynthesisOptions() {
@@ -196,6 +210,112 @@ async function synthesize() {
     throw error;
   } finally {
     setButtons({ loaded: Boolean(ttsModel), busy: false });
+  }
+}
+
+async function loadVad() {
+  setVadButtons({ loaded: false, busy: true });
+  elements.vadSummary.textContent = "Loading VAD model";
+  elements.vadProgress.value = 0;
+  elements.vadResult.textContent = "";
+
+  const modelId = elements.vadModelId.value.trim();
+  const modelAssetHost = elements.assetHost.value.trim();
+
+  appendLog("Loading VAD model", { modelAssetHost, modelId });
+
+  try {
+    vadModel = await loadVadModel(modelId, {
+      modelAssetHost,
+      onProgress(event) {
+        if (event.status === "downloading") {
+          elements.vadSummary.textContent = `Downloading model ${Math.round(event.progress * 100)}%`;
+          elements.vadProgress.value = event.progress * 100;
+        } else if (event.status === "loading") {
+          elements.vadSummary.textContent = "Initializing runtime";
+          elements.vadProgress.value = 100;
+        } else if (event.status === "completed") {
+          elements.vadSummary.textContent = "Model ready";
+          elements.vadProgress.value = 100;
+        }
+
+        appendLog("VAD load progress", event);
+      },
+    });
+
+    elements.vadSummary.textContent = "Model ready";
+    setVadButtons({ loaded: true, busy: false });
+    appendLog("VAD model loaded", {
+      family: vadModel.family,
+      modelId: vadModel.modelId,
+    });
+  } catch (error) {
+    vadModel = null;
+    elements.vadSummary.textContent = "VAD load failed";
+    setVadButtons({ loaded: false, busy: false });
+    appendLog("VAD load failed", error);
+    throw error;
+  }
+}
+
+async function detectVad() {
+  if (!vadModel) {
+    appendLog("Cannot run VAD before loading the VAD model");
+    return;
+  }
+
+  const file = elements.vadAudio.files?.[0];
+  if (!file) {
+    appendLog("Cannot run VAD without choosing an audio file");
+    return;
+  }
+
+  setVadButtons({ loaded: true, busy: true });
+  elements.vadSummary.textContent = "Detecting speech";
+  elements.vadProgress.value = 0;
+  elements.vadResult.textContent = "";
+
+  const startedAt = performance.now();
+  appendLog("VAD request", {
+    modelId: elements.vadModelId.value.trim(),
+    name: file.name,
+    size: file.size,
+    type: file.type,
+  });
+
+  try {
+    const result = await vadModel.detect({ audio: file });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    elements.vadSummary.textContent = "VAD complete";
+    elements.vadTiming.textContent =
+      `${elapsedMs} ms, ${result.segments.length} segments, speech ratio ${result.speechRatio.toFixed(3)}`;
+    elements.vadProgress.value = 100;
+    elements.vadResult.textContent = JSON.stringify(
+      {
+        modelId: result.modelId,
+        speechRatio: result.speechRatio,
+        segments: result.segments.map((segment) => ({
+          startSec: segment.startSec,
+          durationSec: segment.durationSec,
+          endSec: segment.endSec,
+          startSample: segment.startSample,
+          sampleCount: segment.sampleCount,
+        })),
+      },
+      null,
+      2,
+    );
+    appendLog("VAD result", {
+      modelId: result.modelId,
+      segments: result.segments.length,
+      speechRatio: result.speechRatio,
+    });
+  } catch (error) {
+    elements.vadSummary.textContent = "VAD failed";
+    appendLog("VAD failed", error);
+    throw error;
+  } finally {
+    setVadButtons({ loaded: Boolean(vadModel), busy: false });
   }
 }
 
@@ -488,6 +608,12 @@ elements.generate.addEventListener("click", () => {
 elements.loadStt.addEventListener("click", () => {
   loadStt().catch(() => {});
 });
+elements.loadVad.addEventListener("click", () => {
+  loadVad().catch(() => {});
+});
+elements.detectVad.addEventListener("click", () => {
+  detectVad().catch(() => {});
+});
 elements.sttStreamingStart.addEventListener("click", () => {
   startStreamingSession().catch(() => {});
 });
@@ -521,3 +647,4 @@ appendLog("Smoke page ready", {
 elements.sttStreamingSummary.textContent = "Streaming idle";
 setButtons({ loaded: false, busy: false });
 setSttButtons({ loaded: false, busy: false });
+setVadButtons({ loaded: false, busy: false });

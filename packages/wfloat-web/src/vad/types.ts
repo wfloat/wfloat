@@ -1,0 +1,36 @@
+import type { LoadModelProgressEvent } from "../tts/types.js";
+
+export type LoadVadModelOptions = {
+  onProgress?: (event: LoadModelProgressEvent) => void;
+  modelAssetHost?: string;
+  threshold?: number;
+  minSilenceDurationSec?: number;
+  minSpeechDurationSec?: number;
+  maxSpeechDurationSec?: number;
+};
+
+export type VadDetectOptions = {
+  audio: Blob | ArrayBuffer | Float32Array | AudioBuffer;
+  sampleRate?: number;
+};
+
+export type VadSegment = {
+  startSec: number;
+  durationSec: number;
+  endSec: number;
+  startSample: number;
+  sampleCount: number;
+  sampleRate: number;
+  audio: Float32Array;
+};
+
+export type VadDetectionResult = {
+  modelId: string;
+  segments: VadSegment[];
+  speechRatio: number;
+};
+
+export type DecodedVadAudio = {
+  samples: Float32Array;
+  sampleRate: number;
+};

@@ -30,7 +30,7 @@ function initSherpaOnnxSileroVadModelConfig(config, Module) {
 
   Module.stringToUTF8(config.model || '', buffer, modelLen);
 
-  offset = 0;
+  let offset = 0;
   Module.setValue(ptr, buffer, 'i8*');
   offset += 4;
 
@@ -68,7 +68,7 @@ function initSherpaOnnxTenVadModelConfig(config, Module) {
 
   Module.stringToUTF8(config.model || '', buffer, modelLen);
 
-  offset = 0;
+  let offset = 0;
   Module.setValue(ptr, buffer, 'i8*');
   offset += 4;
 

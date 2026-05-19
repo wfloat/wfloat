@@ -1,6 +1,7 @@
 # @wfloat/react-native-wfloat
 
-`@wfloat/react-native-wfloat` adds Wfloat text-to-speech and speech-to-text to React Native apps on iOS and Android.
+`@wfloat/react-native-wfloat` adds Wfloat text-to-speech, speech-to-text, and
+voice activity detection to React Native apps on iOS and Android.
 
 ## Install
 
@@ -131,6 +132,34 @@ console.log(finalResult.text);
 await session.close();
 ```
 
+## VAD quick start
+
+```tsx
+import { loadVadModel } from '@wfloat/react-native-wfloat';
+
+const vad = await loadVadModel('silero-vad');
+
+const result = await vad.detect({
+  audio: pcmSamples,
+  sampleRate: 16000,
+});
+
+console.log(result.segments.length);
+console.log(result.speechRatio);
+```
+
+`detect(...)` expects mono PCM samples. If you are using the package-owned
+offline STT microphone helper, the recorded clip can be passed directly:
+
+```tsx
+const stt = await loadSttModel('openai/whisper-tiny-en');
+await stt.startMicrophone();
+const clip = await stt.stopMicrophone();
+
+const vad = await loadVadModel('silero-vad');
+const result = await vad.detect(clip);
+```
+
 ## API overview
 
 - `loadTtsModel(modelId, { onProgress })` loads the model for the current
@@ -139,6 +168,8 @@ await session.close();
 - `loadSttModel(modelId, { onProgress })` loads the STT model for the current
   device. Offline families use `transcribe(...)`; streaming families use
   `createSession()`.
+- `loadVadModel(modelId, { onProgress })` loads a one-shot VAD model for the
+  current device.
 - `tts.synthesize(options)` generates a single utterance and returns structured
   metadata about the audio and timeline.
 - `tts.synthesizeDialogue(options)` generates multi-speaker dialogue and
@@ -147,6 +178,8 @@ await session.close();
   Whisper.
 - `stt.createSession()` opens a streaming session for streaming-capable models
   like Zipformer.
+- `vad.detect({ audio, sampleRate })` returns speech segment timing, sample
+  ranges, segment audio, and `speechRatio`.
 - `stt.startMicrophone()` / `stt.stopMicrophone()` record microphone audio for
   one-shot offline STT.
 - `session.startMicrophone({ onResult })` / `session.stopMicrophone()` capture
@@ -157,7 +190,7 @@ await session.close();
 
 ## Progress callbacks
 
-`loadTtsModel(...)` and `loadSttModel(...)` emit:
+`loadTtsModel(...)`, `loadSttModel(...)`, and `loadVadModel(...)` emit:
 
 ```ts
 { status: "downloading", progress: number }
@@ -220,6 +253,8 @@ building voice pickers and validating user input.
 - Current React Native STT families:
   - `openai/whisper-tiny-en` for offline `transcribe(...)`
   - `k2-fsa/streaming-zipformer-en` for streaming `createSession()`
+- Current React Native VAD families:
+  - `silero-vad` for one-shot `detect(...)`
 - React Native currently keeps one native STT model loaded at a time. Loading
   an offline model replaces any streaming model, and loading a streaming model
   replaces any offline model.

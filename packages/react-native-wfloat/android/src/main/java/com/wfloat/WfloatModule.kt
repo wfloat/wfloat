@@ -29,6 +29,10 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.TenVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -136,6 +140,11 @@ private data class StreamingSttResult(
   val json: String,
 )
 
+private data class VadFileSet(
+  val family: String,
+  val model: String,
+)
+
 private data class SttMicrophoneRecordingState(
   val audioRecord: AudioRecord,
   val running: AtomicBoolean,
@@ -208,6 +217,15 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   @Volatile
   private var loadedSttPaths: SttFileSet? = null
 
+  @Volatile
+  private var vad: Vad? = null
+
+  @Volatile
+  private var loadedVadModelId: String? = null
+
+  @Volatile
+  private var loadedVadFamily: String? = null
+
   private val sttSessions = LinkedHashMap<Int, OnlineStream>()
   private var nextSttSessionId = 1
   private var sttMicrophoneRecording: SttMicrophoneRecordingState? = null
@@ -235,6 +253,10 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       loadedSttModelId = null
       loadedSttFamily = null
       loadedSttPaths = null
+      vad?.release()
+      vad = null
+      loadedVadModelId = null
+      loadedVadFamily = null
     }
 
     workQueue.shutdownNow()
@@ -569,6 +591,158 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         )
       } finally {
         stream.release()
+      }
+    }
+  }
+
+  override fun loadVadModel(options: ReadableMap, promise: Promise) {
+    val modelId: String
+    val family: String
+    val modelUrl: String
+    val threshold: Float
+    val minSilenceDurationSec: Float
+    val minSpeechDurationSec: Float
+    val maxSpeechDurationSec: Float
+
+    try {
+      modelId = readRequiredString(options, "modelId")
+      family = readRequiredString(options, "family")
+      modelUrl = readRequiredString(options, "modelUrl")
+      threshold = readFiniteFloat(options, "threshold", 0.5f)
+      minSilenceDurationSec = readFiniteFloat(options, "minSilenceDurationSec", 0.5f)
+      minSpeechDurationSec = readFiniteFloat(options, "minSpeechDurationSec", 0.25f)
+      maxSpeechDurationSec = readFiniteFloat(options, "maxSpeechDurationSec", 20.0f)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    if (modelId.isBlank() || family.isBlank() || modelUrl.isBlank()) {
+      promise.reject("invalid_arguments", "modelId, family, and modelUrl are required.")
+      return
+    }
+
+    synchronized(stateLock) {
+      if (loadModelInProgress) {
+        promise.reject("load_in_progress", "A loadModel operation is already in progress.")
+        return
+      }
+      loadModelInProgress = true
+    }
+
+    workQueue.execute {
+      try {
+        val modelDirectory = cacheDirectoryForModelId(modelId)
+        ensureDirectoryExists(modelDirectory)
+        val modelFileName = requireFileNameFromUrl(modelUrl)
+        val modelPath = File(modelDirectory, modelFileName)
+
+        if (!modelPath.exists()) {
+          emitLoadModelProgress("downloading", 0.0)
+          downloadFile(modelUrl, modelPath) { phaseProgress ->
+            emitLoadModelProgress("downloading", phaseProgress)
+          }
+        }
+
+        emitLoadModelProgress("loading", null)
+        val fileSet = VadFileSet(family = family, model = modelPath.absolutePath)
+        val newVad = createVad(
+          fileSet = fileSet,
+          threshold = threshold,
+          minSilenceDurationSec = minSilenceDurationSec,
+          minSpeechDurationSec = minSpeechDurationSec,
+          maxSpeechDurationSec = maxSpeechDurationSec,
+        )
+
+        synchronized(stateLock) {
+          vad?.release()
+          vad = newVad
+          loadedVadModelId = modelId
+          loadedVadFamily = family
+        }
+
+        emitLoadModelProgress("completed", null)
+        promise.resolve(
+          Arguments.createMap().apply {
+            putString("family", family)
+          }
+        )
+      } catch (error: Throwable) {
+        promise.reject(loadModelErrorCode(error), error.message ?: "Failed to load VAD model.", error)
+      } finally {
+        synchronized(stateLock) {
+          loadModelInProgress = false
+        }
+      }
+    }
+  }
+
+  override fun detectVad(options: ReadableMap, promise: Promise) {
+    val currentVad = vad
+    val modelId = loadedVadModelId
+    if (currentVad == null || modelId == null) {
+      promise.reject("not_loaded", "VAD model is not loaded. Call loadVadModel(...) first.")
+      return
+    }
+
+    val samples: FloatArray
+    val sampleRate: Int
+    try {
+      samples = readRequiredFloatArray(options, "samples")
+      sampleRate = readRequiredPositiveInt(options, "sampleRate")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        currentVad.reset()
+        val windowSize = if (loadedVadFamily?.contains("ten", ignoreCase = true) == true) 256 else 512
+        var offset = 0
+        while (offset < samples.size) {
+          val end = minOf(offset + windowSize, samples.size)
+          currentVad.acceptWaveform(samples.copyOfRange(offset, end))
+          offset = end
+        }
+        currentVad.flush()
+
+        var speechSampleCount = 0
+        val segments = Arguments.createArray()
+        while (!currentVad.empty()) {
+          val segment = currentVad.front()
+          val segmentSamples = segment.samples
+          speechSampleCount += segmentSamples.size
+          segments.pushMap(
+            Arguments.createMap().apply {
+              putDouble("startSec", segment.start.toDouble() / sampleRate.toDouble())
+              putDouble("durationSec", segmentSamples.size.toDouble() / sampleRate.toDouble())
+              putDouble("endSec", (segment.start + segmentSamples.size).toDouble() / sampleRate.toDouble())
+              putDouble("startSample", segment.start.toDouble())
+              putDouble("sampleCount", segmentSamples.size.toDouble())
+              putDouble("sampleRate", sampleRate.toDouble())
+              putArray("audio", floatArrayToWritableArray(segmentSamples))
+            }
+          )
+          currentVad.pop()
+        }
+
+        promise.resolve(
+          Arguments.createMap().apply {
+            putString("modelId", modelId)
+            putArray("segments", segments)
+            putDouble(
+              "speechRatio",
+              if (samples.isNotEmpty()) {
+                (speechSampleCount.toDouble() / samples.size.toDouble()).coerceIn(0.0, 1.0)
+              } else {
+                0.0
+              }
+            )
+          }
+        )
+      } catch (error: Throwable) {
+        promise.reject("vad_failed", error.message ?: "Failed to run VAD.", error)
       }
     }
   }
@@ -1575,6 +1749,59 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     return OnlineRecognizer(config = config)
   }
 
+  private fun createVad(
+    fileSet: VadFileSet,
+    threshold: Float,
+    minSilenceDurationSec: Float,
+    minSpeechDurationSec: Float,
+    maxSpeechDurationSec: Float,
+  ): Vad {
+    val normalizedFamily = fileSet.family.lowercase().replace("_", "-")
+    val sileroConfig = if (normalizedFamily == "silero" || normalizedFamily == "silero-vad") {
+      SileroVadModelConfig.Builder()
+        .setModel(fileSet.model)
+        .setThreshold(threshold)
+        .setMinSilenceDuration(minSilenceDurationSec)
+        .setMinSpeechDuration(minSpeechDurationSec)
+        .setMaxSpeechDuration(maxSpeechDurationSec)
+        .setWindowSize(512)
+        .build()
+    } else {
+      SileroVadModelConfig.Builder().build()
+    }
+    val tenConfig = if (normalizedFamily == "ten-vad" || normalizedFamily == "tenvad") {
+      TenVadModelConfig.Builder()
+        .setModel(fileSet.model)
+        .setThreshold(threshold)
+        .setMinSilenceDuration(minSilenceDurationSec)
+        .setMinSpeechDuration(minSpeechDurationSec)
+        .setMaxSpeechDuration(maxSpeechDurationSec)
+        .setWindowSize(256)
+        .build()
+    } else {
+      TenVadModelConfig.Builder().build()
+    }
+
+    if (normalizedFamily != "silero" &&
+      normalizedFamily != "silero-vad" &&
+      normalizedFamily != "ten-vad" &&
+      normalizedFamily != "tenvad"
+    ) {
+      throw IllegalArgumentException("Unsupported VAD family: ${fileSet.family}")
+    }
+
+    return Vad(
+      VadModelConfig.Builder()
+        .setSileroVadModelConfig(sileroConfig)
+        .setTenVadModelConfig(tenConfig)
+        .setSampleRate(DEFAULT_STT_SAMPLE_RATE)
+        .setNumThreads(1)
+        .setDebug(false)
+        .setProvider("cpu")
+        .build()
+    )
+  }
+
   private fun mapOfflineRecognizerResult(
     modelId: String,
     result: com.k2fsa.sherpa.onnx.OfflineRecognizerResult,
@@ -2225,6 +2452,14 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       } else {
         map.getDouble(key)
       }
+    }
+
+    private fun readFiniteFloat(map: ReadableMap, key: String, fallback: Float): Float {
+      val value = readDouble(map, key) ?: return fallback
+      if (!value.isFinite()) {
+        throw IllegalArgumentException("$key must be a finite number.")
+      }
+      return value.toFloat()
     }
 
     private fun readRequiredNonNegativeInt(map: ReadableMap, key: String): Int {

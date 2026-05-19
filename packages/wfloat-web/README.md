@@ -1,7 +1,8 @@
 # @wfloat/wfloat-web
 
 `@wfloat/wfloat-web` is the browser package for Wfloat speech models. It
-currently exposes text-to-speech and offline speech-to-text in the browser.
+currently exposes text-to-speech, speech-to-text, and first-pass voice activity
+detection in the browser.
 
 Browser demo to hear how it sounds: https://wfloat.com/demo
 
@@ -74,6 +75,8 @@ console.log(result.audio.sampleRate, result.timeline.chunks.length);
 - `session.startMicrophone()` / `session.stopMicrophone()` capture browser mic audio and feed a streaming STT session.
 - `createMicrophoneCapture({ sampleRate? })` remains available as a lower-level browser mic helper when you need custom capture control.
 - streaming-capable STT models may also expose `await stt.createSession()` for incremental transcription.
+- `loadVadModel(modelId, { onProgress })` loads a VAD model into the browser worker.
+- `vad.detect({ audio, sampleRate? })` returns speech segments with timing and segment audio.
 
 ## Progress callbacks
 
@@ -206,6 +209,28 @@ This path is now implemented in the package surface, but it still depends on
 the corresponding streaming model assets being staged in the asset API /
 registry.
 
+## VAD quick start
+
+```ts
+import { loadVadModel } from "@wfloat/wfloat-web";
+
+const vad = await loadVadModel("silero-vad", {
+  onProgress(event) {
+    console.log(event.status);
+  },
+});
+
+const result = await vad.detect({
+  audio: fileInput.files![0],
+});
+
+console.log(result.segments.length);
+console.log(result.speechRatio);
+```
+
+The first web VAD path uses the shared sherpa speech WASM runtime and expects a
+manifest with `files.model` plus `runtime.wasm_binary`.
+
 ## Local API override
 
 For smoke tests against a local asset API, pass `modelAssetHost` when loading
@@ -217,6 +242,10 @@ const tts = await loadTtsModel("wfloat/wfloat-tts", {
 });
 
 const stt = await loadSttModel("openai/whisper-tiny-en", {
+  modelAssetHost: "http://localhost:4000",
+});
+
+const vad = await loadVadModel("silero-vad", {
   modelAssetHost: "http://localhost:4000",
 });
 ```
@@ -238,6 +267,8 @@ The smoke page exercises:
 - browser TTS synthesis and playback controls
 - optional browser STT loading and transcription from an uploaded audio file
 - browser microphone capture with record -> stop -> transcribe
+- optional browser VAD loading and speech segment detection, once the asset API
+  serves a VAD manifest
 
 Current note: the local STT smoke path depends on the asset API returning the
 uploaded Whisper tiny English files now stored at:
