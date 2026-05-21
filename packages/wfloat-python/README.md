@@ -137,6 +137,39 @@ stt = wfloat.load_stt_model(
 )
 ```
 
+## Early VAD Path
+
+Python also exposes the same one-shot VAD model shape as the web and React
+Native packages. It is intentionally file/buffer based for now; there is no
+Python live microphone/session helper.
+
+```python
+vad = wfloat.load_vad_model(
+    "silero-vad",
+    threshold=0.5,
+    min_silence_duration_sec=0.5,
+    min_speech_duration_sec=0.25,
+    max_speech_duration_sec=20.0,
+)
+
+result = vad.detect(audio="/path/to/mono-16khz.wav")
+
+for segment in result.segments:
+    print(segment.start_sec, segment.duration_sec)
+```
+
+For local development you can override the VAD model asset explicitly:
+
+```python
+vad = wfloat.load_vad_model(
+    "silero-vad",
+    family="silero-vad",
+    model="https://example.com/silero_vad.onnx",
+)
+```
+
+VAD currently expects mono 16 kHz audio.
+
 You can also generate a WAV from the command line:
 
 ```bash

@@ -1,5 +1,5 @@
 import type { LoadModelProgressEvent } from "../tts/types.js";
-import type { VadDetectionResult } from "../vad/types.js";
+import type { VadDetectionResult, VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 import type { WorkerRequest, WorkerResponse } from "./workerTypes.js";
 // @ts-ignore
 import workerCode from "./worker-inline.js";
@@ -143,5 +143,102 @@ export class VadWorkerBridge {
     }
 
     return response.result;
+  }
+
+  static async createSession(): Promise<number> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "vad-create-session",
+    });
+
+    if (response.type !== "vad-create-session-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+
+    return response.sessionId;
+  }
+
+  static async pushSessionAudio(options: {
+    sessionId: number;
+    samples: Float32Array;
+    sampleRate: number;
+  }): Promise<{
+    speechStarts: VadSpeechStartEvent[];
+    segments: VadSegment[];
+    emittedWindowCount: number;
+    speechStartCount: number;
+    speechEndCount: number;
+  }> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "vad-session-push",
+      sessionId: options.sessionId,
+      samples: options.samples,
+      sampleRate: options.sampleRate,
+    });
+
+    if (response.type !== "vad-session-push-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+
+    return response;
+  }
+
+  static async finishSession(sessionId: number): Promise<{
+    segments: VadSegment[];
+    emittedWindowCount: number;
+    speechStartCount: number;
+    speechEndCount: number;
+  }> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "vad-session-finish",
+      sessionId,
+    });
+
+    if (response.type !== "vad-session-finish-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+
+    return response;
+  }
+
+  static async resetSession(sessionId: number): Promise<void> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "vad-session-reset",
+      sessionId,
+    });
+
+    if (response.type !== "vad-session-reset-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
+  }
+
+  static async closeSession(sessionId: number): Promise<void> {
+    const id = this.id;
+    this.id += 1;
+
+    const response = await this.request({
+      id,
+      type: "vad-session-close",
+      sessionId,
+    });
+
+    if (response.type !== "vad-session-close-done") {
+      throw new Error(`Unexpected worker response type: ${response.type}`);
+    }
   }
 }

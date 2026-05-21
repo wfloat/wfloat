@@ -1,11 +1,14 @@
 cmake_minimum_required(VERSION 3.18)
 
 set(WFLOAT_CORE_PUBLIC_HEADERS
+    include/wfloat-core/wfloat_common.h
+    include/wfloat-core/wfloat_llm.h
     include/wfloat-core/wfloat_stt.h
     include/wfloat-core/wfloat_tts.h
 )
 
 set(WFLOAT_CORE_SOURCES
+    src/wfloat_llm.cc
     src/wfloat_stt.cc
     src/wfloat_tts.cc
 )

@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 import wfloat
 from wfloat import _assets, _core
-from wfloat._assets import ModelAssets, SttModelAssets
+from wfloat._assets import ModelAssets, SttModelAssets, VadModelAssets
 from wfloat._cache import (
     CachedModelAssets,
     cache_model_assets,
@@ -24,6 +24,7 @@ from wfloat import _native
 from wfloat._results import Audio
 from wfloat._stt import SttModel, SttSession
 from wfloat._stt_assets import cache_stt_model_assets
+from wfloat._vad import VadModel
 
 
 def sha256_file(path: Path) -> str:
@@ -88,23 +89,63 @@ class FakeNativeTts:
         raise AssertionError(f"Unexpected clean text in fake native TTS: {text}")
 
 
+class FakeVadSegment:
+    def __init__(self, *, start, samples):
+        self.start = start
+        self.samples = samples
+
+
+class FakeNativeVad:
+    def __init__(self, segments=None):
+        self.segments = list(segments or [])
+        self.accepted = []
+        self.reset_calls = 0
+        self.flush_calls = 0
+        self.pop_calls = 0
+
+    def reset(self):
+        self.reset_calls += 1
+
+    def accept_waveform(self, samples):
+        self.accepted.append(list(samples))
+
+    def flush(self):
+        self.flush_calls += 1
+
+    def empty(self):
+        return len(self.segments) == 0
+
+    @property
+    def front(self):
+        return self.segments[0]
+
+    def pop(self):
+        self.pop_calls += 1
+        self.segments.pop(0)
+
+
 class TestWfloatSmoke(unittest.TestCase):
     def test_import_wfloat(self):
         self.assertTrue(hasattr(wfloat, "load"))
         self.assertTrue(hasattr(wfloat, "load_tts_model"))
         self.assertTrue(hasattr(wfloat, "load_stt_model"))
+        self.assertTrue(hasattr(wfloat, "load_vad_model"))
+        self.assertTrue(hasattr(wfloat, "load_silero_vad"))
         self.assertTrue(hasattr(wfloat, "load_moonshine_tiny_en"))
         self.assertTrue(hasattr(wfloat, "load_whisper_tiny_en"))
         self.assertTrue(hasattr(wfloat, "Model"))
         self.assertTrue(hasattr(wfloat, "TtsModel"))
         self.assertTrue(hasattr(wfloat, "SttModel"))
         self.assertTrue(hasattr(wfloat, "SttSession"))
+        self.assertTrue(hasattr(wfloat, "VadModel"))
         self.assertTrue(hasattr(wfloat, "Audio"))
         self.assertTrue(hasattr(wfloat, "AudioResult"))
         self.assertTrue(hasattr(wfloat, "GenerationResult"))
         self.assertTrue(hasattr(wfloat, "StreamingTranscriptionResult"))
         self.assertTrue(hasattr(wfloat, "TtsSynthesisResult"))
         self.assertTrue(hasattr(wfloat, "TranscriptionResult"))
+        self.assertTrue(hasattr(wfloat, "VadDetectionResult"))
+        self.assertTrue(hasattr(wfloat, "VadSegment"))
         self.assertIn("narrator_woman", wfloat.SPEAKER_IDS)
 
     def test_create_native_tts_prefers_wfloat_core_when_available(self):
@@ -323,6 +364,129 @@ class TestWfloatSmoke(unittest.TestCase):
                 tokens="https://example.com/tokens.txt",
             )
 
+    def test_load_vad_model_wires_cache_and_native_loader(self):
+        fake_cached = types.SimpleNamespace(
+            model_name="silero-vad",
+            family="silero-vad",
+            files={
+                "model": Path("/tmp/cache/silero_vad.onnx"),
+            },
+            require=lambda key: {
+                "model": Path("/tmp/cache/silero_vad.onnx"),
+            }[key],
+        )
+        fake_native = object()
+
+        with mock.patch(
+            "wfloat._vad_load.cache_vad_assets",
+            return_value=fake_cached,
+        ) as cache_mock, mock.patch(
+            "wfloat._vad_load.create_native_vad",
+            return_value=fake_native,
+        ) as create_mock:
+            model = wfloat.load_vad_model(
+                "silero-vad",
+                family="silero-vad",
+                model="https://example.com/silero_vad.onnx",
+                threshold=0.6,
+            )
+
+        self.assertIsInstance(model, VadModel)
+        self.assertEqual(model.model_id, "silero-vad")
+        cache_mock.assert_called_once()
+        create_mock.assert_called_once_with(
+            family="silero-vad",
+            model_path=Path("/tmp/cache/silero_vad.onnx"),
+            threshold=0.6,
+            min_silence_duration_sec=0.5,
+            min_speech_duration_sec=0.25,
+            max_speech_duration_sec=20.0,
+            sample_rate=16000,
+            buffer_size_in_seconds=30.0,
+        )
+
+    def test_load_vad_model_manifest_path_does_not_require_family(self):
+        fake_assets = VadModelAssets(
+            family="silero-vad",
+            model="https://example.com/silero_vad.onnx",
+            model_checksum="abc",
+            persistent_id="persist-vad-2",
+        )
+        fake_cached = types.SimpleNamespace(
+            model_name="silero-vad",
+            family="silero-vad",
+            files={
+                "model": Path("/tmp/cache/silero_vad.onnx"),
+            },
+            require=lambda key: {
+                "model": Path("/tmp/cache/silero_vad.onnx"),
+            }[key],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "cache"
+            save_persistent_id("persist-vad-1", cache_dir)
+            with mock.patch(
+                "wfloat._vad_load.fetch_vad_assets",
+                return_value=fake_assets,
+            ) as fetch_mock, mock.patch(
+                "wfloat._vad_load.cache_vad_model_assets",
+                return_value=fake_cached,
+            ) as cache_mock, mock.patch(
+                "wfloat._vad_load.create_native_vad",
+                return_value=object(),
+            ):
+                model = wfloat.load_vad_model(
+                    "silero-vad",
+                    cache_dir=cache_dir,
+                )
+
+            self.assertIsInstance(model, VadModel)
+            fetch_mock.assert_called_once_with(
+                "silero-vad",
+                family=None,
+                persistent_id="persist-vad-1",
+            )
+            cache_mock.assert_called_once_with(
+                "silero-vad",
+                fake_assets,
+                cache_dir=cache_dir,
+                force_download=False,
+            )
+            self.assertEqual(load_persistent_id(cache_dir), "persist-vad-2")
+
+    def test_load_vad_model_requires_family_for_explicit_sources(self):
+        with self.assertRaisesRegex(ValueError, "family is required"):
+            wfloat.load_vad_model(
+                "silero-vad",
+                model="https://example.com/silero_vad.onnx",
+            )
+
+    def test_vad_model_detect_uses_exact_windows_and_maps_segments(self):
+        native_vad = FakeNativeVad(
+            segments=[
+                FakeVadSegment(start=512, samples=[0.1, 0.2, -0.1]),
+            ]
+        )
+        model = VadModel(
+            model_id="silero-vad",
+            family="silero-vad",
+            _native_vad=native_vad,
+        )
+
+        result = model.detect(audio=[0.0] * 1025, sample_rate=16000)
+
+        self.assertEqual([len(chunk) for chunk in native_vad.accepted], [512, 512, 1])
+        self.assertEqual(native_vad.reset_calls, 1)
+        self.assertEqual(native_vad.flush_calls, 1)
+        self.assertEqual(native_vad.pop_calls, 1)
+        self.assertEqual(result.model_id, "silero-vad")
+        self.assertEqual(len(result.segments), 1)
+        self.assertAlmostEqual(result.segments[0].start_sec, 512 / 16000)
+        self.assertEqual(result.segments[0].sample_count, 3)
+        self.assertEqual(result.segments[0].audio.samples, [0.1, 0.2, -0.1])
+        self.assertAlmostEqual(result.speech_ratio, 3 / 1025)
+
     def test_load_stt_model_uses_asset_manifest_when_sources_are_not_provided(self):
         fake_assets = SttModelAssets(
             family="whisper",
@@ -434,6 +598,25 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertEqual(assets.encoder, "https://example.com/encoder.onnx")
         self.assertIsNone(assets.tokens_checksum)
         self.assertEqual(assets.persistent_id, "persist-789")
+
+    def test_vad_assets_from_dict_supports_nested_files(self):
+        assets = VadModelAssets.from_dict(
+            {
+                "family": "silero-vad",
+                "files": {
+                    "model": {
+                        "url": "https://example.com/silero_vad.onnx",
+                        "checksum": "abc",
+                    },
+                },
+                "persistent_id": "persist-vad",
+            }
+        )
+
+        self.assertEqual(assets.family, "silero-vad")
+        self.assertEqual(assets.model, "https://example.com/silero_vad.onnx")
+        self.assertEqual(assets.model_checksum, "abc")
+        self.assertEqual(assets.persistent_id, "persist-vad")
 
     def test_audio_can_write_wave_bytes_without_numpy(self):
         audio = Audio(samples=[0.0, 0.5, -0.5], sample_rate=22050)

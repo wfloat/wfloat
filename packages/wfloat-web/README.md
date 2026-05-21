@@ -1,8 +1,8 @@
 # @wfloat/wfloat-web
 
 `@wfloat/wfloat-web` is the browser package for Wfloat speech models. It
-currently exposes text-to-speech, speech-to-text, and first-pass voice activity
-detection in the browser.
+currently exposes text-to-speech, speech-to-text, and voice activity detection
+in the browser.
 
 Browser demo to hear how it sounds: https://wfloat.com/demo
 
@@ -77,6 +77,7 @@ console.log(result.audio.sampleRate, result.timeline.chunks.length);
 - streaming-capable STT models may also expose `await stt.createSession()` for incremental transcription.
 - `loadVadModel(modelId, { onProgress })` loads a VAD model into the browser worker.
 - `vad.detect({ audio, sampleRate? })` returns speech segments with timing and segment audio.
+- `vad.createSession({ onSpeechStart, onSpeechEnd })` creates a live VAD session. `session.startMicrophone()` starts package-owned browser microphone capture, and `session.stopMicrophone()` stops capture, flushes the detector, and returns capture stats.
 
 ## Progress callbacks
 
@@ -228,8 +229,32 @@ console.log(result.segments.length);
 console.log(result.speechRatio);
 ```
 
-The first web VAD path uses the shared sherpa speech WASM runtime and expects a
-manifest with `files.model` plus `runtime.wasm_binary`.
+Live VAD from the browser microphone:
+
+```ts
+const vad = await loadVadModel("silero-vad");
+
+const session = await vad.createSession({
+  onSpeechStart(event) {
+    console.log("speech started near", event.startSec);
+  },
+  onSpeechEnd(segment) {
+    console.log("speech segment", segment.startSec, segment.endSec);
+  },
+});
+
+await session.startMicrophone();
+
+// later, from a Stop button click
+const stats = await session.stopMicrophone();
+console.log(stats.speechEndCount, stats.maxRms);
+await session.close();
+```
+
+The web VAD path uses the shared sherpa speech WASM runtime and expects a
+manifest with `files.model` plus `runtime.wasm_binary`. Browser microphone
+capture is package-owned for live VAD; apps do not need to wire microphone
+chunks into the worker manually.
 
 ## Local API override
 
@@ -267,8 +292,8 @@ The smoke page exercises:
 - browser TTS synthesis and playback controls
 - optional browser STT loading and transcription from an uploaded audio file
 - browser microphone capture with record -> stop -> transcribe
-- optional browser VAD loading and speech segment detection, once the asset API
-  serves a VAD manifest
+- browser VAD loading, file-based speech segment detection, and live microphone
+  VAD sessions
 
 Current note: the local STT smoke path depends on the asset API returning the
 uploaded Whisper tiny English files now stored at:

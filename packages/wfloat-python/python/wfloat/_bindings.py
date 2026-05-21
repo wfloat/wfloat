@@ -21,6 +21,13 @@ _REQUIRED_EXPORTS = (
     "write_wave",
 )
 
+_OPTIONAL_EXPORTS = (
+    "SileroVadModelConfig",
+    "TenVadModelConfig",
+    "VadModelConfig",
+    "VoiceActivityDetector",
+)
+
 missing_exports = [name for name in _REQUIRED_EXPORTS if not hasattr(sherpa_onnx, name)]
 if missing_exports:
     raise ImportError(
@@ -42,6 +49,10 @@ prepare_wfloat_text = sherpa_onnx.prepare_wfloat_text
 version = sherpa_onnx.version
 write_wave = sherpa_onnx.write_wave
 
+for _name in _OPTIONAL_EXPORTS:
+    if hasattr(sherpa_onnx, _name):
+        globals()[_name] = getattr(sherpa_onnx, _name)
+
 
 __all__ = [
     "GenerationConfig",
@@ -56,3 +67,4 @@ __all__ = [
     "version",
     "write_wave",
 ]
+__all__.extend(_name for _name in _OPTIONAL_EXPORTS if _name in globals())

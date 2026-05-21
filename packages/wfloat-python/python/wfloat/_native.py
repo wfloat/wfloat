@@ -64,3 +64,70 @@ def create_native_tts(
     )
 
     return native_bindings.OfflineTts(config)
+
+
+def create_native_vad(
+    *,
+    family: str,
+    model_path: Path,
+    threshold: float,
+    min_silence_duration_sec: float,
+    min_speech_duration_sec: float,
+    max_speech_duration_sec: float,
+    sample_rate: int,
+    buffer_size_in_seconds: float,
+):
+    native_bindings = require_bindings()
+    required_exports = (
+        "SileroVadModelConfig",
+        "TenVadModelConfig",
+        "VadModelConfig",
+        "VoiceActivityDetector",
+    )
+    missing_exports = [
+        name for name in required_exports if not hasattr(native_bindings, name)
+    ]
+    if missing_exports:
+        raise ImportError(
+            "Installed sherpa_onnx is missing required VAD exports: "
+            f"{', '.join(missing_exports)}. "
+            "Reinstall wfloat so pip can install a compatible wfloat-sherpa-onnx build."
+        )
+
+    normalized_family = family.lower().replace("_", "-")
+    if normalized_family in {"silero", "silero-vad"}:
+        silero_vad = native_bindings.SileroVadModelConfig(
+            model=str(model_path),
+            threshold=threshold,
+            min_silence_duration=min_silence_duration_sec,
+            min_speech_duration=min_speech_duration_sec,
+            window_size=512,
+            max_speech_duration=max_speech_duration_sec,
+        )
+        ten_vad = native_bindings.TenVadModelConfig()
+    elif normalized_family in {"ten-vad", "tenvad"}:
+        silero_vad = native_bindings.SileroVadModelConfig()
+        ten_vad = native_bindings.TenVadModelConfig(
+            model=str(model_path),
+            threshold=threshold,
+            min_silence_duration=min_silence_duration_sec,
+            min_speech_duration=min_speech_duration_sec,
+            window_size=256,
+            max_speech_duration=max_speech_duration_sec,
+        )
+    else:
+        raise ValueError(f"Unsupported VAD family: {family}")
+
+    config = native_bindings.VadModelConfig(
+        silero_vad=silero_vad,
+        ten_vad=ten_vad,
+        sample_rate=sample_rate,
+        num_threads=DEFAULT_NUM_THREADS,
+        provider=DEFAULT_PROVIDER,
+        debug=False,
+    )
+
+    return native_bindings.VoiceActivityDetector(
+        config,
+        buffer_size_in_seconds=buffer_size_in_seconds,
+    )

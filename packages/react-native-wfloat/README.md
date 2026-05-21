@@ -160,6 +160,33 @@ const vad = await loadVadModel('silero-vad');
 const result = await vad.detect(clip);
 ```
 
+Live VAD from the microphone:
+
+```tsx
+const vad = await loadVadModel('silero-vad');
+
+const session = await vad.createSession({
+  onSpeechStart(event) {
+    console.log('speech started near', event.startSec);
+  },
+  onSpeechEnd(segment) {
+    console.log('speech segment', segment.startSec, segment.endSec);
+  },
+});
+
+await session.startMicrophone();
+
+// later, from a Stop button click
+const stats = await session.stopMicrophone();
+console.log(stats.speechEndCount, stats.maxNormalizedRms);
+await session.close();
+```
+
+The React Native package owns the native microphone capture path for live VAD.
+Apps do not need to write Objective-C++, Swift, Java, or Kotlin microphone
+bridges. Native code records mono PCM, normalizes it to 16 kHz, feeds exact
+Sherpa VAD windows, and flushes the detector when the microphone stops.
+
 ## API overview
 
 - `loadTtsModel(modelId, { onProgress })` loads the model for the current
@@ -168,8 +195,9 @@ const result = await vad.detect(clip);
 - `loadSttModel(modelId, { onProgress })` loads the STT model for the current
   device. Offline families use `transcribe(...)`; streaming families use
   `createSession()`.
-- `loadVadModel(modelId, { onProgress })` loads a one-shot VAD model for the
-  current device.
+- `loadVadModel(modelId, { onProgress })` loads a VAD model for the current
+  device. Use `detect(...)` for one-shot audio or `createSession()` for live
+  microphone speech boundaries.
 - `tts.synthesize(options)` generates a single utterance and returns structured
   metadata about the audio and timeline.
 - `tts.synthesizeDialogue(options)` generates multi-speaker dialogue and
@@ -180,6 +208,10 @@ const result = await vad.detect(clip);
   like Zipformer.
 - `vad.detect({ audio, sampleRate })` returns speech segment timing, sample
   ranges, segment audio, and `speechRatio`.
+- `vad.createSession({ onSpeechStart, onSpeechEnd })` creates a live VAD
+  session. `session.startMicrophone()` starts package-owned microphone capture;
+  `session.stopMicrophone()` stops capture, flushes the detector, and returns
+  capture stats.
 - `stt.startMicrophone()` / `stt.stopMicrophone()` record microphone audio for
   one-shot offline STT.
 - `session.startMicrophone({ onResult })` / `session.stopMicrophone()` capture
@@ -254,12 +286,16 @@ building voice pickers and validating user input.
   - `openai/whisper-tiny-en` for offline `transcribe(...)`
   - `k2-fsa/streaming-zipformer-en` for streaming `createSession()`
 - Current React Native VAD families:
-  - `silero-vad` for one-shot `detect(...)`
+  - `silero-vad` for one-shot `detect(...)` and live `createSession()`
 - React Native currently keeps one native STT model loaded at a time. Loading
   an offline model replaces any streaming model, and loading a streaming model
   replaces any offline model.
 - Microphone capture helpers are package-owned on iOS and Android. Android
   requests `RECORD_AUDIO` at runtime before native capture starts.
+- When testing against a local asset server from the Android Emulator, forward
+  host ports with `adb reverse tcp:4000 tcp:4000` for the asset API and
+  `adb reverse tcp:8081 tcp:8081` for Metro. iOS Simulator can usually reach
+  the Mac host through `localhost` directly.
 - Android Emulator microphone testing requires host microphone input to be
   enabled in the emulator's extended controls. If permission is granted but STT
   hears silence, check `Extended controls > Microphone > Virtual microphone

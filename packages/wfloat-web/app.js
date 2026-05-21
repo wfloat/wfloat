@@ -42,6 +42,8 @@ const elements = {
   vadModelId: document.getElementById("vadModelId"),
   vadProgress: document.getElementById("vadProgress"),
   vadResult: document.getElementById("vadResult"),
+  vadLiveStart: document.getElementById("vadLiveStart"),
+  vadLiveStop: document.getElementById("vadLiveStop"),
   vadSummary: document.getElementById("vadSummary"),
   vadTiming: document.getElementById("vadTiming"),
   voice: document.getElementById("voice"),
@@ -55,6 +57,9 @@ let recordedMicAudio = null;
 let offlineMicrophoneRecording = false;
 let streamingSession = null;
 let streamingStartedAt = 0;
+let vadLiveSession = null;
+let vadLiveSegmentCount = 0;
+let vadLiveStartedAt = 0;
 
 function formatError(error) {
   if (error instanceof Error) {
@@ -109,7 +114,9 @@ function setSttButtons({ loaded, busy }) {
 
 function setVadButtons({ loaded, busy }) {
   elements.loadVad.disabled = busy;
-  elements.detectVad.disabled = !loaded || busy;
+  elements.detectVad.disabled = !loaded || busy || Boolean(vadLiveSession);
+  elements.vadLiveStart.disabled = !loaded || busy || Boolean(vadLiveSession);
+  elements.vadLiveStop.disabled = !loaded || busy || !vadLiveSession;
 }
 
 function readSynthesisOptions() {
@@ -313,6 +320,100 @@ async function detectVad() {
   } catch (error) {
     elements.vadSummary.textContent = "VAD failed";
     appendLog("VAD failed", error);
+    throw error;
+  } finally {
+    setVadButtons({ loaded: Boolean(vadModel), busy: false });
+  }
+}
+
+async function startLiveVad() {
+  if (!vadModel) {
+    appendLog("Cannot start live VAD before loading the VAD model");
+    return;
+  }
+
+  if (vadLiveSession) {
+    return;
+  }
+
+  setVadButtons({ loaded: true, busy: true });
+  elements.vadSummary.textContent = "Starting live VAD";
+  elements.vadTiming.textContent = "Waiting for microphone";
+  elements.vadProgress.value = 0;
+  elements.vadResult.textContent = "";
+  vadLiveSegmentCount = 0;
+  vadLiveStartedAt = performance.now();
+
+  try {
+    const session = await vadModel.createSession({
+      onSpeechStart(event) {
+        elements.vadSummary.textContent = "Speech detected";
+        elements.vadTiming.textContent = `Speech started near ${event.startSec.toFixed(2)}s`;
+      },
+      onSpeechEnd(segment) {
+        vadLiveSegmentCount += 1;
+        elements.vadSummary.textContent = "Live VAD listening";
+        elements.vadTiming.textContent =
+          `${vadLiveSegmentCount} live segments, latest ${segment.startSec.toFixed(2)}-${segment.endSec.toFixed(2)}s`;
+        elements.vadResult.textContent = JSON.stringify(
+          {
+            liveSegments: vadLiveSegmentCount,
+            latest: {
+              startSec: segment.startSec,
+              durationSec: segment.durationSec,
+              endSec: segment.endSec,
+              startSample: segment.startSample,
+              sampleCount: segment.sampleCount,
+            },
+          },
+          null,
+          2,
+        );
+      },
+    });
+
+    vadLiveSession = session;
+    await session.startMicrophone();
+    elements.vadSummary.textContent = "Live VAD listening";
+    elements.vadTiming.textContent = "Speak into the microphone";
+    appendLog("Live VAD started", { modelId: vadModel.modelId, family: vadModel.family });
+  } catch (error) {
+    if (vadLiveSession) {
+      await vadLiveSession.close().catch(() => {});
+      vadLiveSession = null;
+    }
+    elements.vadSummary.textContent = "Live VAD start failed";
+    appendLog("Live VAD start failed", error);
+    throw error;
+  } finally {
+    setVadButtons({ loaded: Boolean(vadModel), busy: false });
+  }
+}
+
+async function stopLiveVad() {
+  if (!vadLiveSession) {
+    appendLog("Live VAD is not running");
+    return;
+  }
+
+  const session = vadLiveSession;
+  vadLiveSession = null;
+  setVadButtons({ loaded: Boolean(vadModel), busy: true });
+  elements.vadSummary.textContent = "Stopping live VAD";
+
+  try {
+    const stats = await session.stopMicrophone();
+    await session.close();
+    const elapsedMs = Math.round(performance.now() - vadLiveStartedAt);
+    elements.vadSummary.textContent = "Live VAD stopped";
+    elements.vadTiming.textContent =
+      `${Math.round(stats.durationMs || elapsedMs)} ms, ${stats.speechEndCount} segments, ${stats.emittedWindowCount} windows, max rms ${stats.maxRms.toFixed(3)}`;
+    elements.vadProgress.value = 100;
+    elements.vadResult.textContent = JSON.stringify(stats, null, 2);
+    appendLog("Live VAD stopped", stats);
+  } catch (error) {
+    elements.vadSummary.textContent = "Live VAD stop failed";
+    appendLog("Live VAD stop failed", error);
     throw error;
   } finally {
     setVadButtons({ loaded: Boolean(vadModel), busy: false });
@@ -613,6 +714,12 @@ elements.loadVad.addEventListener("click", () => {
 });
 elements.detectVad.addEventListener("click", () => {
   detectVad().catch(() => {});
+});
+elements.vadLiveStart.addEventListener("click", () => {
+  startLiveVad().catch(() => {});
+});
+elements.vadLiveStop.addEventListener("click", () => {
+  stopLiveVad().catch(() => {});
 });
 elements.sttStreamingStart.addEventListener("click", () => {
   startStreamingSession().catch(() => {});

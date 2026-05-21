@@ -64,6 +64,64 @@ copy_real_dir() {
   fi
 }
 
+trim_onnxruntime_ios_xcframework() {
+  local xcframework_dir="$1"
+  local info_plist="${xcframework_dir}/Info.plist"
+
+  if [[ -d "${xcframework_dir}/macos-arm64_x86_64" ]]; then
+    rm -rf "${xcframework_dir}/macos-arm64_x86_64"
+  fi
+
+  local library_dir
+
+  while IFS= read -r library_dir; do
+    if [[ -f "${library_dir}/onnxruntime.a" ]]; then
+      rm -f "${library_dir}/libonnxruntime.a"
+      mv "${library_dir}/onnxruntime.a" "${library_dir}/libonnxruntime.a"
+    fi
+  done < <(find "${xcframework_dir}" -mindepth 1 -maxdepth 1 -type d -name "ios-*")
+
+  # The upstream onnxruntime archive includes a macOS slice, but this package
+  # only vends iOS artifacts. Keep the XCFramework manifest aligned with the
+  # files we publish so Xcode does not see a dangling library entry.
+  if [[ -f "${info_plist}" ]] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
+    while /usr/libexec/PlistBuddy -c "Print :AvailableLibraries:0:SupportedPlatform" "${info_plist}" >/dev/null 2>&1; do
+      local library_count
+      library_count="$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries" "${info_plist}" | grep -c "Dict {")"
+
+      if [[ "${library_count}" -le 0 ]]; then
+        break
+      fi
+
+      local removed=false
+      local index=$((library_count - 1))
+
+      while [[ "${index}" -ge 0 ]]; do
+        local platform
+        platform="$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:${index}:SupportedPlatform" "${info_plist}" 2>/dev/null || true)"
+
+        if [[ "${platform}" == "macos" ]]; then
+          /usr/libexec/PlistBuddy -c "Delete :AvailableLibraries:${index}" "${info_plist}"
+          removed=true
+        else
+          local library_path
+          library_path="$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:${index}:LibraryPath" "${info_plist}" 2>/dev/null || true)"
+
+          if [[ "${library_path}" == "onnxruntime.a" ]]; then
+            /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:${index}:LibraryPath libonnxruntime.a" "${info_plist}"
+          fi
+        fi
+
+        index=$((index - 1))
+      done
+
+      if [[ "${removed}" != true ]]; then
+        break
+      fi
+    done
+  fi
+}
+
 android_build_dir_for_abi() {
   case "$1" in
     arm64-v8a)
@@ -152,6 +210,7 @@ if [[ "${stage_ios}" == true ]]; then
   echo "Staging iOS XCFrameworks..."
   copy_real_dir "${sherpa_xcframework}" "${IOS_DIR}/sherpa-onnx.xcframework"
   copy_real_dir "${onnxruntime_xcframework}" "${IOS_DIR}/onnxruntime.xcframework"
+  trim_onnxruntime_ios_xcframework "${IOS_DIR}/onnxruntime.xcframework"
 fi
 
 if [[ "${stage_android}" == true ]]; then

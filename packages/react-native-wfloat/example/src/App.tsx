@@ -25,6 +25,7 @@ import {
   type TtsModel,
   type TtsProgressEvent,
   type VadModel,
+  type VadSession,
 } from '@wfloat/react-native-wfloat';
 
 type ExampleStatus = 'idle' | 'loading' | 'ready' | 'running';
@@ -163,10 +164,15 @@ export default function App() {
   const [vadLoadProgress, setVadLoadProgress] =
     useState<LoadModelProgressEvent | null>(null);
   const [vadSummary, setVadSummary] = useState('No VAD result yet.');
+  const [vadLiveRecording, setVadLiveRecording] = useState(false);
+  const [vadLiveSummary, setVadLiveSummary] = useState('Live VAD has not started.');
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const streamingSessionRef = useRef<SttSession | null>(null);
   const streamingRunTokenRef = useRef(0);
+  const vadSessionRef = useRef<VadSession | null>(null);
+  const vadLiveRunTokenRef = useRef(0);
+  const vadLiveSegmentCountRef = useRef(0);
 
   const addLog = (message: string, level: LogLevel = 'info') => {
     setLogs((currentLogs) => {
@@ -209,6 +215,12 @@ export default function App() {
         streamingSessionRef.current.stopMicrophone().catch(() => {});
         streamingSessionRef.current.close().catch(() => {});
         streamingSessionRef.current = null;
+      }
+      vadLiveRunTokenRef.current += 1;
+      if (vadSessionRef.current) {
+        vadSessionRef.current.stopMicrophone().catch(() => {});
+        vadSessionRef.current.close().catch(() => {});
+        vadSessionRef.current = null;
       }
     };
   }, []);
@@ -506,6 +518,7 @@ export default function App() {
       });
       setVadModel(model);
       setVadStatus('ready');
+      setVadLiveSummary('Live VAD has not started.');
       addLog('VAD model loaded successfully.', 'success');
     } catch (error) {
       setVadStatus('idle');
@@ -552,6 +565,78 @@ export default function App() {
     } catch (error) {
       setVadStatus('ready');
       addLog(error instanceof Error ? error.message : 'VAD failed.', 'error');
+    }
+  };
+
+  const handleStartLiveVad = async () => {
+    if (!vadModel) {
+      addLog('Load the VAD model first.', 'error');
+      return;
+    }
+
+    try {
+      if (vadSessionRef.current) {
+        await vadSessionRef.current.stopMicrophone().catch(() => {});
+        await vadSessionRef.current.close();
+      }
+
+      const runToken = vadLiveRunTokenRef.current + 1;
+      vadLiveRunTokenRef.current = runToken;
+      vadLiveSegmentCountRef.current = 0;
+      const session = await vadModel.createSession({
+        onSpeechStart(event) {
+          if (vadLiveRunTokenRef.current !== runToken) {
+            return;
+          }
+          setVadLiveSummary(`Speech started around ${event.startSec.toFixed(2)}s.`);
+        },
+        onSpeechEnd(segment) {
+          if (vadLiveRunTokenRef.current !== runToken) {
+            return;
+          }
+          vadLiveSegmentCountRef.current += 1;
+          setVadLiveSummary(
+            `${vadLiveSegmentCountRef.current} live segments, latest ${segment.startSec.toFixed(2)}-${segment.endSec.toFixed(2)}s (${segment.sampleCount} samples).`
+          );
+        },
+      });
+
+      vadSessionRef.current = session;
+      setVadStatus('running');
+      setVadLiveRecording(true);
+      setVadLiveSummary('Listening for speech.');
+      await session.startMicrophone();
+      addLog('Live VAD microphone started.', 'success');
+    } catch (error) {
+      setVadStatus(vadModel ? 'ready' : 'idle');
+      setVadLiveRecording(false);
+      vadSessionRef.current = null;
+      addLog(error instanceof Error ? error.message : 'Failed to start live VAD.', 'error');
+    }
+  };
+
+  const handleStopLiveVad = async () => {
+    const session = vadSessionRef.current;
+    if (!session) {
+      addLog('Live VAD is not running.', 'error');
+      return;
+    }
+
+    vadLiveRunTokenRef.current += 1;
+    try {
+      const stats = await session.stopMicrophone();
+      vadSessionRef.current = null;
+      setVadStatus('ready');
+      setVadLiveRecording(false);
+      setVadLiveSummary(
+        `${(stats.durationMs / 1000).toFixed(1)}s captured, ${stats.emittedWindowCount} windows, ${stats.speechEndCount} segments, rms ${stats.maxNormalizedRms.toFixed(3)}.`
+      );
+      addLog('Live VAD microphone stopped.', 'success');
+    } catch (error) {
+      vadSessionRef.current = null;
+      setVadStatus('ready');
+      setVadLiveRecording(false);
+      addLog(error instanceof Error ? error.message : 'Failed to stop live VAD.', 'error');
     }
   };
 
@@ -912,9 +997,12 @@ export default function App() {
                 }
               />
               <Metric label="Clip" value={offlineClipSummary} />
+              <Metric label="Live" value={vadLiveRecording ? 'recording' : 'idle'} />
             </View>
             <Text style={styles.label}>Detection result</Text>
             <Text style={styles.previewText}>{vadSummary}</Text>
+            <Text style={styles.label}>Live microphone</Text>
+            <Text style={styles.previewText}>{vadLiveSummary}</Text>
             <View style={styles.buttonRow}>
               <ActionButton
                 title="Load VAD"
@@ -928,10 +1016,23 @@ export default function App() {
                 disabled={!vadModel || !offlineRecordedClip || vadStatus === 'running'}
               />
             </View>
+            <View style={styles.buttonRow}>
+              <ActionButton
+                title="Start Live VAD"
+                onPress={handleStartLiveVad}
+                secondary
+                disabled={!vadModel || vadLiveRecording || vadStatus === 'loading'}
+              />
+              <ActionButton
+                title="Stop Live VAD"
+                onPress={handleStopLiveVad}
+                disabled={!vadLiveRecording}
+              />
+            </View>
             <Text style={styles.helpText}>
-              Record an Offline STT clip first, then run VAD on the same saved
-              microphone audio. This keeps the smoke test simple without adding
-              a file picker.
+              Detect Clip runs VAD on a saved Offline STT recording. Live VAD
+              listens to the microphone and emits speech boundaries as segments
+              complete.
             </Text>
           </View>
 

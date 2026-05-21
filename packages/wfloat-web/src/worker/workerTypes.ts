@@ -1,6 +1,6 @@
 import type { TranscriptionResult } from "../stt/types.js";
 import type { LoadModelProgressEvent, TtsEmotion } from "../tts/types.js";
-import type { VadDetectionResult } from "../vad/types.js";
+import type { VadDetectionResult, VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 
 export type WorkerRequestTemplate =
   | { type: "speech-load-model"; modelId: string; persistentId?: string; modelAssetHost?: string }
@@ -55,11 +55,32 @@ export type WorkerRequestTemplate =
       minSpeechDurationSec?: number;
       maxSpeechDurationSec?: number;
     }
-  | {
-      type: "vad-detect";
-      samples: Float32Array;
-      sampleRate: number;
-    };
+	  | {
+	      type: "vad-detect";
+	      samples: Float32Array;
+	      sampleRate: number;
+	    }
+	  | {
+	      type: "vad-create-session";
+	    }
+	  | {
+	      type: "vad-session-push";
+	      sessionId: number;
+	      samples: Float32Array;
+	      sampleRate: number;
+	    }
+	  | {
+	      type: "vad-session-finish";
+	      sessionId: number;
+	    }
+	  | {
+	      type: "vad-session-reset";
+	      sessionId: number;
+	    }
+	  | {
+	      type: "vad-session-close";
+	      sessionId: number;
+	    };
 
 export type WorkerRequest = WorkerRequestTemplate & { id: number };
 
@@ -148,11 +169,41 @@ export type WorkerResponse =
       family: string;
       persistentId?: string;
     }
-  | {
-      id: number;
-      type: "vad-detect-done";
-      result: VadDetectionResult;
-    };
+	  | {
+	      id: number;
+	      type: "vad-detect-done";
+	      result: VadDetectionResult;
+	    }
+	  | {
+	      id: number;
+	      type: "vad-create-session-done";
+	      sessionId: number;
+	    }
+	  | {
+	      id: number;
+	      type: "vad-session-push-done";
+	      speechStarts: VadSpeechStartEvent[];
+	      segments: VadSegment[];
+	      emittedWindowCount: number;
+	      speechStartCount: number;
+	      speechEndCount: number;
+	    }
+	  | {
+	      id: number;
+	      type: "vad-session-finish-done";
+	      segments: VadSegment[];
+	      emittedWindowCount: number;
+	      speechStartCount: number;
+	      speechEndCount: number;
+	    }
+	  | {
+	      id: number;
+	      type: "vad-session-reset-done";
+	    }
+	  | {
+	      id: number;
+	      type: "vad-session-close-done";
+	    };
 
 export type SpeechGenerateWorkerOptions = {
   voiceId?: string | number;

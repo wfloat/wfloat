@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Mapping, Optional
+
+from ._assets import fetch_vad_assets
+from ._cache import get_default_cache_dir, load_persistent_id, save_persistent_id
+from ._native import create_native_vad
+from ._vad import DEFAULT_VAD_SAMPLE_RATE, VadModel
+from ._vad_assets import cache_vad_assets, cache_vad_model_assets
+
+DEFAULT_VAD_THRESHOLD = 0.5
+DEFAULT_VAD_MIN_SILENCE_DURATION_SEC = 0.5
+DEFAULT_VAD_MIN_SPEECH_DURATION_SEC = 0.25
+DEFAULT_VAD_MAX_SPEECH_DURATION_SEC = 20.0
+DEFAULT_VAD_BUFFER_SIZE_IN_SECONDS = 30.0
+
+
+def _finite_float_or_default(value: Optional[float], default: float) -> float:
+    if value is None:
+        return default
+    resolved = float(value)
+    if not resolved == resolved or resolved in {float("inf"), float("-inf")}:
+        raise ValueError("VAD timing and threshold options must be finite numbers.")
+    return resolved
+
+
+def load_vad_model(
+    model_name: str,
+    *,
+    family: Optional[str] = None,
+    cache_dir: Optional[Path] = None,
+    force_download: bool = False,
+    checksums: Optional[Mapping[str, str]] = None,
+    model: Optional[str | Path] = None,
+    threshold: Optional[float] = None,
+    min_silence_duration_sec: Optional[float] = None,
+    min_speech_duration_sec: Optional[float] = None,
+    max_speech_duration_sec: Optional[float] = None,
+    buffer_size_in_seconds: Optional[float] = None,
+) -> VadModel:
+    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else get_default_cache_dir()
+
+    if model is not None:
+        if not family:
+            raise ValueError("family is required when explicit VAD asset sources are provided.")
+        cached = cache_vad_assets(
+            model_name,
+            family=family,
+            sources={"model": model},
+            checksums=checksums,
+            cache_dir=resolved_cache_dir,
+            force_download=force_download,
+        )
+    else:
+        persistent_id = load_persistent_id(resolved_cache_dir)
+        assets = fetch_vad_assets(
+            model_name,
+            family=family,
+            persistent_id=persistent_id,
+        )
+        save_persistent_id(assets.persistent_id or persistent_id, resolved_cache_dir)
+        cached = cache_vad_model_assets(
+            model_name,
+            assets,
+            cache_dir=resolved_cache_dir,
+            force_download=force_download,
+        )
+        family = assets.family
+
+    if family is None:
+        raise ValueError("family is required to load a VAD model.")
+
+    native_vad = create_native_vad(
+        family=family,
+        model_path=cached.require("model"),
+        threshold=_finite_float_or_default(threshold, DEFAULT_VAD_THRESHOLD),
+        min_silence_duration_sec=_finite_float_or_default(
+            min_silence_duration_sec,
+            DEFAULT_VAD_MIN_SILENCE_DURATION_SEC,
+        ),
+        min_speech_duration_sec=_finite_float_or_default(
+            min_speech_duration_sec,
+            DEFAULT_VAD_MIN_SPEECH_DURATION_SEC,
+        ),
+        max_speech_duration_sec=_finite_float_or_default(
+            max_speech_duration_sec,
+            DEFAULT_VAD_MAX_SPEECH_DURATION_SEC,
+        ),
+        sample_rate=DEFAULT_VAD_SAMPLE_RATE,
+        buffer_size_in_seconds=_finite_float_or_default(
+            buffer_size_in_seconds,
+            DEFAULT_VAD_BUFFER_SIZE_IN_SECONDS,
+        ),
+    )
+    return VadModel(
+        model_id=model_name,
+        family=family,
+        _native_vad=native_vad,
+        sample_rate=DEFAULT_VAD_SAMPLE_RATE,
+    )
+
+
+def load_silero_vad(
+    *,
+    cache_dir: Optional[Path] = None,
+    model_url: str | Path,
+    model_checksum: Optional[str] = None,
+    force_download: bool = False,
+    threshold: Optional[float] = None,
+    min_silence_duration_sec: Optional[float] = None,
+    min_speech_duration_sec: Optional[float] = None,
+    max_speech_duration_sec: Optional[float] = None,
+) -> VadModel:
+    return load_vad_model(
+        "silero-vad",
+        family="silero-vad",
+        cache_dir=cache_dir,
+        force_download=force_download,
+        checksums={
+            key: value
+            for key, value in {
+                "model": model_checksum,
+            }.items()
+            if value is not None
+        },
+        model=model_url,
+        threshold=threshold,
+        min_silence_duration_sec=min_silence_duration_sec,
+        min_speech_duration_sec=min_speech_duration_sec,
+        max_speech_duration_sec=max_speech_duration_sec,
+    )

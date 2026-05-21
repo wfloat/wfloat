@@ -133,3 +133,21 @@ class StreamingTranscriptionResult:
     model_id: str
     is_endpoint: bool = False
     json: str = ""
+
+
+@dataclass
+class VadSegment:
+    start_sec: float
+    duration_sec: float
+    end_sec: float
+    start_sample: int
+    sample_count: int
+    sample_rate: int
+    audio: Audio
+
+
+@dataclass
+class VadDetectionResult:
+    model_id: str
+    segments: List[VadSegment]
+    speech_ratio: float

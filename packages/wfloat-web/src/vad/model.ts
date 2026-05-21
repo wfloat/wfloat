@@ -1,3 +1,4 @@
+import { createMicrophoneCapture, type MicrophoneCapture } from "../audio/microphone.js";
 import { getPersistentId, setPersistentId } from "../util/persistentIdStorage.js";
 import { VadWorkerBridge } from "../worker/vadWorkerBridge.js";
 import type {
@@ -5,6 +6,9 @@ import type {
   LoadVadModelOptions,
   VadDetectOptions,
   VadDetectionResult,
+  VadMicrophoneCaptureResult,
+  VadMicrophoneOptions,
+  VadSessionOptions,
 } from "./types.js";
 
 const TARGET_SAMPLE_RATE = 16000;
@@ -105,6 +109,137 @@ async function normalizeAudioInput(options: VadDetectOptions): Promise<DecodedVa
   };
 }
 
+function rms(samples: Float32Array): number {
+  if (samples.length === 0) {
+    return 0;
+  }
+
+  let sumSquares = 0;
+  for (const sample of samples) {
+    sumSquares += sample * sample;
+  }
+
+  return Math.sqrt(sumSquares / samples.length);
+}
+
+function normalizeSampleRate(sampleRate: number | undefined): number {
+  return typeof sampleRate === "number" && Number.isFinite(sampleRate)
+    ? Math.max(1, Math.trunc(sampleRate))
+    : TARGET_SAMPLE_RATE;
+}
+
+export class VadSession {
+  private microphoneCapture: MicrophoneCapture | null = null;
+  private microphoneQueue: Promise<void> = Promise.resolve();
+  private microphoneChunkCount = 0;
+  private microphoneStartedAt = 0;
+  private emittedWindowCount = 0;
+  private speechStartCount = 0;
+  private speechEndCount = 0;
+  private maxRms = 0;
+
+  constructor(
+    public readonly modelId: string,
+    private readonly sessionId: number,
+    private readonly options: VadSessionOptions,
+  ) {}
+
+  async startMicrophone(options: VadMicrophoneOptions = {}): Promise<void> {
+    if (this.microphoneCapture?.isRecording) {
+      return;
+    }
+
+    await VadWorkerBridge.resetSession(this.sessionId);
+    const capture = await createMicrophoneCapture({
+      sampleRate: normalizeSampleRate(options.sampleRate),
+    });
+
+    this.microphoneQueue = Promise.resolve();
+    this.microphoneChunkCount = 0;
+    this.microphoneStartedAt = performance.now();
+    this.emittedWindowCount = 0;
+    this.speechStartCount = 0;
+    this.speechEndCount = 0;
+    this.maxRms = 0;
+
+    try {
+      await capture.start({
+        onChunk: (samples, sampleRate) => {
+          this.microphoneChunkCount += 1;
+          const normalizedSamples = resampleLinear(samples, sampleRate, TARGET_SAMPLE_RATE);
+          this.maxRms = Math.max(this.maxRms, rms(normalizedSamples));
+          this.microphoneQueue = this.microphoneQueue.then(async () => {
+            const result = await VadWorkerBridge.pushSessionAudio({
+              sessionId: this.sessionId,
+              samples: normalizedSamples,
+              sampleRate: TARGET_SAMPLE_RATE,
+            });
+            this.emittedWindowCount = result.emittedWindowCount;
+            this.speechStartCount = result.speechStartCount;
+            this.speechEndCount = result.speechEndCount;
+
+            for (const event of result.speechStarts) {
+              await this.options.onSpeechStart?.(event);
+            }
+            for (const segment of result.segments) {
+              await this.options.onSpeechEnd?.(segment);
+            }
+          });
+        },
+      });
+      this.microphoneCapture = capture;
+    } catch (error) {
+      await capture.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  async stopMicrophone(): Promise<VadMicrophoneCaptureResult> {
+    if (!this.microphoneCapture?.isRecording) {
+      throw new Error("Live VAD microphone capture is not active.");
+    }
+
+    const capture = this.microphoneCapture;
+    this.microphoneCapture = null;
+    const recorded = await capture.stop();
+    await this.microphoneQueue;
+    const finalResult = await VadWorkerBridge.finishSession(this.sessionId);
+
+    this.emittedWindowCount = finalResult.emittedWindowCount;
+    this.speechStartCount = finalResult.speechStartCount;
+    this.speechEndCount = finalResult.speechEndCount;
+
+    for (const segment of finalResult.segments) {
+      await this.options.onSpeechEnd?.(segment);
+    }
+
+    return {
+      durationMs:
+        this.microphoneStartedAt > 0
+          ? Math.max(1, Math.round(performance.now() - this.microphoneStartedAt))
+          : Math.round(recorded.durationSec * 1000),
+      sampleRate: TARGET_SAMPLE_RATE,
+      chunkCount: this.microphoneChunkCount,
+      emittedWindowCount: this.emittedWindowCount,
+      speechStartCount: this.speechStartCount,
+      speechEndCount: this.speechEndCount,
+      maxRms: this.maxRms,
+    };
+  }
+
+  async reset(): Promise<void> {
+    await VadWorkerBridge.resetSession(this.sessionId);
+  }
+
+  async close(): Promise<void> {
+    if (this.microphoneCapture) {
+      await this.microphoneCapture.close().catch(() => {});
+      this.microphoneCapture = null;
+    }
+    await VadWorkerBridge.closeSession(this.sessionId);
+  }
+}
+
 export class VadModel {
   private constructor(
     public readonly modelId: string,
@@ -140,6 +275,11 @@ export class VadModel {
       samples: normalized.samples,
       sampleRate: normalized.sampleRate,
     });
+  }
+
+  async createSession(options: VadSessionOptions = {}): Promise<VadSession> {
+    const sessionId = await VadWorkerBridge.createSession();
+    return new VadSession(this.modelId, sessionId, options);
   }
 }
 

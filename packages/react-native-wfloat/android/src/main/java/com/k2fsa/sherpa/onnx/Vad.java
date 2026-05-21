@@ -47,6 +47,10 @@ public class Vad {
         return front(this.ptr);
     }
 
+    public boolean isSpeechDetected() {
+        return isSpeechDetected(this.ptr);
+    }
+
     private native void delete(long ptr);
 
     private native long newFromFile(VadModelConfig config);
@@ -58,6 +62,8 @@ public class Vad {
     private native void pop(long ptr);
 
     private native SpeechSegment front(long ptr);
+
+    private native boolean isSpeechDetected(long ptr);
 
     private native void reset(long ptr);
 

@@ -75,7 +75,9 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
   return (double)frameCount / (double)sampleRate;
 }
 
-@interface Wfloat () <NSURLSessionDownloadDelegate, AVAudioRecorderDelegate>
+@interface Wfloat () <NSURLSessionDownloadDelegate, AVAudioRecorderDelegate> {
+  std::vector<float> _vadMicrophonePendingSamples;
+}
 @property (nonatomic, assign) const SherpaOnnxOfflineTts *tts;
 @property (nonatomic, assign) const SherpaOnnxOfflineRecognizer *offlineRecognizer;
 @property (nonatomic, assign) const SherpaOnnxOnlineRecognizer *onlineRecognizer;
@@ -131,6 +133,24 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 @property (nonatomic, assign) double sttMicrophoneLastNormalizedRms;
 @property (nonatomic, assign) double sttMicrophoneMaxRawRms;
 @property (nonatomic, assign) double sttMicrophoneMaxNormalizedRms;
+@property (nonatomic, strong) AVAudioEngine *vadMicrophoneAudioEngine;
+@property (nonatomic, strong) AVAudioFormat *vadMicrophoneTargetFormat;
+@property (nonatomic, strong) NSDate *vadMicrophoneStartedAt;
+@property (nonatomic, assign) NSInteger vadMicrophoneSampleRate;
+@property (nonatomic, assign) NSInteger vadMicrophoneWindowSize;
+@property (nonatomic, assign) NSInteger vadMicrophoneCallbackCount;
+@property (nonatomic, assign) NSInteger vadMicrophoneEmittedWindowCount;
+@property (nonatomic, assign) NSInteger vadMicrophoneSpeechStartCount;
+@property (nonatomic, assign) NSInteger vadMicrophoneSpeechEndCount;
+@property (nonatomic, assign) NSInteger vadMicrophoneInputChannels;
+@property (nonatomic, assign) NSInteger vadMicrophoneLastInputFrameLength;
+@property (nonatomic, assign) NSInteger vadMicrophoneProcessedSampleCount;
+@property (nonatomic, assign) double vadMicrophoneInputSampleRate;
+@property (nonatomic, assign) double vadMicrophoneLastRawRms;
+@property (nonatomic, assign) double vadMicrophoneLastNormalizedRms;
+@property (nonatomic, assign) double vadMicrophoneMaxRawRms;
+@property (nonatomic, assign) double vadMicrophoneMaxNormalizedRms;
+@property (nonatomic, assign) BOOL vadMicrophoneSpeechDetected;
 @property (nonatomic) dispatch_queue_t workQueue;
 
 @end
@@ -152,6 +172,7 @@ RCT_EXPORT_MODULE()
   [self.sttMicrophoneRecorder stop];
   self.sttMicrophoneRecorder = nil;
   [self stopSttMicrophoneCapture];
+  [self stopVadMicrophoneCapture];
   [self closeAllSttSessions];
 
   if (self.tts) {
@@ -963,6 +984,151 @@ RCT_EXPORT_MODULE()
   [audioEngine.inputNode removeTapOnBus:0];
   [audioEngine stop];
   [self resetSttMicrophoneState];
+}
+
+- (NSInteger)vadWindowSize {
+  return [self.loadedVadFamily.lowercaseString containsString:@"ten"] ? 256 : 512;
+}
+
+- (NSDictionary *)vadSegmentPayloadWithSamples:(const float *)samples
+                                         count:(int32_t)count
+                                   startSample:(int32_t)startSample
+                                    sampleRate:(NSInteger)sampleRate {
+  NSMutableArray<NSNumber *> *audio = [NSMutableArray arrayWithCapacity:MAX(count, 0)];
+  for (int32_t index = 0; index < count; index += 1) {
+    [audio addObject:@(samples[index])];
+  }
+
+  return @{
+    @"startSec" : @((double)startSample / (double)sampleRate),
+    @"durationSec" : @((double)count / (double)sampleRate),
+    @"endSec" : @((double)(startSample + count) / (double)sampleRate),
+    @"startSample" : @(startSample),
+    @"sampleCount" : @(count),
+    @"sampleRate" : @(sampleRate),
+    @"audio" : audio,
+  };
+}
+
+- (void)emitVadSpeechStartWithStartSample:(NSInteger)startSample sampleRate:(NSInteger)sampleRate {
+  [self emitOnVadSpeechStart:@{
+    @"modelId" : self.loadedVadModelId ?: @"",
+    @"sampleRate" : @(sampleRate),
+    @"startSample" : @(startSample),
+    @"startSec" : @((double)startSample / (double)sampleRate),
+  }];
+}
+
+- (void)emitVadSpeechEndWithSegment:(NSDictionary *)segment {
+  [self emitOnVadSpeechEnd:@{
+    @"modelId" : self.loadedVadModelId ?: @"",
+    @"segment" : segment,
+  }];
+}
+
+- (void)drainVadMicrophoneSegments {
+  while (self.vad && SherpaOnnxVoiceActivityDetectorEmpty(self.vad) == 0) {
+    const SherpaOnnxSpeechSegment *segment = SherpaOnnxVoiceActivityDetectorFront(self.vad);
+    if (segment) {
+      NSDictionary *payload = [self vadSegmentPayloadWithSamples:segment->samples
+                                                           count:segment->n
+                                                     startSample:segment->start
+                                                      sampleRate:self.vadMicrophoneSampleRate];
+      [self emitVadSpeechEndWithSegment:payload];
+      self.vadMicrophoneSpeechEndCount += 1;
+      SherpaOnnxDestroySpeechSegment(segment);
+    }
+    SherpaOnnxVoiceActivityDetectorPop(self.vad);
+  }
+}
+
+- (void)processVadMicrophoneSamples:(std::vector<float>)samples {
+  if (!self.vad || samples.empty()) {
+    return;
+  }
+
+  _vadMicrophonePendingSamples.insert(_vadMicrophonePendingSamples.end(), samples.begin(),
+                                      samples.end());
+  while (_vadMicrophonePendingSamples.size() >= (size_t)self.vadMicrophoneWindowSize) {
+    SherpaOnnxVoiceActivityDetectorAcceptWaveform(
+        self.vad, _vadMicrophonePendingSamples.data(), (int32_t)self.vadMicrophoneWindowSize);
+    _vadMicrophonePendingSamples.erase(
+        _vadMicrophonePendingSamples.begin(),
+        _vadMicrophonePendingSamples.begin() + self.vadMicrophoneWindowSize);
+    self.vadMicrophoneEmittedWindowCount += 1;
+    self.vadMicrophoneProcessedSampleCount += self.vadMicrophoneWindowSize;
+
+    BOOL detected = SherpaOnnxVoiceActivityDetectorDetected(self.vad) != 0;
+    if (detected && !self.vadMicrophoneSpeechDetected) {
+      self.vadMicrophoneSpeechStartCount += 1;
+      NSInteger startSample =
+          MAX(0, self.vadMicrophoneProcessedSampleCount - self.vadMicrophoneWindowSize);
+      [self emitVadSpeechStartWithStartSample:startSample
+                                   sampleRate:self.vadMicrophoneSampleRate];
+    }
+    self.vadMicrophoneSpeechDetected = detected;
+    [self drainVadMicrophoneSegments];
+  }
+}
+
+- (void)acceptVadMicrophoneBuffer:(AVAudioPCMBuffer *)buffer {
+  self.vadMicrophoneCallbackCount += 1;
+  self.vadMicrophoneLastInputFrameLength = (NSInteger)buffer.frameLength;
+  self.vadMicrophoneLastRawRms = [self rmsForBuffer:buffer];
+  self.vadMicrophoneMaxRawRms =
+      MAX(self.vadMicrophoneMaxRawRms, self.vadMicrophoneLastRawRms);
+
+  AVAudioPCMBuffer *normalizedBuffer =
+      [self normalizedBufferFromBuffer:buffer
+                            sampleRate:self.vadMicrophoneSampleRate
+                          targetFormat:self.vadMicrophoneTargetFormat
+                                 error:nil];
+  if (!normalizedBuffer || !normalizedBuffer.floatChannelData || normalizedBuffer.frameLength == 0) {
+    return;
+  }
+
+  self.vadMicrophoneLastNormalizedRms = [self rmsForBuffer:normalizedBuffer];
+  self.vadMicrophoneMaxNormalizedRms =
+      MAX(self.vadMicrophoneMaxNormalizedRms, self.vadMicrophoneLastNormalizedRms);
+
+  AVAudioFrameCount frameLength = normalizedBuffer.frameLength;
+  float *channelData = normalizedBuffer.floatChannelData[0];
+  std::vector<float> samples(channelData, channelData + frameLength);
+  dispatch_async(self.workQueue, ^{
+    [self processVadMicrophoneSamples:samples];
+  });
+}
+
+- (void)resetVadMicrophoneState {
+  self.vadMicrophoneAudioEngine = nil;
+  self.vadMicrophoneTargetFormat = nil;
+  self.vadMicrophoneStartedAt = nil;
+  self.vadMicrophoneSampleRate = 0;
+  self.vadMicrophoneWindowSize = 0;
+  self.vadMicrophoneCallbackCount = 0;
+  self.vadMicrophoneEmittedWindowCount = 0;
+  self.vadMicrophoneSpeechStartCount = 0;
+  self.vadMicrophoneSpeechEndCount = 0;
+  self.vadMicrophoneInputChannels = 0;
+  self.vadMicrophoneLastInputFrameLength = 0;
+  self.vadMicrophoneProcessedSampleCount = 0;
+  self.vadMicrophoneInputSampleRate = 0;
+  self.vadMicrophoneLastRawRms = 0;
+  self.vadMicrophoneLastNormalizedRms = 0;
+  self.vadMicrophoneMaxRawRms = 0;
+  self.vadMicrophoneMaxNormalizedRms = 0;
+  self.vadMicrophoneSpeechDetected = NO;
+  _vadMicrophonePendingSamples.clear();
+}
+
+- (void)stopVadMicrophoneCapture {
+  AVAudioEngine *audioEngine = self.vadMicrophoneAudioEngine;
+  if (!audioEngine) {
+    return;
+  }
+
+  [audioEngine.inputNode removeTapOnBus:0];
+  [audioEngine stop];
 }
 
 - (void)resetSttMicrophoneRecordingState {
@@ -1853,6 +2019,8 @@ RCT_EXPORT_MODULE()
   }
 
   self.sttLoadInProgress = YES;
+  [self stopVadMicrophoneCapture];
+  [self resetVadMicrophoneState];
 
   dispatch_async(self.workQueue, ^{
     @autoreleasepool {
@@ -2108,6 +2276,8 @@ RCT_EXPORT_MODULE()
   }
 
   self.sttLoadInProgress = YES;
+  [self stopVadMicrophoneCapture];
+  [self resetVadMicrophoneState];
 
   dispatch_async(self.workQueue, ^{
     @autoreleasepool {
@@ -2255,6 +2425,154 @@ RCT_EXPORT_MODULE()
   });
 }
 
+- (void)startVadSessionMicrophone:(JS::NativeWfloat::VadSessionMicrophoneNativeOptions &)options
+                           resolve:(RCTPromiseResolveBlock)resolve
+                            reject:(RCTPromiseRejectBlock)reject {
+  if (!self.vad || self.loadedVadModelId.length == 0) {
+    reject(@"not_loaded", @"VAD model is not loaded. Call loadVadModel(...) first.", nil);
+    return;
+  }
+
+  double sampleRateValue = options.sampleRate();
+  if (!isfinite(sampleRateValue) || sampleRateValue <= 0 ||
+      floor(sampleRateValue) != sampleRateValue) {
+    reject(@"invalid_arguments", @"sampleRate must be a positive integer.", nil);
+    return;
+  }
+
+  if (self.sttMicrophoneAudioEngine || self.sttMicrophoneRecorder ||
+      self.vadMicrophoneAudioEngine) {
+    reject(@"microphone_in_use", @"A microphone capture is already in progress.", nil);
+    return;
+  }
+
+  NSInteger sampleRate = (NSInteger)sampleRateValue;
+  [self ensureRecordPermission:^(BOOL granted) {
+    if (!granted) {
+      reject(@"microphone_permission_denied",
+             @"Microphone access is required to run live VAD.",
+             nil);
+      return;
+    }
+
+    NSError *sessionError = nil;
+    if (![self configureSharedSessionForRecordingWithSampleRate:sampleRate error:&sessionError]) {
+      reject(@"microphone_start_failed",
+             sessionError.localizedDescription ?: @"Failed to configure microphone audio session.",
+             sessionError);
+      return;
+    }
+
+    AVAudioEngine *audioEngine = [[AVAudioEngine alloc] init];
+    AVAudioInputNode *inputNode = audioEngine.inputNode;
+    if (!inputNode) {
+      reject(@"microphone_start_failed", @"Failed to access the microphone input node.", nil);
+      return;
+    }
+
+    AVAudioFormat *inputFormat = [inputNode outputFormatForBus:0];
+    AVAudioFormat *targetFormat =
+        [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+                                         sampleRate:(double)sampleRate
+                                           channels:1
+                                        interleaved:NO];
+    if (!targetFormat) {
+      reject(@"microphone_start_failed", @"Failed to create microphone target format.", nil);
+      return;
+    }
+
+    self.vadMicrophoneAudioEngine = audioEngine;
+    self.vadMicrophoneTargetFormat = targetFormat;
+    self.vadMicrophoneStartedAt = [NSDate date];
+    self.vadMicrophoneSampleRate = sampleRate;
+    self.vadMicrophoneWindowSize = [self vadWindowSize];
+    self.vadMicrophoneCallbackCount = 0;
+    self.vadMicrophoneEmittedWindowCount = 0;
+    self.vadMicrophoneSpeechStartCount = 0;
+    self.vadMicrophoneSpeechEndCount = 0;
+    self.vadMicrophoneInputChannels = (NSInteger)inputFormat.channelCount;
+    self.vadMicrophoneLastInputFrameLength = 0;
+    self.vadMicrophoneProcessedSampleCount = 0;
+    self.vadMicrophoneInputSampleRate = inputFormat.sampleRate;
+    self.vadMicrophoneLastRawRms = 0;
+    self.vadMicrophoneLastNormalizedRms = 0;
+    self.vadMicrophoneMaxRawRms = 0;
+    self.vadMicrophoneMaxNormalizedRms = 0;
+    self.vadMicrophoneSpeechDetected = NO;
+    self->_vadMicrophonePendingSamples.clear();
+
+    dispatch_async(self.workQueue, ^{
+      if (self.vad) {
+        SherpaOnnxVoiceActivityDetectorReset(self.vad);
+      }
+    });
+
+    Wfloat *module = self;
+    [inputNode installTapOnBus:0
+                    bufferSize:(AVAudioFrameCount)MAX(1024, sampleRate / 10)
+                        format:inputFormat
+                         block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+                           [module acceptVadMicrophoneBuffer:buffer];
+                         }];
+
+    [audioEngine prepare];
+    NSError *startError = nil;
+    if (![audioEngine startAndReturnError:&startError]) {
+      [inputNode removeTapOnBus:0];
+      [self resetVadMicrophoneState];
+      reject(@"microphone_start_failed",
+             startError.localizedDescription ?: @"Failed to start VAD microphone capture.",
+             startError);
+      return;
+    }
+
+    resolve(nil);
+  }];
+}
+
+- (void)stopVadSessionMicrophone:(RCTPromiseResolveBlock)resolve
+                           reject:(RCTPromiseRejectBlock)reject {
+  if (!self.vadMicrophoneAudioEngine) {
+    reject(@"not_recording", @"No VAD microphone capture is currently in progress.", nil);
+    return;
+  }
+
+  [self stopVadMicrophoneCapture];
+  NSInteger durationMs =
+      self.vadMicrophoneStartedAt
+          ? MAX(1, (NSInteger)llround(-self.vadMicrophoneStartedAt.timeIntervalSinceNow *
+                                      1000.0))
+          : 0;
+
+  dispatch_async(self.workQueue, ^{
+    if (self.vad) {
+      SherpaOnnxVoiceActivityDetectorFlush(self.vad);
+      [self drainVadMicrophoneSegments];
+    }
+
+    NSDictionary *payload = @{
+      @"durationMs" : @(durationMs),
+      @"sampleRate" : @(self.vadMicrophoneSampleRate),
+      @"callbackCount" : @(self.vadMicrophoneCallbackCount),
+      @"emittedWindowCount" : @(self.vadMicrophoneEmittedWindowCount),
+      @"speechStartCount" : @(self.vadMicrophoneSpeechStartCount),
+      @"speechEndCount" : @(self.vadMicrophoneSpeechEndCount),
+      @"inputChannels" : @(self.vadMicrophoneInputChannels),
+      @"inputSampleRate" : @(self.vadMicrophoneInputSampleRate),
+      @"lastInputFrameLength" : @(self.vadMicrophoneLastInputFrameLength),
+      @"lastRawRms" : @(self.vadMicrophoneLastRawRms),
+      @"lastNormalizedRms" : @(self.vadMicrophoneLastNormalizedRms),
+      @"maxRawRms" : @(self.vadMicrophoneMaxRawRms),
+      @"maxNormalizedRms" : @(self.vadMicrophoneMaxNormalizedRms),
+    };
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self resetVadMicrophoneState];
+      resolve(payload);
+    });
+  });
+}
+
 - (void)startSttMicrophoneRecording:(JS::NativeWfloat::SttMicrophoneRecordingNativeOptions &)options
                              resolve:(RCTPromiseResolveBlock)resolve
                               reject:(RCTPromiseRejectBlock)reject {
@@ -2265,8 +2583,9 @@ RCT_EXPORT_MODULE()
     return;
   }
 
-  if (self.sttMicrophoneRecorder || self.sttMicrophoneAudioEngine) {
-    reject(@"microphone_in_use", @"A STT microphone capture is already in progress.", nil);
+  if (self.sttMicrophoneRecorder || self.sttMicrophoneAudioEngine ||
+      self.vadMicrophoneAudioEngine) {
+    reject(@"microphone_in_use", @"A microphone capture is already in progress.", nil);
     return;
   }
 
@@ -2481,8 +2800,9 @@ RCT_EXPORT_MODULE()
     return;
   }
 
-  if (self.sttMicrophoneAudioEngine || self.sttMicrophoneRecorder) {
-    reject(@"microphone_in_use", @"A streaming STT microphone capture is already in progress.", nil);
+  if (self.sttMicrophoneAudioEngine || self.sttMicrophoneRecorder ||
+      self.vadMicrophoneAudioEngine) {
+    reject(@"microphone_in_use", @"A microphone capture is already in progress.", nil);
     return;
   }
 

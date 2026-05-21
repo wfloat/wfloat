@@ -46,8 +46,11 @@ The first concrete shared contract should be generic TTS orchestration above
 
 Current draft native surface:
 
+- [include/wfloat-core/wfloat_common.h](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/include/wfloat-core/wfloat_common.h:1)
+- [include/wfloat-core/wfloat_llm.h](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/include/wfloat-core/wfloat_llm.h:1)
 - [include/wfloat-core/wfloat_stt.h](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/include/wfloat-core/wfloat_stt.h:1)
 - [include/wfloat-core/wfloat_tts.h](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/include/wfloat-core/wfloat_tts.h:1)
+- [src/wfloat_llm.cc](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/src/wfloat_llm.cc:1)
 - [src/wfloat_stt.cc](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/src/wfloat_stt.cc:1)
 - [src/wfloat_tts.cc](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/src/wfloat_tts.cc:1)
 - [CMakeLists.txt](/home/mitch/dev/slop_fork/wfloat/native/wfloat-core/CMakeLists.txt:1)
@@ -56,6 +59,11 @@ The STT draft now includes both:
 
 - offline `transcribe(...)`
 - session-style STT ABI for streaming-capable model families
+
+The LLM draft now reserves the shared `llama.cpp`-style model/load/generate
+surface. It validates the ABI shape but currently returns
+`WFLOAT_STATUS_NOT_SUPPORTED` for model creation until a real `llama.cpp`
+checkout is imported and wired into the native build.
 
 Current STT implementation state:
 

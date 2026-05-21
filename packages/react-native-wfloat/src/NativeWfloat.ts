@@ -94,6 +94,10 @@ export type VadDetectNativeOptions = {
   sampleRate: number;
 };
 
+export type VadSessionMicrophoneNativeOptions = {
+  sampleRate: number;
+};
+
 export type SttSessionNativeOptions = {
   sessionId: number;
 };
@@ -170,6 +174,22 @@ export type NativeVadDetectionResult = {
   speechRatio: number;
 };
 
+export type NativeVadMicrophoneCaptureResult = {
+  durationMs: number;
+  sampleRate: number;
+  callbackCount: number;
+  emittedWindowCount: number;
+  speechStartCount: number;
+  speechEndCount: number;
+  inputChannels: number;
+  inputSampleRate: number;
+  lastInputFrameLength: number;
+  lastRawRms: number;
+  lastNormalizedRms: number;
+  maxRawRms: number;
+  maxNormalizedRms: number;
+};
+
 export type NativeSttMicrophoneCaptureResult = {
   durationMs: number;
   sampleRate: number;
@@ -209,6 +229,18 @@ export type NativeSpeechPlaybackFinishedEvent = {
   requestId: number;
 };
 
+export type NativeVadSpeechStartEvent = {
+  modelId: string;
+  sampleRate: number;
+  startSample: number;
+  startSec: number;
+};
+
+export type NativeVadSpeechEndEvent = {
+  modelId: string;
+  segment: NativeVadSegment;
+};
+
 export interface Spec extends TurboModule {
   loadModel(options: LoadModelNativeOptions): Promise<void>;
   loadSttModel(options: LoadSttModelNativeOptions): Promise<NativeLoadSttModelResult>;
@@ -219,6 +251,10 @@ export interface Spec extends TurboModule {
   ): Promise<NativeGenerateResult>;
   transcribe(options: TranscribeNativeOptions): Promise<NativeTranscriptionResult>;
   detectVad(options: VadDetectNativeOptions): Promise<NativeVadDetectionResult>;
+  startVadSessionMicrophone(
+    options: VadSessionMicrophoneNativeOptions
+  ): Promise<void>;
+  stopVadSessionMicrophone(): Promise<NativeVadMicrophoneCaptureResult>;
   startSttMicrophoneRecording(
     options: SttMicrophoneRecordingNativeOptions
   ): Promise<void>;
@@ -244,6 +280,8 @@ export interface Spec extends TurboModule {
   readonly onLoadModelProgress: EventEmitter<NativeLoadModelProgressEvent>;
   readonly onSpeechProgress: EventEmitter<NativeSpeechProgressEvent>;
   readonly onSpeechPlaybackFinished: EventEmitter<NativeSpeechPlaybackFinishedEvent>;
+  readonly onVadSpeechStart: EventEmitter<NativeVadSpeechStartEvent>;
+  readonly onVadSpeechEnd: EventEmitter<NativeVadSpeechEndEvent>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Wfloat');

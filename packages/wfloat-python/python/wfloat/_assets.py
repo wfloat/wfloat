@@ -181,6 +181,61 @@ class SttModelAssets:
         return data
 
 
+@dataclass(frozen=True)
+class VadModelAssets:
+    family: str
+    model: str
+    model_checksum: Optional[str] = None
+    persistent_id: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "VadModelAssets":
+        family = str(data.get("family") or "").strip()
+        if not family:
+            raise ValueError("VAD asset response is missing required field: family")
+
+        files = data.get("files")
+        if isinstance(files, Mapping):
+            model_file = files.get("model")
+            if isinstance(model_file, Mapping):
+                merged = dict(data)
+                url = model_file.get("url")
+                checksum = model_file.get("checksum")
+                if isinstance(url, str) and url.strip():
+                    merged["model"] = url
+                if isinstance(checksum, str) and checksum.strip():
+                    merged["model_checksum"] = checksum
+                data = merged
+
+        model = str(data.get("model") or "").strip()
+        if not model:
+            raise ValueError("VAD asset response is missing required field: model")
+
+        def optional_string(key: str) -> Optional[str]:
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            return None
+
+        return cls(
+            family=family,
+            model=model,
+            model_checksum=optional_string("model_checksum"),
+            persistent_id=optional_string("persistent_id"),
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        data = {
+            "family": self.family,
+            "model": self.model,
+        }
+        if self.model_checksum:
+            data["model_checksum"] = self.model_checksum
+        if self.persistent_id:
+            data["persistent_id"] = self.persistent_id
+        return data
+
+
 def get_package_version(default: str = "0.0.0") -> str:
     return PACKAGE_VERSION or default
 
@@ -275,3 +330,25 @@ def fetch_stt_assets(
         extra_query=extra_query,
     )
     return SttModelAssets.from_dict(data)
+
+
+def fetch_vad_assets(
+    model_name: str,
+    *,
+    family: Optional[str] = None,
+    persistent_id: Optional[str] = None,
+    package_version_override: Optional[str] = None,
+    timeout: float = 60.0,
+) -> VadModelAssets:
+    extra_query = {}
+    if family:
+        extra_query["family"] = family
+
+    data = _fetch_asset_payload(
+        model_name,
+        persistent_id=persistent_id,
+        package_version_override=package_version_override,
+        timeout=timeout,
+        extra_query=extra_query,
+    )
+    return VadModelAssets.from_dict(data)

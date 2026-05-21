@@ -22,6 +22,7 @@ import {
   WorkerResponse,
 } from "./workerTypes.js";
 import { computeStartTime } from "../util/schedulingUtil.js";
+import type { VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 
 let SherpaSpeechModuleInstancePromise: Promise<SherpaModule>;
 let TTS: OfflineTts | null = null;
@@ -39,6 +40,18 @@ let VAD_MODEL_ASSET_URLS: VadModelAssetsResponse | null = null;
 let VAD_MODEL_ID: string | null = null;
 let NEXT_STT_SESSION_ID = 1;
 const STT_SESSIONS = new Map<number, ReturnType<ReturnType<typeof createOnlineRecognizer>["createStream"]>>();
+let NEXT_VAD_SESSION_ID = 1;
+type VadSessionState = {
+  id: number;
+  pendingSamples: Float32Array;
+  sampleRate: number;
+  processedSampleCount: number;
+  speechDetected: boolean;
+  emittedWindowCount: number;
+  speechStartCount: number;
+  speechEndCount: number;
+};
+const VAD_SESSIONS = new Map<number, VadSessionState>();
 let INSTALLED_ESPEAK_ARCHIVE_URL: string | null = null;
 let SHERPA_SPEECH_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = null;
 
@@ -1100,6 +1113,7 @@ async function handleLoadVadModel(
     VAD.free();
     VAD = null;
   }
+  VAD_SESSIONS.clear();
 
   const sherpaModule = await getSherpaSpeechModule({
     wasm_binary: VAD_MODEL_ASSET_URLS.wasm_binary,
@@ -1186,6 +1200,180 @@ async function handleVadDetect(
       speechRatio: samples.length > 0 ? Math.min(speechSampleCount / samples.length, 1) : 0,
     },
   });
+}
+
+function vadWindowSize(): number {
+  return VAD_MODEL_ASSET_URLS?.family.toLowerCase().includes("ten") ? 256 : 512;
+}
+
+function requireVadSession(sessionId: number): VadSessionState {
+  const session = VAD_SESSIONS.get(sessionId);
+  if (!session) {
+    throw new Error(`Unknown VAD session: ${sessionId}`);
+  }
+  return session;
+}
+
+function concatFloat32(left: Float32Array, right: Float32Array): Float32Array {
+  if (left.length === 0) {
+    return new Float32Array(right);
+  }
+  if (right.length === 0) {
+    return left;
+  }
+
+  const output = new Float32Array(left.length + right.length);
+  output.set(left, 0);
+  output.set(right, left.length);
+  return output;
+}
+
+function vadSegmentToResult(segment: { samples: Float32Array; start: number }, sampleRate: number): VadSegment {
+  return {
+    startSec: segment.start / sampleRate,
+    durationSec: segment.samples.length / sampleRate,
+    endSec: (segment.start + segment.samples.length) / sampleRate,
+    startSample: segment.start,
+    sampleCount: segment.samples.length,
+    sampleRate,
+    audio: segment.samples,
+  };
+}
+
+function drainVadSessionSegments(session: VadSessionState, sampleRate: number): VadSegment[] {
+  if (!VAD) {
+    return [];
+  }
+
+  const segments: VadSegment[] = [];
+  while (!VAD.isEmpty()) {
+    const segment = VAD.front();
+    segments.push(vadSegmentToResult(segment, sampleRate));
+    session.speechEndCount += 1;
+    VAD.pop();
+  }
+  return segments;
+}
+
+async function handleVadCreateSession(id: number): Promise<void> {
+  if (!VAD || !VAD_MODEL_ASSET_URLS || !VAD_MODEL_ID) {
+    throw new Error("VAD model is not loaded. Call loadVadModel(...) first.");
+  }
+
+  if (VAD_SESSIONS.size > 0) {
+    throw new Error("A live VAD session is already active.");
+  }
+
+  const sessionId = NEXT_VAD_SESSION_ID;
+  NEXT_VAD_SESSION_ID += 1;
+  VAD.reset();
+  VAD_SESSIONS.set(sessionId, {
+    id: sessionId,
+    pendingSamples: new Float32Array(0),
+    sampleRate: 16000,
+    processedSampleCount: 0,
+    speechDetected: false,
+    emittedWindowCount: 0,
+    speechStartCount: 0,
+    speechEndCount: 0,
+  });
+
+  postResponse({
+    id,
+    type: "vad-create-session-done",
+    sessionId,
+  });
+}
+
+async function handleVadSessionPush(
+  id: number,
+  sessionId: number,
+  samples: Float32Array,
+  sampleRate: number,
+): Promise<void> {
+  if (!VAD || !VAD_MODEL_ID) {
+    throw new Error("VAD model is not loaded. Call loadVadModel(...) first.");
+  }
+
+  const session = requireVadSession(sessionId);
+  session.sampleRate = sampleRate;
+  const windowSize = vadWindowSize();
+  const speechStarts: VadSpeechStartEvent[] = [];
+  const segments: VadSegment[] = [];
+  let pending = concatFloat32(session.pendingSamples, samples);
+
+  while (pending.length >= windowSize) {
+    const window = pending.slice(0, windowSize);
+    pending = pending.slice(windowSize);
+
+    VAD.acceptWaveform(window);
+    session.emittedWindowCount += 1;
+    session.processedSampleCount += windowSize;
+
+    const detected = VAD.isDetected();
+    if (detected && !session.speechDetected) {
+      session.speechStartCount += 1;
+      const startSample = Math.max(0, session.processedSampleCount - windowSize);
+      speechStarts.push({
+        modelId: VAD_MODEL_ID,
+        sampleRate,
+        startSample,
+        startSec: startSample / sampleRate,
+      });
+    }
+
+    session.speechDetected = detected;
+    segments.push(...drainVadSessionSegments(session, sampleRate));
+  }
+
+  session.pendingSamples = pending;
+  postResponse({
+    id,
+    type: "vad-session-push-done",
+    speechStarts,
+    segments,
+    emittedWindowCount: session.emittedWindowCount,
+    speechStartCount: session.speechStartCount,
+    speechEndCount: session.speechEndCount,
+  });
+}
+
+async function handleVadSessionFinish(id: number, sessionId: number): Promise<void> {
+  if (!VAD) {
+    throw new Error("VAD model is not loaded. Call loadVadModel(...) first.");
+  }
+
+  const session = requireVadSession(sessionId);
+  VAD.flush();
+  const segments = drainVadSessionSegments(session, session.sampleRate);
+  postResponse({
+    id,
+    type: "vad-session-finish-done",
+    segments,
+    emittedWindowCount: session.emittedWindowCount,
+    speechStartCount: session.speechStartCount,
+    speechEndCount: session.speechEndCount,
+  });
+}
+
+async function handleVadSessionReset(id: number, sessionId: number): Promise<void> {
+  const session = requireVadSession(sessionId);
+  if (VAD) {
+    VAD.reset();
+  }
+  session.pendingSamples = new Float32Array(0);
+  session.processedSampleCount = 0;
+  session.speechDetected = false;
+  session.emittedWindowCount = 0;
+  session.speechStartCount = 0;
+  session.speechEndCount = 0;
+  postResponse({ id, type: "vad-session-reset-done" });
+}
+
+async function handleVadSessionClose(id: number, sessionId: number): Promise<void> {
+  requireVadSession(sessionId);
+  VAD_SESSIONS.delete(sessionId);
+  postResponse({ id, type: "vad-session-close-done" });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1618,6 +1806,31 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
     if (message.type === "vad-detect") {
       await handleVadDetect(message.id, message.samples, message.sampleRate);
+      return;
+    }
+
+    if (message.type === "vad-create-session") {
+      await handleVadCreateSession(message.id);
+      return;
+    }
+
+    if (message.type === "vad-session-push") {
+      await handleVadSessionPush(message.id, message.sessionId, message.samples, message.sampleRate);
+      return;
+    }
+
+    if (message.type === "vad-session-finish") {
+      await handleVadSessionFinish(message.id, message.sessionId);
+      return;
+    }
+
+    if (message.type === "vad-session-reset") {
+      await handleVadSessionReset(message.id, message.sessionId);
+      return;
+    }
+
+    if (message.type === "vad-session-close") {
+      await handleVadSessionClose(message.id, message.sessionId);
       return;
     }
   } catch (error) {

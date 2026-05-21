@@ -14,6 +14,38 @@ export type VadDetectOptions = {
   sampleRate: number;
 };
 
+export type VadSpeechStartEvent = {
+  modelId: string;
+  sampleRate: number;
+  startSample: number;
+  startSec: number;
+};
+
+export type VadSessionOptions = {
+  onSpeechStart?: (event: VadSpeechStartEvent) => void | Promise<void>;
+  onSpeechEnd?: (segment: VadSegment) => void | Promise<void>;
+};
+
+export type VadMicrophoneOptions = {
+  sampleRate?: number;
+};
+
+export type VadMicrophoneCaptureResult = {
+  durationMs: number;
+  sampleRate: number;
+  callbackCount: number;
+  emittedWindowCount: number;
+  speechStartCount: number;
+  speechEndCount: number;
+  inputChannels: number;
+  inputSampleRate: number;
+  lastInputFrameLength: number;
+  lastRawRms: number;
+  lastNormalizedRms: number;
+  maxRawRms: number;
+  maxNormalizedRms: number;
+};
+
 export type VadSegment = {
   startSec: number;
   durationSec: number;

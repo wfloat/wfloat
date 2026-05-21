@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "wfloat-core/wfloat_common.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -34,15 +36,6 @@ typedef enum wfloat_tts_family {
   WFLOAT_TTS_FAMILY_KITTEN = 6,
   WFLOAT_TTS_FAMILY_POCKET = 7,
 } wfloat_tts_family_t;
-
-typedef enum wfloat_status {
-  WFLOAT_STATUS_OK = 0,
-  WFLOAT_STATUS_INVALID_ARGUMENT = 1,
-  WFLOAT_STATUS_NOT_SUPPORTED = 2,
-  WFLOAT_STATUS_CANCELLED = 3,
-  WFLOAT_STATUS_BACKEND_ERROR = 4,
-  WFLOAT_STATUS_INTERNAL_ERROR = 5,
-} wfloat_status_t;
 
 typedef enum wfloat_tts_progress_stage {
   WFLOAT_TTS_PROGRESS_STAGE_PREPARING = 0,

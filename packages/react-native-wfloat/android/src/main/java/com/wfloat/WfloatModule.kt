@@ -170,6 +170,27 @@ private data class StreamingSttMicrophoneState(
   var maxNormalizedRms: Double = 0.0,
 )
 
+private data class VadMicrophoneState(
+  val audioRecord: AudioRecord,
+  val running: AtomicBoolean,
+  val thread: Thread,
+  val sampleRate: Int,
+  val windowSize: Int,
+  val startedAtNanos: Long,
+  val pendingSamples: MutableList<Float> = mutableListOf(),
+  var processedSampleCount: Long = 0,
+  var speechDetected: Boolean = false,
+  var callbackCount: Int = 0,
+  var emittedWindowCount: Int = 0,
+  var speechStartCount: Int = 0,
+  var speechEndCount: Int = 0,
+  var lastInputFrameLength: Int = 0,
+  var lastRawRms: Double = 0.0,
+  var lastNormalizedRms: Double = 0.0,
+  var maxRawRms: Double = 0.0,
+  var maxNormalizedRms: Double = 0.0,
+)
+
 private enum class GenerationOutcome {
   COMPLETED,
   CANCELLED,
@@ -230,6 +251,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   private var nextSttSessionId = 1
   private var sttMicrophoneRecording: SttMicrophoneRecordingState? = null
   private var streamingSttMicrophone: StreamingSttMicrophoneState? = null
+  private var vadMicrophone: VadMicrophoneState? = null
 
   override fun getName(): String {
     return NAME
@@ -237,7 +259,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
 
   override fun invalidate() {
     cancelCurrentSpeechSession()
-    stopAllSttMicrophones()
+    stopAllMicrophones()
     closeAllSttSessions()
 
     synchronized(stateLock) {
@@ -486,7 +508,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         }
 
         emitLoadModelProgress("loading", null)
-        stopAllSttMicrophones()
+        stopAllMicrophones()
         closeAllSttSessions()
 
         val resolvedPaths = fileSet.copy(
@@ -630,6 +652,8 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       loadModelInProgress = true
     }
 
+    stopAllMicrophones()
+
     workQueue.execute {
       try {
         val modelDirectory = cacheDirectoryForModelId(modelId)
@@ -747,6 +771,86 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  override fun startVadSessionMicrophone(options: ReadableMap, promise: Promise) {
+    val currentVad = vad
+    if (currentVad == null || loadedVadModelId == null) {
+      promise.reject("not_loaded", "VAD model is not loaded. Call loadVadModel(...) first.")
+      return
+    }
+
+    if (!hasRecordAudioPermission()) {
+      promise.reject("permission_denied", "Microphone permission is required for VAD recording.")
+      return
+    }
+
+    val sampleRate: Int
+    try {
+      sampleRate = readOptionalPositiveInt(options, "sampleRate", DEFAULT_STT_SAMPLE_RATE)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    val capture: VadMicrophoneState
+    synchronized(stateLock) {
+      if (sttMicrophoneRecording != null || streamingSttMicrophone != null || vadMicrophone != null) {
+        promise.reject("microphone_in_use", "A microphone capture is already active.")
+        return
+      }
+
+      try {
+        capture = createVadMicrophoneState(sampleRate)
+        vadMicrophone = capture
+      } catch (error: Throwable) {
+        promise.reject("microphone_start_failed", error.message ?: "Failed to start VAD microphone capture.", error)
+        return
+      }
+    }
+
+    workQueue.execute {
+      currentVad.reset()
+    }
+
+    try {
+      capture.audioRecord.startRecording()
+      capture.thread.start()
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      synchronized(stateLock) {
+        if (vadMicrophone === capture) {
+          vadMicrophone = null
+        }
+      }
+      releaseAudioRecord(capture.audioRecord)
+      promise.reject("microphone_start_failed", error.message ?: "Failed to start VAD microphone capture.", error)
+    }
+  }
+
+  override fun stopVadSessionMicrophone(promise: Promise) {
+    val capture = synchronized(stateLock) {
+      val activeCapture = vadMicrophone
+      vadMicrophone = null
+      activeCapture
+    }
+
+    if (capture == null) {
+      promise.reject("microphone_not_active", "VAD microphone capture is not active.")
+      return
+    }
+
+    stopVadCapture(capture)
+    workQueue.execute {
+      try {
+        val currentVad = vad ?: throw IllegalStateException("VAD model is not loaded.")
+        currentVad.flush()
+        drainVadSegments(currentVad, capture)
+        promise.resolve(vadMicrophoneCaptureResult(capture))
+      } catch (error: Throwable) {
+        promise.reject("microphone_stop_failed", error.message ?: "Failed to stop VAD microphone capture.", error)
+      }
+    }
+  }
+
   override fun startSttMicrophoneRecording(options: ReadableMap, promise: Promise) {
     if (!hasRecordAudioPermission()) {
       promise.reject("permission_denied", "Microphone permission is required for STT recording.")
@@ -763,8 +867,8 @@ class WfloatModule(reactContext: ReactApplicationContext) :
 
     val capture: SttMicrophoneRecordingState
     synchronized(stateLock) {
-      if (sttMicrophoneRecording != null || streamingSttMicrophone != null) {
-        promise.reject("microphone_in_use", "An STT microphone capture is already active.")
+      if (sttMicrophoneRecording != null || streamingSttMicrophone != null || vadMicrophone != null) {
+        promise.reject("microphone_in_use", "A microphone capture is already active.")
         return
       }
 
@@ -899,8 +1003,8 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         promise.reject("unknown_session", "Unknown STT session: $sessionId")
         return
       }
-      if (sttMicrophoneRecording != null || streamingSttMicrophone != null) {
-        promise.reject("microphone_in_use", "An STT microphone capture is already active.")
+      if (sttMicrophoneRecording != null || streamingSttMicrophone != null || vadMicrophone != null) {
+        promise.reject("microphone_in_use", "A microphone capture is already active.")
         return
       }
     }
@@ -1986,6 +2090,92 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     return capture
   }
 
+  private fun createVadMicrophoneState(sampleRate: Int): VadMicrophoneState {
+    val windowSize = vadWindowSize()
+    val audioRecord = createSttAudioRecord(sampleRate, windowSize)
+    val running = AtomicBoolean(true)
+    lateinit var capture: VadMicrophoneState
+
+    val thread = Thread({
+      val shortBuffer = ShortArray(maxOf(windowSize, sampleRate / 10))
+      while (running.get()) {
+        val readCount = audioRecord.read(shortBuffer, 0, shortBuffer.size)
+        if (readCount <= 0) {
+          continue
+        }
+
+        val samples = shortArrayToFloatArray(shortBuffer, readCount)
+        val normalizedRms = rms(samples)
+        val rawRms = normalizedRms * PCM_16BIT_FLOAT_SCALE.toDouble()
+
+        synchronized(capture) {
+          capture.callbackCount += 1
+          capture.lastInputFrameLength = readCount
+          capture.lastRawRms = rawRms
+          capture.lastNormalizedRms = normalizedRms
+          capture.maxRawRms = maxOf(capture.maxRawRms, rawRms)
+          capture.maxNormalizedRms = maxOf(capture.maxNormalizedRms, normalizedRms)
+        }
+
+        workQueue.execute {
+          try {
+            processVadMicrophoneSamples(capture, samples)
+          } catch (_: Throwable) {
+            // The stop call returns microphone stats; native VAD errors are surfaced there.
+          }
+        }
+      }
+    }, "WfloatVadMicrophone")
+
+    capture = VadMicrophoneState(
+      audioRecord = audioRecord,
+      running = running,
+      thread = thread,
+      sampleRate = sampleRate,
+      windowSize = windowSize,
+      startedAtNanos = System.nanoTime()
+    )
+    return capture
+  }
+
+  private fun processVadMicrophoneSamples(capture: VadMicrophoneState, samples: FloatArray) {
+    val currentVad = vad ?: return
+
+    samples.forEach { sample ->
+      capture.pendingSamples.add(sample)
+    }
+
+    while (capture.pendingSamples.size >= capture.windowSize) {
+      val window = FloatArray(capture.windowSize)
+      for (index in 0 until capture.windowSize) {
+        window[index] = capture.pendingSamples[index]
+      }
+      capture.pendingSamples.subList(0, capture.windowSize).clear()
+
+      currentVad.acceptWaveform(window)
+      capture.emittedWindowCount += 1
+      capture.processedSampleCount += capture.windowSize.toLong()
+
+      val detected = currentVad.isSpeechDetected()
+      if (detected && !capture.speechDetected) {
+        capture.speechStartCount += 1
+        val startSample = (capture.processedSampleCount - capture.windowSize.toLong()).coerceAtLeast(0)
+        emitVadSpeechStart(startSample, capture.sampleRate)
+      }
+      capture.speechDetected = detected
+      drainVadSegments(currentVad, capture)
+    }
+  }
+
+  private fun drainVadSegments(currentVad: Vad, capture: VadMicrophoneState) {
+    while (!currentVad.empty()) {
+      val segment = currentVad.front()
+      emitVadSpeechEnd(vadSegmentToWritableMap(segment.samples, segment.start, capture.sampleRate))
+      capture.speechEndCount += 1
+      currentVad.pop()
+    }
+  }
+
   private fun stopAllSttMicrophones() {
     val recordingCapture: SttMicrophoneRecordingState?
     val streamingCapture: StreamingSttMicrophoneState?
@@ -1998,6 +2188,16 @@ class WfloatModule(reactContext: ReactApplicationContext) :
 
     recordingCapture?.let { stopRecordingCapture(it) }
     streamingCapture?.let { stopStreamingCapture(it) }
+  }
+
+  private fun stopAllMicrophones() {
+    stopAllSttMicrophones()
+    val capture = synchronized(stateLock) {
+      val activeCapture = vadMicrophone
+      vadMicrophone = null
+      activeCapture
+    }
+    capture?.let { stopVadCapture(it) }
   }
 
   private fun stopStreamingMicCaptureForSession(sessionId: Int) {
@@ -2022,6 +2222,13 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   }
 
   private fun stopStreamingCapture(capture: StreamingSttMicrophoneState) {
+    capture.running.set(false)
+    stopAudioRecord(capture.audioRecord)
+    capture.thread.join(1000)
+    releaseAudioRecord(capture.audioRecord)
+  }
+
+  private fun stopVadCapture(capture: VadMicrophoneState) {
     capture.running.set(false)
     stopAudioRecord(capture.audioRecord)
     capture.thread.join(1000)
@@ -2071,6 +2278,42 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       offset += chunk.size
     }
     return output
+  }
+
+  private fun vadWindowSize(): Int {
+    return if (loadedVadFamily?.contains("ten", ignoreCase = true) == true) 256 else 512
+  }
+
+  private fun vadSegmentToWritableMap(
+    samples: FloatArray,
+    startSample: Int,
+    sampleRate: Int,
+  ) = Arguments.createMap().apply {
+    putDouble("startSec", startSample.toDouble() / sampleRate.toDouble())
+    putDouble("durationSec", samples.size.toDouble() / sampleRate.toDouble())
+    putDouble("endSec", (startSample + samples.size).toDouble() / sampleRate.toDouble())
+    putDouble("startSample", startSample.toDouble())
+    putDouble("sampleCount", samples.size.toDouble())
+    putDouble("sampleRate", sampleRate.toDouble())
+    putArray("audio", floatArrayToWritableArray(samples))
+  }
+
+  private fun vadMicrophoneCaptureResult(capture: VadMicrophoneState) = Arguments.createMap().apply {
+    synchronized(capture) {
+      putDouble("durationMs", elapsedMillis(capture.startedAtNanos).toDouble())
+      putDouble("sampleRate", capture.sampleRate.toDouble())
+      putDouble("callbackCount", capture.callbackCount.toDouble())
+      putDouble("emittedWindowCount", capture.emittedWindowCount.toDouble())
+      putDouble("speechStartCount", capture.speechStartCount.toDouble())
+      putDouble("speechEndCount", capture.speechEndCount.toDouble())
+      putDouble("inputChannels", 1.0)
+      putDouble("inputSampleRate", capture.sampleRate.toDouble())
+      putDouble("lastInputFrameLength", capture.lastInputFrameLength.toDouble())
+      putDouble("lastRawRms", capture.lastRawRms)
+      putDouble("lastNormalizedRms", capture.lastNormalizedRms)
+      putDouble("maxRawRms", capture.maxRawRms)
+      putDouble("maxNormalizedRms", capture.maxNormalizedRms)
+    }
   }
 
   private fun floatArrayToWritableArray(samples: FloatArray) =
@@ -2420,6 +2663,24 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       putDouble("requestId", requestId.toDouble())
     }
     emitOnSpeechPlaybackFinished(event)
+  }
+
+  private fun emitVadSpeechStart(startSample: Long, sampleRate: Int) {
+    val event = Arguments.createMap().apply {
+      putString("modelId", loadedVadModelId ?: "")
+      putDouble("sampleRate", sampleRate.toDouble())
+      putDouble("startSample", startSample.toDouble())
+      putDouble("startSec", startSample.toDouble() / sampleRate.toDouble())
+    }
+    emitOnVadSpeechStart(event)
+  }
+
+  private fun emitVadSpeechEnd(segment: ReadableMap) {
+    val event = Arguments.createMap().apply {
+      putString("modelId", loadedVadModelId ?: "")
+      putMap("segment", segment)
+    }
+    emitOnVadSpeechEnd(event)
   }
 
   companion object {
