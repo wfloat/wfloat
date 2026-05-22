@@ -21,6 +21,9 @@ from wfloat._cache import (
 )
 from wfloat._model import Model
 from wfloat import _native
+from wfloat._assets import LlmModelAssets
+from wfloat._llm import LlmModel
+from wfloat._llm_assets import cache_llm_model_assets
 from wfloat._results import Audio
 from wfloat._stt import SttModel, SttSession
 from wfloat._stt_assets import cache_stt_model_assets
@@ -130,6 +133,7 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertTrue(hasattr(wfloat, "load_tts_model"))
         self.assertTrue(hasattr(wfloat, "load_stt_model"))
         self.assertTrue(hasattr(wfloat, "load_vad_model"))
+        self.assertTrue(hasattr(wfloat, "load_llm_model"))
         self.assertTrue(hasattr(wfloat, "load_silero_vad"))
         self.assertTrue(hasattr(wfloat, "load_moonshine_tiny_en"))
         self.assertTrue(hasattr(wfloat, "load_whisper_tiny_en"))
@@ -138,9 +142,11 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertTrue(hasattr(wfloat, "SttModel"))
         self.assertTrue(hasattr(wfloat, "SttSession"))
         self.assertTrue(hasattr(wfloat, "VadModel"))
+        self.assertTrue(hasattr(wfloat, "LlmModel"))
         self.assertTrue(hasattr(wfloat, "Audio"))
         self.assertTrue(hasattr(wfloat, "AudioResult"))
         self.assertTrue(hasattr(wfloat, "GenerationResult"))
+        self.assertTrue(hasattr(wfloat, "LlmGenerationResult"))
         self.assertTrue(hasattr(wfloat, "StreamingTranscriptionResult"))
         self.assertTrue(hasattr(wfloat, "TtsSynthesisResult"))
         self.assertTrue(hasattr(wfloat, "TranscriptionResult"))
@@ -461,6 +467,198 @@ class TestWfloatSmoke(unittest.TestCase):
                 "silero-vad",
                 model="https://example.com/silero_vad.onnx",
             )
+
+    def test_llm_model_generate_uses_native_backend(self):
+        sentinel = wfloat.LlmGenerationResult(
+            text="local models work",
+            model_id="smollm2-360m-instruct",
+        )
+        native_llm = types.SimpleNamespace(generate=mock.Mock(return_value=sentinel))
+        model = LlmModel(
+            model_id="smollm2-360m-instruct",
+            family="smollm",
+            _native_llm=native_llm,
+            context_size=2048,
+        )
+
+        result = model.generate("Hello", max_tokens=8, temperature=0.0)
+
+        self.assertIs(result, sentinel)
+        native_llm.generate.assert_called_once_with(
+            "Hello",
+            max_tokens=8,
+            temperature=0.0,
+            top_p=0.95,
+            top_k=40,
+            repeat_penalty=1.0,
+            seed=0,
+            on_token=None,
+        )
+
+    def test_llm_model_chat_uses_native_backend(self):
+        sentinel = wfloat.LlmGenerationResult(
+            text="local chat works",
+            model_id="smollm2-360m-instruct",
+        )
+        native_llm = types.SimpleNamespace(chat=mock.Mock(return_value=sentinel))
+        model = LlmModel(
+            model_id="smollm2-360m-instruct",
+            family="smollm",
+            _native_llm=native_llm,
+            context_size=2048,
+        )
+        messages = [{"role": "user", "content": "Hello"}]
+
+        result = model.chat(messages, max_tokens=8, temperature=0.0)
+
+        self.assertIs(result, sentinel)
+        native_llm.chat.assert_called_once_with(
+            messages,
+            max_tokens=8,
+            temperature=0.0,
+            top_p=0.95,
+            top_k=40,
+            repeat_penalty=1.0,
+            seed=0,
+            on_token=None,
+        )
+
+    def test_llm_model_format_chat_uses_native_backend(self):
+        native_llm = types.SimpleNamespace(
+            format_chat=mock.Mock(return_value="<|im_start|>user\nHello<|im_end|>\n")
+        )
+        model = LlmModel(
+            model_id="smollm2-360m-instruct",
+            family="smollm",
+            _native_llm=native_llm,
+            context_size=2048,
+        )
+        messages = [{"role": "user", "content": "Hello"}]
+
+        prompt = model.format_chat(messages, add_generation_prompt=False)
+
+        self.assertEqual(prompt, "<|im_start|>user\nHello<|im_end|>\n")
+        native_llm.format_chat.assert_called_once_with(
+            messages,
+            add_generation_prompt=False,
+        )
+
+    def test_load_llm_model_uses_asset_manifest_when_sources_are_not_provided(self):
+        fake_assets = LlmModelAssets(
+            family="smollm",
+            model="https://example.com/SmolLM2-360M-Instruct.Q4_K_M.gguf",
+            model_checksum="abc",
+            context_size=8192,
+            chat_template_format="chatml",
+            persistent_id="persist-llm-2",
+        )
+        fake_cached = types.SimpleNamespace(
+            model_name="HuggingFaceTB/SmolLM2-360M-Instruct",
+            family="smollm",
+            context_size=8192,
+            chat_template=None,
+            chat_template_format="chatml",
+            files={
+                "model": Path("/tmp/cache/SmolLM2-360M-Instruct.Q4_K_M.gguf"),
+            },
+            require=lambda key: {
+                "model": Path("/tmp/cache/SmolLM2-360M-Instruct.Q4_K_M.gguf"),
+            }[key],
+        )
+        fake_native = object()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "cache"
+            save_persistent_id("persist-llm-1", cache_dir)
+            with mock.patch(
+                "wfloat._llm_load.fetch_llm_assets",
+                return_value=fake_assets,
+            ) as fetch_mock, mock.patch(
+                "wfloat._llm_load.cache_llm_model_assets",
+                return_value=fake_cached,
+            ) as cache_mock, mock.patch(
+                "wfloat._llm_load.create_core_llm",
+                return_value=fake_native,
+            ) as create_mock:
+                model = wfloat.load_llm_model(
+                    "HuggingFaceTB/SmolLM2-360M-Instruct",
+                    cache_dir=cache_dir,
+                )
+
+            self.assertIsInstance(model, LlmModel)
+            fetch_mock.assert_called_once_with(
+                "HuggingFaceTB/SmolLM2-360M-Instruct",
+                family=None,
+                persistent_id="persist-llm-1",
+            )
+            cache_mock.assert_called_once_with(
+                "HuggingFaceTB/SmolLM2-360M-Instruct",
+                fake_assets,
+                cache_dir=cache_dir,
+                force_download=False,
+            )
+            create_mock.assert_called_once_with(
+                model_name="HuggingFaceTB/SmolLM2-360M-Instruct",
+                family="smollm",
+                model_path=Path("/tmp/cache/SmolLM2-360M-Instruct.Q4_K_M.gguf"),
+                context_size=8192,
+                num_threads=4,
+                gpu_layer_count=0,
+                chat_template="chatml",
+            )
+            self.assertEqual(load_persistent_id(cache_dir), "persist-llm-2")
+
+    def test_load_llm_model_requires_family_for_explicit_sources(self):
+        with self.assertRaisesRegex(ValueError, "family is required"):
+            wfloat.load_llm_model(
+                "HuggingFaceTB/SmolLM2-360M-Instruct",
+                model="https://example.com/model.gguf",
+            )
+
+    def test_llm_assets_from_dict_supports_nested_files(self):
+        assets = LlmModelAssets.from_dict(
+            {
+                "family": "smollm",
+                "context_size": 8192,
+                "chat_template_format": "chatml",
+                "files": {
+                    "model": {
+                        "url": "https://example.com/model.gguf",
+                        "checksum": "abc",
+                    },
+                },
+                "persistent_id": "persist-llm",
+            }
+        )
+
+        self.assertEqual(assets.family, "smollm")
+        self.assertEqual(assets.model, "https://example.com/model.gguf")
+        self.assertEqual(assets.model_checksum, "abc")
+        self.assertEqual(assets.context_size, 8192)
+        self.assertEqual(assets.chat_template_format, "chatml")
+        self.assertEqual(assets.persistent_id, "persist-llm")
+
+    def test_cache_llm_model_assets_downloads_from_local_urls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "model.gguf"
+            source.write_bytes(b"fake-gguf")
+            checksum = sha256_file(source)
+
+            cached = cache_llm_model_assets(
+                "HuggingFaceTB/SmolLM2-360M-Instruct",
+                LlmModelAssets(
+                    family="smollm",
+                    model=source.as_uri(),
+                    model_checksum=checksum,
+                    context_size=8192,
+                ),
+                cache_dir=root / "cache",
+            )
+
+            self.assertEqual(cached.family, "smollm")
+            self.assertEqual(cached.context_size, 8192)
+            self.assertEqual(cached.require("model").read_bytes(), b"fake-gguf")
 
     def test_vad_model_detect_uses_exact_windows_and_maps_segments(self):
         native_vad = FakeNativeVad(

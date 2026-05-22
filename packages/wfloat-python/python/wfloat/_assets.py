@@ -236,6 +236,78 @@ class VadModelAssets:
         return data
 
 
+@dataclass(frozen=True)
+class LlmModelAssets:
+    family: str
+    model: str
+    model_checksum: Optional[str] = None
+    context_size: Optional[int] = None
+    chat_template: Optional[str] = None
+    chat_template_format: Optional[str] = None
+    persistent_id: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "LlmModelAssets":
+        family = str(data.get("family") or "").strip()
+        if not family:
+            raise ValueError("LLM asset response is missing required field: family")
+
+        files = data.get("files")
+        if isinstance(files, Mapping):
+            model_file = files.get("model")
+            if isinstance(model_file, Mapping):
+                merged = dict(data)
+                url = model_file.get("url")
+                checksum = model_file.get("checksum")
+                if isinstance(url, str) and url.strip():
+                    merged["model"] = url
+                if isinstance(checksum, str) and checksum.strip():
+                    merged["model_checksum"] = checksum
+                data = merged
+
+        model = str(data.get("model") or "").strip()
+        if not model:
+            raise ValueError("LLM asset response is missing required field: model")
+
+        def optional_string(key: str) -> Optional[str]:
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            return None
+
+        context_size_value = data.get("context_size")
+        context_size = None
+        if context_size_value is not None:
+            context_size = int(context_size_value)
+
+        return cls(
+            family=family,
+            model=model,
+            model_checksum=optional_string("model_checksum"),
+            context_size=context_size,
+            chat_template=optional_string("chat_template"),
+            chat_template_format=optional_string("chat_template_format"),
+            persistent_id=optional_string("persistent_id"),
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        data: Dict[str, object] = {
+            "family": self.family,
+            "model": self.model,
+        }
+        if self.model_checksum:
+            data["model_checksum"] = self.model_checksum
+        if self.context_size is not None:
+            data["context_size"] = self.context_size
+        if self.chat_template:
+            data["chat_template"] = self.chat_template
+        if self.chat_template_format:
+            data["chat_template_format"] = self.chat_template_format
+        if self.persistent_id:
+            data["persistent_id"] = self.persistent_id
+        return data
+
+
 def get_package_version(default: str = "0.0.0") -> str:
     return PACKAGE_VERSION or default
 
@@ -352,3 +424,25 @@ def fetch_vad_assets(
         extra_query=extra_query,
     )
     return VadModelAssets.from_dict(data)
+
+
+def fetch_llm_assets(
+    model_name: str,
+    *,
+    family: Optional[str] = None,
+    persistent_id: Optional[str] = None,
+    package_version_override: Optional[str] = None,
+    timeout: float = 60.0,
+) -> LlmModelAssets:
+    extra_query = {"capability": "llm"}
+    if family:
+        extra_query["family"] = family
+
+    data = _fetch_asset_payload(
+        model_name,
+        persistent_id=persistent_id,
+        package_version_override=package_version_override,
+        timeout=timeout,
+        extra_query=extra_query,
+    )
+    return LlmModelAssets.from_dict(data)

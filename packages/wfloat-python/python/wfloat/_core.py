@@ -1,5 +1,6 @@
 import ctypes
 import os
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -11,6 +12,7 @@ from ._constants import (
 from ._results import (
     Audio,
     GenerationResult,
+    LlmGenerationResult,
     StreamingTranscriptionResult,
     Timeline,
     TimelineChunk,
@@ -25,6 +27,13 @@ WFLOAT_STT_FAMILY_MOONSHINE = 2
 WFLOAT_STT_FAMILY_PARAKEET_CTC = 3
 WFLOAT_STT_FAMILY_PARAKEET_TDT = 4
 WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER = 5
+WFLOAT_LLM_FAMILY_LLAMA = 1
+WFLOAT_LLM_FAMILY_QWEN = 2
+WFLOAT_LLM_FAMILY_SMOLLM = 3
+WFLOAT_LLM_FAMILY_GEMMA = 4
+WFLOAT_LLM_FAMILY_MISTRAL = 5
+WFLOAT_LLM_FAMILY_PHI = 6
+WFLOAT_LLM_FAMILY_LIQUID = 7
 WFLOAT_STATUS_OK = 0
 
 
@@ -255,6 +264,93 @@ class _WfloatSttTranscribeOptions(ctypes.Structure):
     ]
 
 
+class _WfloatLlmModelConfig(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("family", ctypes.c_int32),
+        ("model_path", ctypes.c_char_p),
+        ("chat_template", ctypes.c_char_p),
+        ("provider", ctypes.c_char_p),
+        ("context_size", ctypes.c_int32),
+        ("num_threads", ctypes.c_int32),
+        ("gpu_layer_count", ctypes.c_int32),
+        ("seed", ctypes.c_int32),
+    ]
+
+
+class _WfloatLlmModelInfo(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("backend", ctypes.c_char_p),
+        ("family", ctypes.c_char_p),
+        ("feature_flags", ctypes.c_uint64),
+        ("context_size", ctypes.c_int32),
+    ]
+
+
+class _WfloatLlmGenerateOptions(ctypes.Structure):
+    _fields_ = [
+        ("prompt", ctypes.c_char_p),
+        ("max_tokens", ctypes.c_int32),
+        ("temperature", ctypes.c_float),
+        ("top_p", ctypes.c_float),
+        ("top_k", ctypes.c_int32),
+        ("repeat_penalty", ctypes.c_float),
+        ("seed", ctypes.c_int32),
+    ]
+
+
+class _WfloatLlmTokenEvent(ctypes.Structure):
+    _fields_ = [
+        ("text", ctypes.c_char_p),
+        ("token_index", ctypes.c_int32),
+        ("token_id", ctypes.c_int32),
+        ("is_done", ctypes.c_int32),
+    ]
+
+
+class _WfloatLlmGenerateResult(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("text", ctypes.c_char_p),
+        ("finish_reason", ctypes.c_char_p),
+        ("json", ctypes.c_char_p),
+        ("prompt_token_count", ctypes.c_int32),
+        ("completion_token_count", ctypes.c_int32),
+    ]
+
+
+class _WfloatLlmChatMessage(ctypes.Structure):
+    _fields_ = [
+        ("role", ctypes.c_char_p),
+        ("content", ctypes.c_char_p),
+    ]
+
+
+class _WfloatLlmChatTemplateOptions(ctypes.Structure):
+    _fields_ = [
+        ("messages", ctypes.POINTER(_WfloatLlmChatMessage)),
+        ("message_count", ctypes.c_size_t),
+        ("add_generation_prompt", ctypes.c_int32),
+    ]
+
+
+class _WfloatLlmChatTemplateResult(ctypes.Structure):
+    _fields_ = [
+        ("prompt", ctypes.c_char_p),
+        ("chat_template", ctypes.c_char_p),
+        ("json", ctypes.c_char_p),
+        ("used_fallback", ctypes.c_int32),
+    ]
+
+
+_WfloatLlmTokenCallback = ctypes.CFUNCTYPE(
+    ctypes.c_int32,
+    ctypes.POINTER(_WfloatLlmTokenEvent),
+    ctypes.c_void_p,
+)
+
+
 class _CoreLibraryError(ImportError):
     pass
 
@@ -271,6 +367,9 @@ def _iter_candidate_library_paths() -> Sequence[Path]:
     repo_root = Path(__file__).resolve().parents[4]
     candidates: List[Path] = []
     for pattern in (
+        "out/**/libwfloat-core.so",
+        "out/**/libwfloat-core.dylib",
+        "out/**/wfloat-core.dll",
         "build/**/libwfloat-core.so",
         "build/**/libwfloat-core.dylib",
         "build/**/wfloat-core.dll",
@@ -403,6 +502,47 @@ def _prepare_library(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(_WfloatSttTranscriptionResult)
     ]
     lib.wfloat_stt_transcription_result_destroy.restype = None
+
+    lib.wfloat_llm_model_create.argtypes = [
+        ctypes.POINTER(_WfloatLlmModelConfig),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.wfloat_llm_model_create.restype = ctypes.c_int32
+
+    lib.wfloat_llm_model_destroy.argtypes = [ctypes.c_void_p]
+    lib.wfloat_llm_model_destroy.restype = None
+
+    lib.wfloat_llm_model_get_info.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WfloatLlmModelInfo),
+    ]
+    lib.wfloat_llm_model_get_info.restype = ctypes.c_int32
+
+    lib.wfloat_llm_model_generate.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WfloatLlmGenerateOptions),
+        _WfloatLlmTokenCallback,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(_WfloatLlmGenerateResult)),
+    ]
+    lib.wfloat_llm_model_generate.restype = ctypes.c_int32
+
+    lib.wfloat_llm_generate_result_destroy.argtypes = [
+        ctypes.POINTER(_WfloatLlmGenerateResult)
+    ]
+    lib.wfloat_llm_generate_result_destroy.restype = None
+
+    lib.wfloat_llm_model_format_chat.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WfloatLlmChatTemplateOptions),
+        ctypes.POINTER(ctypes.POINTER(_WfloatLlmChatTemplateResult)),
+    ]
+    lib.wfloat_llm_model_format_chat.restype = ctypes.c_int32
+
+    lib.wfloat_llm_chat_template_result_destroy.argtypes = [
+        ctypes.POINTER(_WfloatLlmChatTemplateResult)
+    ]
+    lib.wfloat_llm_chat_template_result_destroy.restype = None
 
     return lib
 
@@ -1076,4 +1216,251 @@ def create_core_stt(
         task=task,
         enable_token_timestamps=enable_token_timestamps,
         enable_segment_timestamps=enable_segment_timestamps,
+    )
+
+
+class CoreLlm:
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        family: int,
+        model_path: Path,
+        context_size: int = 2048,
+        num_threads: int = 1,
+        gpu_layer_count: int = 0,
+        chat_template: Optional[str] = None,
+    ) -> None:
+        self._lib = _prepare_library(_load_core_library())
+        self._model = ctypes.c_void_p()
+
+        self._config_bytes = {
+            "model_id": model_id.encode("utf-8"),
+            "model_path": str(model_path).encode("utf-8"),
+            "chat_template": None
+            if chat_template is None
+            else chat_template.encode("utf-8"),
+            "provider": b"llama.cpp",
+        }
+
+        config = _WfloatLlmModelConfig(
+            model_id=self._config_bytes["model_id"],
+            family=family,
+            model_path=self._config_bytes["model_path"],
+            chat_template=self._config_bytes["chat_template"],
+            provider=self._config_bytes["provider"],
+            context_size=int(context_size),
+            num_threads=int(num_threads),
+            gpu_layer_count=int(gpu_layer_count),
+            seed=0,
+        )
+
+        status = self._lib.wfloat_llm_model_create(
+            ctypes.byref(config),
+            ctypes.byref(self._model),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core LLM model creation failed with status {status}.")
+
+        info = _WfloatLlmModelInfo()
+        status = self._lib.wfloat_llm_model_get_info(self._model, ctypes.byref(info))
+        if status != WFLOAT_STATUS_OK:
+            self.close()
+            raise RuntimeError(f"wfloat-core LLM model info failed with status {status}.")
+
+        self.model_id = _decode(info.model_id) or model_id
+        self.backend = _decode(info.backend)
+        self.family = _decode(info.family)
+        self.context_size = int(info.context_size)
+
+    def close(self) -> None:
+        if self._model and self._model.value:
+            self._lib.wfloat_llm_model_destroy(self._model)
+            self._model = ctypes.c_void_p()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 128,
+        temperature: float = 0.8,
+        top_p: float = 0.95,
+        top_k: int = 40,
+        repeat_penalty: float = 1.0,
+        seed: int = 0,
+        on_token=None,
+    ) -> LlmGenerationResult:
+        prompt_bytes = prompt.encode("utf-8")
+        options = _WfloatLlmGenerateOptions(
+            prompt=prompt_bytes,
+            max_tokens=int(max_tokens),
+            temperature=float(temperature),
+            top_p=float(top_p),
+            top_k=int(top_k),
+            repeat_penalty=float(repeat_penalty),
+            seed=int(seed),
+        )
+
+        callback_ref = _WfloatLlmTokenCallback(
+            lambda event, _user_data: self._handle_token(event, on_token)
+        )
+        result_ptr = ctypes.POINTER(_WfloatLlmGenerateResult)()
+        status = self._lib.wfloat_llm_model_generate(
+            self._model,
+            ctypes.byref(options),
+            callback_ref,
+            None,
+            ctypes.byref(result_ptr),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core LLM generate failed with status {status}.")
+
+        try:
+            result = result_ptr.contents
+            return LlmGenerationResult(
+                text=_decode(result.text),
+                model_id=_decode(result.model_id) or self.model_id,
+                finish_reason=_decode(result.finish_reason),
+                json=_decode(result.json),
+                prompt_token_count=int(result.prompt_token_count),
+                completion_token_count=int(result.completion_token_count),
+            )
+        finally:
+            self._lib.wfloat_llm_generate_result_destroy(result_ptr)
+
+    def format_chat(
+        self,
+        messages: Sequence[Dict[str, str]],
+        *,
+        add_generation_prompt: bool = True,
+    ) -> str:
+        message_structs = []
+        message_buffers = []
+        for message in messages:
+            role = str(message["role"])
+            content = str(message["content"])
+            role_bytes = role.encode("utf-8")
+            content_bytes = content.encode("utf-8")
+            message_buffers.append((role_bytes, content_bytes))
+            message_structs.append(
+                _WfloatLlmChatMessage(
+                    role=role_bytes,
+                    content=content_bytes,
+                )
+            )
+
+        if not message_structs:
+            raise ValueError("LLM chat messages cannot be empty.")
+
+        message_array = (_WfloatLlmChatMessage * len(message_structs))(
+            *message_structs
+        )
+        options = _WfloatLlmChatTemplateOptions(
+            messages=message_array,
+            message_count=len(message_structs),
+            add_generation_prompt=1 if add_generation_prompt else 0,
+        )
+        result_ptr = ctypes.POINTER(_WfloatLlmChatTemplateResult)()
+        status = self._lib.wfloat_llm_model_format_chat(
+            self._model,
+            ctypes.byref(options),
+            ctypes.byref(result_ptr),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core LLM format_chat failed with status {status}.")
+
+        try:
+            result = result_ptr.contents
+            if result.used_fallback:
+                warnings.warn(
+                    "wfloat-core could not apply this GGUF model's chat "
+                    "template with llama.cpp, so it used a generic fallback "
+                    "prompt format. Output quality may be degraded.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return _decode(result.prompt)
+        finally:
+            self._lib.wfloat_llm_chat_template_result_destroy(result_ptr)
+
+    def chat(
+        self,
+        messages: Sequence[Dict[str, str]],
+        *,
+        max_tokens: int = 128,
+        temperature: float = 0.8,
+        top_p: float = 0.95,
+        top_k: int = 40,
+        repeat_penalty: float = 1.0,
+        seed: int = 0,
+        on_token=None,
+    ) -> LlmGenerationResult:
+        prompt = self.format_chat(messages, add_generation_prompt=True)
+        return self.generate(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repeat_penalty=repeat_penalty,
+            seed=seed,
+            on_token=on_token,
+        )
+
+    @staticmethod
+    def _handle_token(event_ptr, on_token) -> int:
+        if on_token is None:
+            return 0
+
+        event = event_ptr.contents
+        if event.is_done:
+            return 0
+
+        on_token(_decode(event.text))
+        return 0
+
+
+def create_core_llm(
+    *,
+    model_name: str,
+    family: str,
+    model_path: Path,
+    context_size: int = 2048,
+    num_threads: int = 1,
+    gpu_layer_count: int = 0,
+    chat_template: Optional[str] = None,
+):
+    normalized_family = family.strip().lower().replace("_", "-")
+    family_map = {
+        "llama": WFLOAT_LLM_FAMILY_LLAMA,
+        "qwen": WFLOAT_LLM_FAMILY_QWEN,
+        "qwen2": WFLOAT_LLM_FAMILY_QWEN,
+        "qwen3": WFLOAT_LLM_FAMILY_QWEN,
+        "smollm": WFLOAT_LLM_FAMILY_SMOLLM,
+        "smollm2": WFLOAT_LLM_FAMILY_SMOLLM,
+        "gemma": WFLOAT_LLM_FAMILY_GEMMA,
+        "mistral": WFLOAT_LLM_FAMILY_MISTRAL,
+        "phi": WFLOAT_LLM_FAMILY_PHI,
+        "liquid": WFLOAT_LLM_FAMILY_LIQUID,
+        "lfm": WFLOAT_LLM_FAMILY_LIQUID,
+        "lfm2": WFLOAT_LLM_FAMILY_LIQUID,
+    }
+    family_value = family_map.get(normalized_family)
+    if family_value is None:
+        raise ValueError(f"Unsupported LLM family: {family}")
+
+    return CoreLlm(
+        model_id=model_name,
+        family=family_value,
+        model_path=model_path,
+        context_size=context_size,
+        num_threads=num_threads,
+        gpu_layer_count=gpu_layer_count,
+        chat_template=chat_template,
     )

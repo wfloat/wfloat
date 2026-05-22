@@ -1,6 +1,7 @@
 export { TtsModel, loadTtsModel } from "./tts/model.js";
 export { SttModel, SttSession, loadSttModel } from "./stt/model.js";
 export { VadModel, VadSession, loadVadModel } from "./vad/model.js";
+export { LlmModel, loadLlmModel } from "./llm/model.js";
 export {
   createMicrophoneCapture,
   type CapturedMicrophoneAudio,
@@ -45,4 +46,12 @@ export type {
   VadSessionOptions,
   VadSpeechStartEvent,
 } from "./vad/types.js";
+export type {
+  LlmChatMessage,
+  LlmChatTemplateFormat,
+  LlmGenerationOptions,
+  LlmGenerationResult,
+  LlmTokenEvent,
+  LoadLlmModelOptions,
+} from "./llm/types.js";
 export { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "./tts/catalog.js";

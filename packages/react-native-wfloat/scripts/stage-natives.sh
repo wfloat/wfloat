@@ -142,6 +142,26 @@ android_build_dir_for_abi() {
   esac
 }
 
+android_llm_build_dir_for_abi() {
+  case "$1" in
+    arm64-v8a)
+      echo "${REPO_ROOT}/out/rn-llm-android-arm64-v8a"
+      ;;
+    armeabi-v7a)
+      echo "${REPO_ROOT}/out/rn-llm-android-armeabi-v7a"
+      ;;
+    x86_64)
+      echo "${REPO_ROOT}/out/rn-llm-android-x86_64"
+      ;;
+    x86)
+      echo "${REPO_ROOT}/out/rn-llm-android-x86"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 stage_android_from_build_dirs() {
   local staged_any=false
   local abi build_dir source_dir destination_dir
@@ -200,6 +220,29 @@ stage_android_from_zip() {
   rm -rf "${temp_dir}"
 }
 
+stage_android_llm_from_build_dirs() {
+  local abi build_dir source_lib destination_dir
+  local abis=(arm64-v8a armeabi-v7a x86_64 x86)
+
+  for abi in "${abis[@]}"; do
+    build_dir="$(android_llm_build_dir_for_abi "${abi}")"
+    source_lib="${build_dir}/libwfloat-llm-jni.so"
+
+    if [[ ! -f "${source_lib}" ]]; then
+      cat >&2 <<EOF
+Missing Android LLM JNI library for ${abi}: ${source_lib}
+
+Run yarn rn:build-natives android first.
+EOF
+      exit 1
+    fi
+
+    destination_dir="${JNI_LIBS_DIR}/${abi}"
+    mkdir -p "${destination_dir}"
+    cp "${source_lib}" "${destination_dir}/"
+  done
+}
+
 if [[ "${stage_ios}" == true ]]; then
   sherpa_xcframework="${SHERPA_DIR}/build-ios/sherpa-onnx.xcframework"
   onnxruntime_xcframework="${SHERPA_DIR}/build-ios/ios-onnxruntime/onnxruntime.xcframework"
@@ -233,6 +276,8 @@ EOF
       exit 1
     fi
   fi
+
+  stage_android_llm_from_build_dirs
 fi
 
 echo

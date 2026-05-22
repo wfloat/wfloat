@@ -7,13 +7,22 @@ import {
 } from "../wasm/sherpa-onnx-tts.js";
 import { createOnlineRecognizer, OfflineRecognizer } from "../wasm/sherpa-onnx-asr.js";
 import { createVad } from "../wasm/sherpa-onnx-vad.js";
+import { createLlamaModule, LlamaModule, LlamaWasmModel } from "../wasm/wfloat-llama.js";
 import { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "../tts/catalog.js";
 import type { TtsEmotion } from "../tts/types.js";
-import { fetchSttModelManifest, fetchTtsModelManifest, fetchVadModelManifest } from "../modelManifest.js";
+import {
+  fetchLlmModelManifest,
+  fetchSttModelManifest,
+  fetchTtsModelManifest,
+  fetchVadModelManifest,
+} from "../modelManifest.js";
 // @ts-ignore
 import createSherpaSpeechModule from "../wasm/sherpa-onnx-wasm-main-speech.js";
 import {
   ModelAssetsResponse,
+  LlmChatWorkerOptions,
+  LlmGenerateWorkerOptions,
+  LlmModelAssetsResponse,
   SpeechGenerateDialogueWorkerOptions,
   SpeechGenerateWorkerOptions,
   SttModelAssetsResponse,
@@ -25,9 +34,11 @@ import { computeStartTime } from "../util/schedulingUtil.js";
 import type { VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 
 let SherpaSpeechModuleInstancePromise: Promise<SherpaModule>;
+let LlamaModuleInstancePromise: Promise<LlamaModule> | null = null;
 let TTS: OfflineTts | null = null;
 let OFFLINE_STT: OfflineRecognizer | null = null;
 let ONLINE_STT: ReturnType<typeof createOnlineRecognizer> | null = null;
+let LLM: LlamaWasmModel | null = null;
 // let CURRENT_GENERATE_ID: number | null = null;
 // let DO_EARLY_STOP: Boolean = false;
 let EARLY_STOP_MESSAGE_ID: number | null = null;
@@ -38,6 +49,10 @@ let STT_MODEL_ID: string | null = null;
 let VAD: ReturnType<typeof createVad> | null = null;
 let VAD_MODEL_ASSET_URLS: VadModelAssetsResponse | null = null;
 let VAD_MODEL_ID: string | null = null;
+let LLM_MODEL_ASSET_URLS: LlmModelAssetsResponse | null = null;
+let LLM_MODEL_ID: string | null = null;
+let LLM_CONTEXT_SIZE = 2048;
+let LLM_CHAT_TEMPLATE_FORMAT: "gguf" | "chatml" = "gguf";
 let NEXT_STT_SESSION_ID = 1;
 const STT_SESSIONS = new Map<number, ReturnType<ReturnType<typeof createOnlineRecognizer>["createStream"]>>();
 let NEXT_VAD_SESSION_ID = 1;
@@ -54,10 +69,14 @@ type VadSessionState = {
 const VAD_SESSIONS = new Map<number, VadSessionState>();
 let INSTALLED_ESPEAK_ARCHIVE_URL: string | null = null;
 let SHERPA_SPEECH_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = null;
+let LLAMA_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = null;
+
+type ModuleWithFs = Pick<SherpaModule, "FS">;
 
 const WEB_PLATFORM = "web";
 const WFLOAT_WEB_VERSION = "1.5.2";
 const SHERPA_ONNX_VERSION = "1.13.1";
+const LLAMA_CPP_WASM_VERSION = "llama.cpp-bb28c1fe-wfloat";
 
 function assertPinnedSherpaRuntimeVersion(
   runtimeVersion: string | undefined,
@@ -75,6 +94,22 @@ function assertPinnedSherpaRuntimeVersion(
   }
 }
 
+function assertPinnedLlamaRuntimeVersion(
+  runtimeVersion: string | undefined,
+  requestedVersion: string,
+  modelId: string,
+): void {
+  if (!runtimeVersion) {
+    throw new Error(`Model asset manifest for ${modelId} is missing runtime.version.`);
+  }
+
+  if (runtimeVersion !== requestedVersion) {
+    throw new Error(
+      `Model asset manifest for ${modelId} returned llama runtime ${runtimeVersion}, expected ${requestedVersion}.`,
+    );
+  }
+}
+
 const defaultSpeechModuleConfig: ModuleConfig = {
   locateFile: (path: string) => {
     if (path.endsWith(".wasm")) return SHERPA_SPEECH_RUNTIME_URLS!.wasm_binary;
@@ -84,6 +119,16 @@ const defaultSpeechModuleConfig: ModuleConfig = {
   print: (text: string) => {}, //console.log(text),
   printErr: (text: string) => console.error("wasm:", text),
   onAbort: (what: unknown) => console.error("wasm abort:", what),
+};
+
+const defaultLlamaModuleConfig = {
+  locateFile: (path: string) => {
+    if (path.endsWith(".wasm")) return LLAMA_RUNTIME_URLS!.wasm_binary;
+    return path;
+  },
+  print: (text: string) => {},
+  printErr: (text: string) => console.error("llama wasm:", text),
+  onAbort: (what: unknown) => console.error("llama wasm abort:", what),
 };
 
 async function getModelAssets(
@@ -196,6 +241,38 @@ async function getVadModelAssets(
   };
 }
 
+async function getLlmModelAssets(
+  modelId: string,
+  platform: string,
+  version: string,
+  modelAssetHost?: string,
+  persistentId?: string,
+): Promise<LlmModelAssetsResponse> {
+  const data = await fetchLlmModelManifest({
+    modelName: modelId,
+    platform,
+    version,
+    modelAssetHost,
+    persistentId,
+  });
+
+  assertPinnedLlamaRuntimeVersion(data.runtime?.version, LLAMA_CPP_WASM_VERSION, modelId);
+
+  if (!data.family || !data.files?.model?.url || !data.runtime?.wasm_binary?.url) {
+    throw new Error("LLM model asset manifest is missing required URLs.");
+  }
+
+  return {
+    family: data.family,
+    model: data.files.model.url,
+    wasm_binary: data.runtime.wasm_binary.url,
+    wasm_data: data.runtime.wasm_data?.url,
+    context_size: data.context_size,
+    chat_template_format: data.chat_template_format === "chatml" ? "chatml" : "gguf",
+    persistent_id: data.persistent_id,
+  };
+}
+
 function assertCompatibleSpeechRuntime(nextRuntime: {
   wasm_binary: string;
   wasm_data?: string;
@@ -224,6 +301,34 @@ async function getSherpaSpeechModule(runtime: {
   return SherpaSpeechModuleInstancePromise;
 }
 
+function assertCompatibleLlamaRuntime(nextRuntime: {
+  wasm_binary: string;
+  wasm_data?: string;
+}): void {
+  if (!LLAMA_RUNTIME_URLS) {
+    LLAMA_RUNTIME_URLS = nextRuntime;
+    return;
+  }
+
+  if (
+    LLAMA_RUNTIME_URLS.wasm_binary !== nextRuntime.wasm_binary ||
+    LLAMA_RUNTIME_URLS.wasm_data !== nextRuntime.wasm_data
+  ) {
+    throw new Error("Attempted to reuse the llama.cpp module with a different runtime URL.");
+  }
+}
+
+async function getLlamaRuntimeModule(runtime: {
+  wasm_binary: string;
+  wasm_data?: string;
+}): Promise<LlamaModule> {
+  assertCompatibleLlamaRuntime(runtime);
+  if (!LlamaModuleInstancePromise) {
+    LlamaModuleInstancePromise = createLlamaModule(defaultLlamaModuleConfig);
+  }
+  return LlamaModuleInstancePromise;
+}
+
 function getFileNameFromUrl(url: string, label: string): string {
   const name = new URL(url).pathname.split("/").pop();
   if (!name) {
@@ -247,7 +352,7 @@ function pathBasename(path: string): string {
   return lastSlashIndex === -1 ? normalizedPath : normalizedPath.slice(lastSlashIndex + 1);
 }
 
-function fsPathExists(module: SherpaModule, path: string): boolean {
+function fsPathExists(module: ModuleWithFs, path: string): boolean {
   try {
     module.FS.stat(path);
     return true;
@@ -256,7 +361,7 @@ function fsPathExists(module: SherpaModule, path: string): boolean {
   }
 }
 
-function ensureModuleDirectory(module: SherpaModule, path: string): void {
+function ensureModuleDirectory(module: ModuleWithFs, path: string): void {
   if (!path || path === "/") {
     return;
   }
@@ -275,7 +380,7 @@ function ensureModuleDirectory(module: SherpaModule, path: string): void {
   }
 }
 
-function removeModulePathRecursive(module: SherpaModule, path: string): void {
+function removeModulePathRecursive(module: ModuleWithFs, path: string): void {
   if (!fsPathExists(module, path)) {
     return;
   }
@@ -332,7 +437,7 @@ function sanitizeZipEntryPath(entryName: string): string {
   return segments.join("/");
 }
 
-function installStoredZipArchive(module: SherpaModule, archiveBytes: Uint8Array, destinationRoot: string): void {
+function installStoredZipArchive(module: ModuleWithFs, archiveBytes: Uint8Array, destinationRoot: string): void {
   ensureModuleDirectory(module, destinationRoot);
 
   let offset = 0;
@@ -426,7 +531,7 @@ async function installEspeakArchiveFromUrl(module: SherpaModule, archiveUrl: str
 }
 
 async function writeModuleFileFromUrl(
-  module: SherpaModule,
+  module: ModuleWithFs,
   remoteUrl: string,
   targetName: string,
 ): Promise<void> {
@@ -437,7 +542,7 @@ async function writeModuleFileFromUrl(
 
   const targetPath = `/${targetName}`;
   const reader = response.body.getReader();
-  let fileStream: ReturnType<SherpaModule["FS"]["open"]> | null = null;
+  let fileStream: ReturnType<ModuleWithFs["FS"]["open"]> | null = null;
   let writePosition = 0;
 
   try {
@@ -1376,6 +1481,114 @@ async function handleVadSessionClose(id: number, sessionId: number): Promise<voi
   postResponse({ id, type: "vad-session-close-done" });
 }
 
+async function handleLoadLlmModel(
+  id: number,
+  options: Extract<WorkerRequest, { type: "llm-load-model" }>,
+): Promise<void> {
+  LLM_MODEL_ASSET_URLS = await getLlmModelAssets(
+    options.modelId,
+    WEB_PLATFORM,
+    WFLOAT_WEB_VERSION,
+    options.modelAssetHost,
+    options.persistentId,
+  );
+  LLM_MODEL_ID = options.modelId;
+  LLM_CHAT_TEMPLATE_FORMAT = LLM_MODEL_ASSET_URLS.chat_template_format ?? "gguf";
+
+  if (LLM) {
+    LLM.free();
+    LLM = null;
+  }
+
+  const llamaModule = await getLlamaRuntimeModule({
+    wasm_binary: LLM_MODEL_ASSET_URLS.wasm_binary,
+    wasm_data: LLM_MODEL_ASSET_URLS.wasm_data,
+  });
+  const targetName = getFileNameFromUrl(LLM_MODEL_ASSET_URLS.model, "LLM model");
+  await writeModuleFileFromUrl(llamaModule, LLM_MODEL_ASSET_URLS.model, targetName);
+
+  postResponse({
+    id,
+    type: "llm-load-model-progress",
+    event: {
+      status: "downloading",
+      progress: 1,
+    },
+  });
+
+  postResponse({
+    id,
+    type: "llm-load-model-progress",
+    event: { status: "loading" },
+  });
+
+  LLM_CONTEXT_SIZE = finiteNumberOrDefault(
+    options.contextSize,
+    finiteNumberOrDefault(LLM_MODEL_ASSET_URLS.context_size, 2048),
+  );
+  LLM = LlamaWasmModel.create(
+    llamaModule,
+    `/${targetName}`,
+    LLM_CONTEXT_SIZE,
+    finiteNumberOrDefault(options.numThreads, 1),
+  );
+
+  postResponse({
+    id,
+    type: "llm-load-model-done",
+    family: LLM_MODEL_ASSET_URLS.family,
+    contextSize: LLM_CONTEXT_SIZE,
+    chatTemplateFormat: LLM_CHAT_TEMPLATE_FORMAT,
+    persistentId: LLM_MODEL_ASSET_URLS.persistent_id,
+  });
+}
+
+function requireLlmModel(): LlamaWasmModel {
+  if (!LLM || !LLM_MODEL_ID) {
+    throw new Error("LLM model is not loaded. Call loadLlmModel(...) first.");
+  }
+  return LLM;
+}
+
+async function handleLlmGenerate(
+  id: number,
+  options: LlmGenerateWorkerOptions,
+): Promise<void> {
+  const model = requireLlmModel();
+  const result = model.generate(options.prompt, options, (event) => {
+    postResponse({ id, type: "llm-generate-token", event });
+  });
+
+  postResponse({
+    id,
+    type: "llm-generate-done",
+    result: {
+      ...result,
+      modelId: LLM_MODEL_ID!,
+    },
+  });
+}
+
+async function handleLlmChat(
+  id: number,
+  options: LlmChatWorkerOptions,
+): Promise<void> {
+  const model = requireLlmModel();
+  const formatted = model.formatChat(options.messages, true, LLM_CHAT_TEMPLATE_FORMAT);
+
+  const result = model.generate(formatted.prompt, options, (event) => {
+    postResponse({ id, type: "llm-generate-token", event });
+  });
+  postResponse({
+    id,
+    type: "llm-generate-done",
+    result: {
+      ...result,
+      modelId: LLM_MODEL_ID!,
+    },
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -1831,6 +2044,21 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
     if (message.type === "vad-session-close") {
       await handleVadSessionClose(message.id, message.sessionId);
+      return;
+    }
+
+    if (message.type === "llm-load-model") {
+      await handleLoadLlmModel(message.id, message);
+      return;
+    }
+
+    if (message.type === "llm-generate") {
+      await handleLlmGenerate(message.id, message.options);
+      return;
+    }
+
+    if (message.type === "llm-chat") {
+      await handleLlmChat(message.id, message.options);
       return;
     }
   } catch (error) {

@@ -91,6 +91,24 @@ typedef struct wfloat_llm_generate_result {
   int32_t completion_token_count;
 } wfloat_llm_generate_result_t;
 
+typedef struct wfloat_llm_chat_message {
+  const char *role;
+  const char *content;
+} wfloat_llm_chat_message_t;
+
+typedef struct wfloat_llm_chat_template_options {
+  const wfloat_llm_chat_message_t *messages;
+  size_t message_count;
+  int32_t add_generation_prompt;
+} wfloat_llm_chat_template_options_t;
+
+typedef struct wfloat_llm_chat_template_result {
+  const char *prompt;
+  const char *chat_template;
+  const char *json;
+  int32_t used_fallback;
+} wfloat_llm_chat_template_result_t;
+
 wfloat_status_t wfloat_llm_model_create(
     const wfloat_llm_model_config_t *config,
     wfloat_llm_model_t **out_model);
@@ -109,6 +127,14 @@ wfloat_status_t wfloat_llm_model_generate(
     wfloat_llm_generate_result_t **out_result);
 
 void wfloat_llm_generate_result_destroy(wfloat_llm_generate_result_t *result);
+
+wfloat_status_t wfloat_llm_model_format_chat(
+    const wfloat_llm_model_t *model,
+    const wfloat_llm_chat_template_options_t *options,
+    wfloat_llm_chat_template_result_t **out_result);
+
+void wfloat_llm_chat_template_result_destroy(
+    wfloat_llm_chat_template_result_t *result);
 
 #ifdef __cplusplus
 }  // extern "C"

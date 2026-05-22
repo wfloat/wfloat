@@ -371,6 +371,50 @@
       </section>
 
       <section>
+        <h2>LLM Smoke</h2>
+        <p class="hint">
+          This loads a GGUF through the local model asset API and runs it with
+          the llama.cpp WASM runtime. Use Chat for instruct/chat GGUF models;
+          Raw Generate sends the prompt without chat formatting.
+        </p>
+
+        <div class="grid">
+          <div class="field">
+            <label for="llmModelId">Model ID</label>
+            <input id="llmModelId" value="smollm2-360m-instruct-q4_k_m" />
+          </div>
+          <div class="field">
+            <label for="llmMaxTokens">Max Tokens</label>
+            <input id="llmMaxTokens" type="number" min="1" step="1" value="64" />
+          </div>
+          <div class="field">
+            <label for="llmTemperature">Temperature</label>
+            <input id="llmTemperature" type="number" min="0" step="0.05" value="0.7" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="llmPrompt">Prompt</label>
+          <textarea id="llmPrompt">Write one friendly sentence about local-first AI.</textarea>
+        </div>
+
+        <div class="actions">
+          <button id="loadLlm">Load LLM Model</button>
+          <button id="llmChat" class="secondary" disabled>Chat</button>
+          <button id="llmGenerate" class="ghost" disabled>Raw Generate</button>
+        </div>
+
+        <div class="status">
+          <div class="status-row">
+            <strong id="llmSummary">Idle</strong>
+            <span id="llmTiming">No generation yet</span>
+          </div>
+          <progress id="llmProgress" max="100" value="0"></progress>
+          <pre id="llmResult"></pre>
+        </div>
+      </section>
+
+      <section>
         <h2>Log</h2>
         <div class="actions">
           <button id="clearLog" class="ghost">Clear Log</button>

@@ -1,3 +1,9 @@
+import type {
+  LlmChatMessage,
+  LlmGenerationOptions,
+  LlmGenerationResult,
+  LlmTokenEvent,
+} from "../llm/types.js";
 import type { TranscriptionResult } from "../stt/types.js";
 import type { LoadModelProgressEvent, TtsEmotion } from "../tts/types.js";
 import type { VadDetectionResult, VadSegment, VadSpeechStartEvent } from "../vad/types.js";
@@ -80,7 +86,23 @@ export type WorkerRequestTemplate =
 	  | {
 	      type: "vad-session-close";
 	      sessionId: number;
-	    };
+	    }
+  | {
+      type: "llm-load-model";
+      modelId: string;
+      persistentId?: string;
+      modelAssetHost?: string;
+      contextSize?: number;
+      numThreads?: number;
+    }
+  | {
+      type: "llm-generate";
+      options: LlmGenerateWorkerOptions;
+    }
+  | {
+      type: "llm-chat";
+      options: LlmChatWorkerOptions;
+    };
 
 export type WorkerRequest = WorkerRequestTemplate & { id: number };
 
@@ -203,7 +225,30 @@ export type WorkerResponse =
 	  | {
 	      id: number;
 	      type: "vad-session-close-done";
-	    };
+	    }
+  | {
+      id: number;
+      type: "llm-load-model-progress";
+      event: LoadModelProgressEvent;
+    }
+  | {
+      id: number;
+      type: "llm-load-model-done";
+      family: string;
+      contextSize: number;
+      chatTemplateFormat: "gguf" | "chatml";
+      persistentId?: string;
+    }
+  | {
+      id: number;
+      type: "llm-generate-done";
+      result: LlmGenerationResult;
+    }
+  | {
+      id: number;
+      type: "llm-generate-token";
+      event: LlmTokenEvent;
+    };
 
 export type SpeechGenerateWorkerOptions = {
   voiceId?: string | number;
@@ -264,4 +309,24 @@ export type VadModelAssetsResponse = {
   wasm_binary: string;
   wasm_data?: string;
   persistent_id?: string;
+};
+
+export type LlmModelAssetsResponse = {
+  family: string;
+  model: string;
+  wasm_binary: string;
+  wasm_data?: string;
+  context_size?: number;
+  chat_template_format?: "gguf" | "chatml";
+  persistent_id?: string;
+};
+
+type SerializableLlmGenerationOptions = Omit<LlmGenerationOptions, "onToken">;
+
+export type LlmGenerateWorkerOptions = SerializableLlmGenerationOptions & {
+  prompt: string;
+};
+
+export type LlmChatWorkerOptions = SerializableLlmGenerationOptions & {
+  messages: LlmChatMessage[];
 };

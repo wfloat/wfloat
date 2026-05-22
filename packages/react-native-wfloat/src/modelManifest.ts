@@ -47,6 +47,15 @@ export type VadModelManifest = BaseModelManifest & {
   };
 };
 
+export type LlmModelManifest = BaseModelManifest & {
+  context_size?: number;
+  chat_template?: string;
+  chat_template_format?: 'gguf' | 'chatml';
+  files?: {
+    model?: ModelManifestFile;
+  };
+};
+
 const MODEL_ASSET_HOST = 'https://wfloat.com';
 const MODEL_ASSET_PATH = '/api/model-assets';
 const WFLOAT_REACT_NATIVE_VERSION = '1.0.2';
@@ -124,4 +133,14 @@ export async function fetchVadModelManifest(args: {
   host?: string;
 }): Promise<VadModelManifest> {
   return (await fetchModelManifest(args)) as VadModelManifest;
+}
+
+export async function fetchLlmModelManifest(args: {
+  modelName: string;
+  platform?: string;
+  version?: string;
+  persistentId?: string;
+  host?: string;
+}): Promise<LlmModelManifest> {
+  return (await fetchModelManifest(args)) as LlmModelManifest;
 }

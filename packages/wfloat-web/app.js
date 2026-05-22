@@ -1,4 +1,4 @@
-import { loadSttModel, loadTtsModel, loadVadModel } from "./dist/index.js";
+import { loadLlmModel, loadSttModel, loadTtsModel, loadVadModel } from "./dist/index.js";
 
 const elements = {
   assetHost: document.getElementById("assetHost"),
@@ -8,7 +8,18 @@ const elements = {
   generate: document.getElementById("generate"),
   intensity: document.getElementById("intensity"),
   load: document.getElementById("load"),
+  loadLlm: document.getElementById("loadLlm"),
   log: document.getElementById("log"),
+  llmChat: document.getElementById("llmChat"),
+  llmGenerate: document.getElementById("llmGenerate"),
+  llmMaxTokens: document.getElementById("llmMaxTokens"),
+  llmModelId: document.getElementById("llmModelId"),
+  llmProgress: document.getElementById("llmProgress"),
+  llmPrompt: document.getElementById("llmPrompt"),
+  llmResult: document.getElementById("llmResult"),
+  llmSummary: document.getElementById("llmSummary"),
+  llmTemperature: document.getElementById("llmTemperature"),
+  llmTiming: document.getElementById("llmTiming"),
   modelId: document.getElementById("modelId"),
   padding: document.getElementById("padding"),
   pause: document.getElementById("pause"),
@@ -52,6 +63,7 @@ const elements = {
 let ttsModel = null;
 let sttModel = null;
 let vadModel = null;
+let llmModel = null;
 let lastResult = null;
 let recordedMicAudio = null;
 let offlineMicrophoneRecording = false;
@@ -119,6 +131,12 @@ function setVadButtons({ loaded, busy }) {
   elements.vadLiveStop.disabled = !loaded || busy || !vadLiveSession;
 }
 
+function setLlmButtons({ loaded, busy }) {
+  elements.loadLlm.disabled = busy;
+  elements.llmGenerate.disabled = !loaded || busy;
+  elements.llmChat.disabled = !loaded || busy;
+}
+
 function readSynthesisOptions() {
   return {
     autoPlay: elements.autoPlay.value === "true",
@@ -128,6 +146,13 @@ function readSynthesisOptions() {
     speed: Number(elements.speed.value || "1"),
     text: elements.text.value,
     voice: elements.voice.value.trim() || undefined,
+  };
+}
+
+function readLlmOptions() {
+  return {
+    maxTokens: Number(elements.llmMaxTokens.value || "64"),
+    temperature: Number(elements.llmTemperature.value || "0.7"),
   };
 }
 
@@ -262,6 +287,146 @@ async function loadVad() {
     setVadButtons({ loaded: false, busy: false });
     appendLog("VAD load failed", error);
     throw error;
+  }
+}
+
+async function loadLlm() {
+  setLlmButtons({ loaded: false, busy: true });
+  elements.llmSummary.textContent = "Loading LLM model";
+  elements.llmProgress.value = 0;
+  elements.llmResult.textContent = "";
+
+  const modelId = elements.llmModelId.value.trim();
+  const modelAssetHost = elements.assetHost.value.trim();
+
+  appendLog("Loading LLM model", { modelAssetHost, modelId });
+
+  try {
+    llmModel = await loadLlmModel(modelId, {
+      modelAssetHost,
+      onProgress(event) {
+        if (event.status === "downloading") {
+          elements.llmSummary.textContent = `Downloading model ${Math.round(event.progress * 100)}%`;
+          elements.llmProgress.value = event.progress * 100;
+        } else if (event.status === "loading") {
+          elements.llmSummary.textContent = "Initializing runtime";
+          elements.llmProgress.value = 100;
+        } else if (event.status === "completed") {
+          elements.llmSummary.textContent = "Model ready";
+          elements.llmProgress.value = 100;
+        }
+
+        appendLog("LLM load progress", event);
+      },
+    });
+
+    elements.llmSummary.textContent = "Model ready";
+    setLlmButtons({ loaded: true, busy: false });
+    appendLog("LLM model loaded", {
+      contextSize: llmModel.contextSize,
+      family: llmModel.family,
+      chatTemplateFormat: llmModel.chatTemplateFormat,
+      modelId: llmModel.modelId,
+    });
+  } catch (error) {
+    llmModel = null;
+    elements.llmSummary.textContent = "LLM load failed";
+    setLlmButtons({ loaded: false, busy: false });
+    appendLog("LLM load failed", error);
+    throw error;
+  }
+}
+
+async function generateLlm() {
+  if (!llmModel) {
+    appendLog("Cannot generate before loading the LLM model");
+    return;
+  }
+
+  setLlmButtons({ loaded: true, busy: true });
+  elements.llmSummary.textContent = "Generating";
+  elements.llmProgress.value = 0;
+  elements.llmResult.textContent = "";
+
+  const startedAt = performance.now();
+  const prompt = elements.llmPrompt.value;
+  const options = readLlmOptions();
+  appendLog("LLM raw generate request", { ...options, prompt });
+
+  try {
+    const result = await llmModel.generate(prompt, {
+      ...options,
+      onToken: (event) => {
+        if (!event.isDone) {
+          elements.llmResult.textContent += event.text;
+          elements.llmTiming.textContent = `Streaming ${event.tokenIndex + 1} completion tokens`;
+        }
+      },
+    });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    elements.llmSummary.textContent = "Generation complete";
+    elements.llmTiming.textContent =
+      `${elapsedMs} ms, ${result.completionTokenCount} completion tokens`;
+    elements.llmProgress.value = 100;
+    elements.llmResult.textContent = result.text || "(empty raw generation)";
+    appendLog("LLM raw generate result", result);
+  } catch (error) {
+    elements.llmSummary.textContent = "Generation failed";
+    appendLog("LLM raw generate failed", error);
+    throw error;
+  } finally {
+    setLlmButtons({ loaded: Boolean(llmModel), busy: false });
+  }
+}
+
+async function chatLlm() {
+  if (!llmModel) {
+    appendLog("Cannot chat before loading the LLM model");
+    return;
+  }
+
+  setLlmButtons({ loaded: true, busy: true });
+  elements.llmSummary.textContent = "Chatting";
+  elements.llmProgress.value = 0;
+  elements.llmResult.textContent = "";
+
+  const startedAt = performance.now();
+  const messages = [
+    {
+      role: "system",
+      content: "You are concise, warm, and practical.",
+    },
+    {
+      role: "user",
+      content: elements.llmPrompt.value,
+    },
+  ];
+  const options = readLlmOptions();
+  appendLog("LLM chat request", { ...options, messages });
+
+  try {
+    const result = await llmModel.chat(messages, {
+      ...options,
+      onToken: (event) => {
+        if (!event.isDone) {
+          elements.llmResult.textContent += event.text;
+          elements.llmTiming.textContent = `Streaming ${event.tokenIndex + 1} completion tokens`;
+        }
+      },
+    });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    elements.llmSummary.textContent = "Chat complete";
+    elements.llmTiming.textContent =
+      `${elapsedMs} ms, ${result.completionTokenCount} completion tokens`;
+    elements.llmProgress.value = 100;
+    elements.llmResult.textContent = result.text || "(empty generation)";
+    appendLog("LLM chat result", result);
+  } catch (error) {
+    elements.llmSummary.textContent = "Chat failed";
+    appendLog("LLM chat failed", error);
+    throw error;
+  } finally {
+    setLlmButtons({ loaded: Boolean(llmModel), busy: false });
   }
 }
 
@@ -712,6 +877,15 @@ elements.loadStt.addEventListener("click", () => {
 elements.loadVad.addEventListener("click", () => {
   loadVad().catch(() => {});
 });
+elements.loadLlm.addEventListener("click", () => {
+  loadLlm().catch(() => {});
+});
+elements.llmGenerate.addEventListener("click", () => {
+  generateLlm().catch(() => {});
+});
+elements.llmChat.addEventListener("click", () => {
+  chatLlm().catch(() => {});
+});
 elements.detectVad.addEventListener("click", () => {
   detectVad().catch(() => {});
 });
@@ -748,6 +922,7 @@ elements.clearLog.addEventListener("click", () => {
 
 appendLog("Smoke page ready", {
   modelAssetHost: elements.assetHost.value,
+  llmModelId: elements.llmModelId.value,
   modelId: elements.modelId.value,
   sttModelId: elements.sttModelId.value,
 });
@@ -755,3 +930,4 @@ elements.sttStreamingSummary.textContent = "Streaming idle";
 setButtons({ loaded: false, busy: false });
 setSttButtons({ loaded: false, busy: false });
 setVadButtons({ loaded: false, busy: false });
+setLlmButtons({ loaded: false, busy: false });

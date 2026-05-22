@@ -11,4 +11,12 @@ mkdir -p "${DIST_WASM_DIR}"
 
 cp "${SRC_WASM_DIR}/sherpa-onnx-wasm-main-speech.js" "${DIST_WASM_DIR}/"
 
+for file in \
+  wfloat-llama-wasm.js
+do
+  if [[ -f "${SRC_WASM_DIR}/${file}" ]]; then
+    cp "${SRC_WASM_DIR}/${file}" "${DIST_WASM_DIR}/"
+  fi
+done
+
 echo "Copied sherpa speech module JS into dist/wasm"

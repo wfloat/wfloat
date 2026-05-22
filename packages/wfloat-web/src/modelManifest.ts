@@ -54,6 +54,15 @@ export type VadModelManifest = BaseModelManifest & {
   runtime?: ModelManifestRuntime;
 };
 
+export type LlmModelManifest = BaseModelManifest & {
+  context_size?: number;
+  chat_template_format?: "gguf" | "chatml";
+  files?: {
+    model?: ModelManifestFile;
+  };
+  runtime?: ModelManifestRuntime;
+};
+
 const DEFAULT_MODEL_ASSET_HOST = "https://wfloat.com";
 const MODEL_ASSET_PATH = "/api/model-assets";
 
@@ -66,6 +75,7 @@ export async function fetchModelManifest(args: {
   modelName: string;
   platform: string;
   version: string;
+  capability?: string;
   sherpaOnnxVersion?: string;
   persistentId?: string;
   modelAssetHost?: string;
@@ -74,6 +84,9 @@ export async function fetchModelManifest(args: {
   params.set("model_name", args.modelName);
   params.set("platform", args.platform);
   params.set("version", args.version);
+  if (args.capability) {
+    params.set("capability", args.capability);
+  }
   if (args.sherpaOnnxVersion) {
     params.set("sherpa_onnx_version", args.sherpaOnnxVersion);
   }
@@ -106,7 +119,7 @@ export async function fetchTtsModelManifest(args: {
   persistentId?: string;
   modelAssetHost?: string;
 }): Promise<TtsModelManifest> {
-  return (await fetchModelManifest(args)) as TtsModelManifest;
+  return (await fetchModelManifest({ ...args, capability: "tts" })) as TtsModelManifest;
 }
 
 export async function fetchSttModelManifest(args: {
@@ -117,7 +130,7 @@ export async function fetchSttModelManifest(args: {
   persistentId?: string;
   modelAssetHost?: string;
 }): Promise<SttModelManifest> {
-  return (await fetchModelManifest(args)) as SttModelManifest;
+  return (await fetchModelManifest({ ...args, capability: "stt" })) as SttModelManifest;
 }
 
 export async function fetchVadModelManifest(args: {
@@ -128,5 +141,15 @@ export async function fetchVadModelManifest(args: {
   persistentId?: string;
   modelAssetHost?: string;
 }): Promise<VadModelManifest> {
-  return (await fetchModelManifest(args)) as VadModelManifest;
+  return (await fetchModelManifest({ ...args, capability: "vad" })) as VadModelManifest;
+}
+
+export async function fetchLlmModelManifest(args: {
+  modelName: string;
+  platform: string;
+  version: string;
+  persistentId?: string;
+  modelAssetHost?: string;
+}): Promise<LlmModelManifest> {
+  return (await fetchModelManifest({ ...args, capability: "llm" })) as LlmModelManifest;
 }

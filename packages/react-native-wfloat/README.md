@@ -287,6 +287,9 @@ building voice pickers and validating user input.
   - `k2-fsa/streaming-zipformer-en` for streaming `createSession()`
 - Current React Native VAD families:
   - `silero-vad` for one-shot `detect(...)` and live `createSession()`
+- Current React Native LLM baseline:
+  - `smollm2-360m-instruct-q4_k_m` for local GGUF text generation through
+    `llama.cpp`
 - React Native currently keeps one native STT model loaded at a time. Loading
   an offline model replaces any streaming model, and loading a streaming model
   replaces any offline model.
@@ -300,6 +303,11 @@ building voice pickers and validating user input.
   enabled in the emulator's extended controls. If permission is granted but STT
   hears silence, check `Extended controls > Microphone > Virtual microphone
   uses host audio input`, then restart the emulator if needed.
+- Android Emulator LLM performance is only a rough correctness signal. Some
+  AVDs report a single CPU core, so the native llama.cpp path clamps requested
+  threads to reported hardware concurrency to avoid oversubscribing the emulator.
+  Real Android device throughput should still be tested on physical hardware
+  before making product performance decisions.
 
 ## Contributing
 

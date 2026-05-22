@@ -23,7 +23,8 @@
     "esbuild": "^0.20.0"
   },
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc && node scripts/build-worker-inline.mjs && bash scripts/copy-runtime-assets.sh"
+    "build": "node scripts/clean-dist.mjs && tsc && node scripts/build-worker-inline.mjs && bash scripts/copy-runtime-assets.sh",
+    "build:llama-wasm": "bash scripts/build-llama-wasm.sh"
   },
   "author": "",
   "license": "MIT"

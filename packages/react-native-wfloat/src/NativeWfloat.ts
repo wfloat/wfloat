@@ -35,6 +35,16 @@ export type LoadVadModelNativeOptions = {
   maxSpeechDurationSec: number;
 };
 
+export type LoadLlmModelNativeOptions = {
+  modelId: string;
+  family: string;
+  modelUrl: string;
+  contextSize: number;
+  numThreads: number;
+  gpuLayerCount: number;
+  chatTemplate: string;
+};
+
 export type GenerateNativeOptions = {
   requestId: number;
   text: string;
@@ -92,6 +102,34 @@ export type TranscribeNativeOptions = {
 export type VadDetectNativeOptions = {
   samples: number[];
   sampleRate: number;
+};
+
+export type LlmGenerateNativeOptions = {
+  requestId: number;
+  prompt: string;
+  maxTokens: number;
+  temperature: number;
+  topP: number;
+  topK: number;
+  repeatPenalty: number;
+  seed: number;
+};
+
+export type LlmChatNativeMessage = {
+  role: string;
+  content: string;
+};
+
+export type LlmChatNativeOptions = {
+  requestId: number;
+  messages: LlmChatNativeMessage[];
+  addGenerationPrompt: boolean;
+  maxTokens: number;
+  temperature: number;
+  topP: number;
+  topK: number;
+  repeatPenalty: number;
+  seed: number;
 };
 
 export type VadSessionMicrophoneNativeOptions = {
@@ -158,6 +196,11 @@ export type NativeLoadVadModelResult = {
   family: string;
 };
 
+export type NativeLoadLlmModelResult = {
+  family: string;
+  contextSize: number;
+};
+
 export type NativeVadSegment = {
   startSec: number;
   durationSec: number;
@@ -172,6 +215,15 @@ export type NativeVadDetectionResult = {
   modelId: string;
   segments: NativeVadSegment[];
   speechRatio: number;
+};
+
+export type NativeLlmGenerationResult = {
+  text: string;
+  modelId: string;
+  finishReason: string;
+  promptTokenCount: number;
+  completionTokenCount: number;
+  json: string;
 };
 
 export type NativeVadMicrophoneCaptureResult = {
@@ -241,16 +293,37 @@ export type NativeVadSpeechEndEvent = {
   segment: NativeVadSegment;
 };
 
+export type NativeLlmTokenEvent = {
+  requestId: number;
+  text: string;
+  tokenIndex: number;
+  tokenId: number;
+  isDone: boolean;
+};
+
 export interface Spec extends TurboModule {
   loadModel(options: LoadModelNativeOptions): Promise<void>;
-  loadSttModel(options: LoadSttModelNativeOptions): Promise<NativeLoadSttModelResult>;
-  loadVadModel(options: LoadVadModelNativeOptions): Promise<NativeLoadVadModelResult>;
+  loadSttModel(
+    options: LoadSttModelNativeOptions
+  ): Promise<NativeLoadSttModelResult>;
+  loadVadModel(
+    options: LoadVadModelNativeOptions
+  ): Promise<NativeLoadVadModelResult>;
+  loadLlmModel(
+    options: LoadLlmModelNativeOptions
+  ): Promise<NativeLoadLlmModelResult>;
   generate(options: GenerateNativeOptions): Promise<NativeGenerateResult>;
   generateDialogue(
     options: GenerateDialogueNativeOptions
   ): Promise<NativeGenerateResult>;
-  transcribe(options: TranscribeNativeOptions): Promise<NativeTranscriptionResult>;
+  transcribe(
+    options: TranscribeNativeOptions
+  ): Promise<NativeTranscriptionResult>;
   detectVad(options: VadDetectNativeOptions): Promise<NativeVadDetectionResult>;
+  generateLlm(
+    options: LlmGenerateNativeOptions
+  ): Promise<NativeLlmGenerationResult>;
+  chatLlm(options: LlmChatNativeOptions): Promise<NativeLlmGenerationResult>;
   startVadSessionMicrophone(
     options: VadSessionMicrophoneNativeOptions
   ): Promise<void>;
@@ -282,6 +355,7 @@ export interface Spec extends TurboModule {
   readonly onSpeechPlaybackFinished: EventEmitter<NativeSpeechPlaybackFinishedEvent>;
   readonly onVadSpeechStart: EventEmitter<NativeVadSpeechStartEvent>;
   readonly onVadSpeechEnd: EventEmitter<NativeVadSpeechEndEvent>;
+  readonly onLlmToken: EventEmitter<NativeLlmTokenEvent>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Wfloat');

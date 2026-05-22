@@ -3,15 +3,22 @@ cmake_minimum_required(VERSION 3.18)
 set(WFLOAT_CORE_PUBLIC_HEADERS
     include/wfloat-core/wfloat_common.h
     include/wfloat-core/wfloat_llm.h
-    include/wfloat-core/wfloat_stt.h
-    include/wfloat-core/wfloat_tts.h
 )
 
 set(WFLOAT_CORE_SOURCES
     src/wfloat_llm.cc
-    src/wfloat_stt.cc
-    src/wfloat_tts.cc
 )
+
+if(WFLOAT_CORE_ENABLE_SPEECH)
+    list(APPEND WFLOAT_CORE_PUBLIC_HEADERS
+        include/wfloat-core/wfloat_stt.h
+        include/wfloat-core/wfloat_tts.h
+    )
+    list(APPEND WFLOAT_CORE_SOURCES
+        src/wfloat_stt.cc
+        src/wfloat_tts.cc
+    )
+endif()
 
 add_library(wfloat-core STATIC
     ${WFLOAT_CORE_PUBLIC_HEADERS}
@@ -29,26 +36,49 @@ target_compile_features(wfloat-core-shared PUBLIC cxx_std_17)
 target_include_directories(wfloat-core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/vendor/sherpa-onnx
 )
 
 target_include_directories(wfloat-core-shared
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/vendor/sherpa-onnx
 )
 
-target_link_libraries(wfloat-core
-    PUBLIC
-        sherpa-onnx-c-api
-)
+if(WFLOAT_CORE_ENABLE_SPEECH)
+    target_include_directories(wfloat-core
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/vendor/sherpa-onnx
+    )
 
-target_link_libraries(wfloat-core-shared
-    PUBLIC
-        sherpa-onnx-c-api
-)
+    target_include_directories(wfloat-core-shared
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/vendor/sherpa-onnx
+    )
+
+    target_link_libraries(wfloat-core
+        PUBLIC
+            sherpa-onnx-c-api
+    )
+
+    target_link_libraries(wfloat-core-shared
+        PUBLIC
+            sherpa-onnx-c-api
+    )
+endif()
+
+if(WFLOAT_ENABLE_LLAMA_CPP)
+    target_compile_definitions(wfloat-core PRIVATE WFLOAT_ENABLE_LLAMA_CPP=1)
+    target_compile_definitions(wfloat-core-shared PRIVATE WFLOAT_ENABLE_LLAMA_CPP=1)
+
+    target_link_libraries(wfloat-core
+        PUBLIC
+            llama
+    )
+
+    target_link_libraries(wfloat-core-shared
+        PUBLIC
+            llama
+    )
+endif()
 
 set_target_properties(wfloat-core PROPERTIES
     POSITION_INDEPENDENT_CODE ON

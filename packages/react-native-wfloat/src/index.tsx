@@ -1,6 +1,7 @@
 export { TtsModel, loadTtsModel } from './tts/model';
 export { SttModel, SttSession, loadSttModel } from './stt/model';
 export { VadModel, VadSession, loadVadModel } from './vad/model';
+export { LlmModel, loadLlmModel } from './llm/model';
 export type {
   AudioResult,
   LoadModelProgressEvent,
@@ -37,4 +38,14 @@ export type {
   VadSessionOptions,
   VadSpeechStartEvent,
 } from './vad/types';
+export type {
+  LlmChatMessage,
+  LlmChatOptions,
+  LlmChatRole,
+  LlmGenerateOptions,
+  LlmGenerationOptions,
+  LlmGenerationResult,
+  LlmTokenEvent,
+  LoadLlmModelOptions,
+} from './llm/types';
 export { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from './tts/catalog';

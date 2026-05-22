@@ -136,6 +136,16 @@ class StreamingTranscriptionResult:
 
 
 @dataclass
+class LlmGenerationResult:
+    text: str
+    model_id: str
+    finish_reason: str = ""
+    json: str = ""
+    prompt_token_count: int = 0
+    completion_token_count: int = 0
+
+
+@dataclass
 class VadSegment:
     start_sec: float
     duration_sec: float

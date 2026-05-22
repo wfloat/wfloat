@@ -48,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 import kotlin.math.abs
 import kotlin.math.sqrt
+import org.json.JSONObject
 
 private const val DEFAULT_INTENSITY = 0.5
 private const val DEFAULT_SPEED = 1.0
@@ -145,6 +146,11 @@ private data class VadFileSet(
   val model: String,
 )
 
+private data class LlmChatMessage(
+  val role: String,
+  val content: String,
+)
+
 private data class SttMicrophoneRecordingState(
   val audioRecord: AudioRecord,
   val running: AtomicBoolean,
@@ -194,6 +200,52 @@ private data class VadMicrophoneState(
 private enum class GenerationOutcome {
   COMPLETED,
   CANCELLED,
+}
+
+private object WfloatLlmNative {
+  init {
+    System.loadLibrary("wfloat-llm-jni")
+  }
+
+  external fun load(
+    modelId: String,
+    family: String,
+    modelPath: String,
+    chatTemplate: String,
+    contextSize: Int,
+    numThreads: Int,
+    gpuLayerCount: Int,
+  ): Long
+
+  external fun destroy(handle: Long)
+
+  external fun generate(
+    handle: Long,
+    requestId: Int,
+    prompt: String,
+    maxTokens: Int,
+    temperature: Float,
+    topP: Float,
+    topK: Int,
+    repeatPenalty: Float,
+    seed: Int,
+    callbackTarget: WfloatModule,
+  ): String
+
+  external fun chat(
+    handle: Long,
+    requestId: Int,
+    roles: Array<String>,
+    contents: Array<String>,
+    addGenerationPrompt: Boolean,
+    maxTokens: Int,
+    temperature: Float,
+    topP: Float,
+    topK: Int,
+    repeatPenalty: Float,
+    seed: Int,
+    callbackTarget: WfloatModule,
+  ): String
 }
 
 @ReactModule(name = WfloatModule.NAME)
@@ -247,6 +299,18 @@ class WfloatModule(reactContext: ReactApplicationContext) :
   @Volatile
   private var loadedVadFamily: String? = null
 
+  @Volatile
+  private var llmHandle: Long = 0
+
+  @Volatile
+  private var loadedLlmModelId: String? = null
+
+  @Volatile
+  private var loadedLlmFamily: String? = null
+
+  @Volatile
+  private var loadedLlmContextSize: Int = 0
+
   private val sttSessions = LinkedHashMap<Int, OnlineStream>()
   private var nextSttSessionId = 1
   private var sttMicrophoneRecording: SttMicrophoneRecordingState? = null
@@ -279,6 +343,7 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       vad = null
       loadedVadModelId = null
       loadedVadFamily = null
+      destroyLlmLocked()
     }
 
     workQueue.shutdownNow()
@@ -701,6 +766,91 @@ class WfloatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  override fun loadLlmModel(options: ReadableMap, promise: Promise) {
+    val modelId: String
+    val family: String
+    val modelUrl: String
+    val contextSize: Int
+    val numThreads: Int
+    val gpuLayerCount: Int
+    val chatTemplate: String
+
+    try {
+      modelId = readRequiredString(options, "modelId")
+      family = readRequiredString(options, "family")
+      modelUrl = readRequiredString(options, "modelUrl")
+      contextSize = readRequiredPositiveInt(options, "contextSize")
+      numThreads = readRequiredPositiveInt(options, "numThreads")
+      gpuLayerCount = readRequiredNonNegativeInt(options, "gpuLayerCount")
+      chatTemplate = readString(options, "chatTemplate") ?: ""
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    if (modelId.isBlank() || family.isBlank() || modelUrl.isBlank()) {
+      promise.reject("invalid_arguments", "modelId, family, and modelUrl are required.")
+      return
+    }
+
+    synchronized(stateLock) {
+      if (loadModelInProgress) {
+        promise.reject("load_in_progress", "A loadModel operation is already in progress.")
+        return
+      }
+      loadModelInProgress = true
+    }
+
+    workQueue.execute {
+      try {
+        val modelDirectory = cacheDirectoryForModelId(modelId)
+        ensureDirectoryExists(modelDirectory)
+        val modelFileName = requireFileNameFromUrl(modelUrl)
+        val modelPath = File(modelDirectory, modelFileName)
+
+        if (!modelPath.exists()) {
+          emitLoadModelProgress("downloading", 0.0)
+          downloadFile(modelUrl, modelPath) { phaseProgress ->
+            emitLoadModelProgress("downloading", phaseProgress)
+          }
+        }
+
+        emitLoadModelProgress("loading", null)
+        val newHandle = WfloatLlmNative.load(
+          modelId = modelId,
+          family = family,
+          modelPath = modelPath.absolutePath,
+          chatTemplate = chatTemplate,
+          contextSize = contextSize,
+          numThreads = numThreads,
+          gpuLayerCount = gpuLayerCount,
+        )
+
+        synchronized(stateLock) {
+          destroyLlmLocked()
+          llmHandle = newHandle
+          loadedLlmModelId = modelId
+          loadedLlmFamily = family
+          loadedLlmContextSize = contextSize
+        }
+
+        emitLoadModelProgress("completed", null)
+        promise.resolve(
+          Arguments.createMap().apply {
+            putString("family", family)
+            putDouble("contextSize", contextSize.toDouble())
+          }
+        )
+      } catch (error: Throwable) {
+        promise.reject(loadModelErrorCode(error), error.message ?: "Failed to load LLM model.", error)
+      } finally {
+        synchronized(stateLock) {
+          loadModelInProgress = false
+        }
+      }
+    }
+  }
+
   override fun detectVad(options: ReadableMap, promise: Promise) {
     val currentVad = vad
     val modelId = loadedVadModelId
@@ -767,6 +917,115 @@ class WfloatModule(reactContext: ReactApplicationContext) :
         )
       } catch (error: Throwable) {
         promise.reject("vad_failed", error.message ?: "Failed to run VAD.", error)
+      }
+    }
+  }
+
+  override fun generateLlm(options: ReadableMap, promise: Promise) {
+    val handle = llmHandle
+    if (handle == 0L || loadedLlmModelId == null) {
+      promise.reject("not_loaded", "LLM model is not loaded. Call loadLlmModel(...) first.")
+      return
+    }
+
+    val requestId: Int
+    val prompt: String
+    val maxTokens: Int
+    val temperature: Float
+    val topP: Float
+    val topK: Int
+    val repeatPenalty: Float
+    val seed: Int
+
+    try {
+      requestId = readRequiredNonNegativeInt(options, "requestId")
+      prompt = readRequiredString(options, "prompt")
+      maxTokens = readRequiredPositiveInt(options, "maxTokens")
+      temperature = readFiniteFloat(options, "temperature", 0.8f)
+      topP = readFiniteFloat(options, "topP", 0.95f)
+      topK = readRequiredPositiveInt(options, "topK")
+      repeatPenalty = readFiniteFloat(options, "repeatPenalty", 1.0f)
+      seed = readRequiredNonNegativeInt(options, "seed")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        val resultJson = WfloatLlmNative.generate(
+          handle = handle,
+          requestId = requestId,
+          prompt = prompt,
+          maxTokens = maxTokens,
+          temperature = temperature,
+          topP = topP,
+          topK = topK,
+          repeatPenalty = repeatPenalty,
+          seed = seed,
+          callbackTarget = this,
+        )
+        promise.resolve(buildLlmGenerationResultMap(resultJson))
+      } catch (error: Throwable) {
+        promise.reject("generate_failed", error.message ?: "LLM generate failed.", error)
+      }
+    }
+  }
+
+  override fun chatLlm(options: ReadableMap, promise: Promise) {
+    val handle = llmHandle
+    if (handle == 0L || loadedLlmModelId == null) {
+      promise.reject("not_loaded", "LLM model is not loaded. Call loadLlmModel(...) first.")
+      return
+    }
+
+    val requestId: Int
+    val messages: List<LlmChatMessage>
+    val addGenerationPrompt: Boolean
+    val maxTokens: Int
+    val temperature: Float
+    val topP: Float
+    val topK: Int
+    val repeatPenalty: Float
+    val seed: Int
+
+    try {
+      requestId = readRequiredNonNegativeInt(options, "requestId")
+      messages = readLlmChatMessages(options)
+      addGenerationPrompt =
+        !options.hasKey("addGenerationPrompt") ||
+          options.isNull("addGenerationPrompt") ||
+          options.getBoolean("addGenerationPrompt")
+      maxTokens = readRequiredPositiveInt(options, "maxTokens")
+      temperature = readFiniteFloat(options, "temperature", 0.8f)
+      topP = readFiniteFloat(options, "topP", 0.95f)
+      topK = readRequiredPositiveInt(options, "topK")
+      repeatPenalty = readFiniteFloat(options, "repeatPenalty", 1.0f)
+      seed = readRequiredNonNegativeInt(options, "seed")
+    } catch (error: IllegalArgumentException) {
+      promise.reject("invalid_arguments", error.message, error)
+      return
+    }
+
+    workQueue.execute {
+      try {
+        val resultJson = WfloatLlmNative.chat(
+          handle = handle,
+          requestId = requestId,
+          roles = messages.map { it.role }.toTypedArray(),
+          contents = messages.map { it.content }.toTypedArray(),
+          addGenerationPrompt = addGenerationPrompt,
+          maxTokens = maxTokens,
+          temperature = temperature,
+          topP = topP,
+          topK = topK,
+          repeatPenalty = repeatPenalty,
+          seed = seed,
+          callbackTarget = this,
+        )
+        promise.resolve(buildLlmGenerationResultMap(resultJson))
+      } catch (error: Throwable) {
+        promise.reject("chat_failed", error.message ?: "LLM chat failed.", error)
       }
     }
   }
@@ -2681,6 +2940,65 @@ class WfloatModule(reactContext: ReactApplicationContext) :
       putMap("segment", segment)
     }
     emitOnVadSpeechEnd(event)
+  }
+
+  @Suppress("unused")
+  fun emitLlmTokenFromNative(
+    requestId: Int,
+    text: String,
+    tokenIndex: Int,
+    tokenId: Int,
+    isDone: Boolean,
+  ) {
+    val event = Arguments.createMap().apply {
+      putDouble("requestId", requestId.toDouble())
+      putString("text", text)
+      putDouble("tokenIndex", tokenIndex.toDouble())
+      putDouble("tokenId", tokenId.toDouble())
+      putBoolean("isDone", isDone)
+    }
+    emitOnLlmToken(event)
+  }
+
+  private fun destroyLlmLocked() {
+    if (llmHandle != 0L) {
+      WfloatLlmNative.destroy(llmHandle)
+      llmHandle = 0
+    }
+    loadedLlmModelId = null
+    loadedLlmFamily = null
+    loadedLlmContextSize = 0
+  }
+
+  private fun buildLlmGenerationResultMap(resultJson: String): ReadableMap {
+    val json = JSONObject(resultJson)
+    return Arguments.createMap().apply {
+      putString("text", json.optString("text", ""))
+      putString("modelId", json.optString("modelId", loadedLlmModelId ?: ""))
+      putString("finishReason", json.optString("finishReason", ""))
+      putDouble("promptTokenCount", json.optInt("promptTokenCount", 0).toDouble())
+      putDouble("completionTokenCount", json.optInt("completionTokenCount", 0).toDouble())
+      putString("json", json.optString("json", ""))
+    }
+  }
+
+  private fun readLlmChatMessages(options: ReadableMap): List<LlmChatMessage> {
+    val array = readRequiredArray(options, "messages")
+    if (array.size() <= 0) {
+      throw IllegalArgumentException("messages must contain at least one chat message.")
+    }
+
+    return (0 until array.size()).map { index ->
+      val message = array.getMap(index)
+      val role = readRequiredString(message, "role").trim()
+      val content = readRequiredString(message, "content")
+
+      if (role.isBlank()) {
+        throw IllegalArgumentException("messages[$index].role is required.")
+      }
+
+      LlmChatMessage(role = role, content = content)
+    }
   }
 
   companion object {

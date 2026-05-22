@@ -5,7 +5,9 @@
 #import <CommonCrypto/CommonDigest.h>
 #import <math.h>
 #import <sherpa-onnx/c-api/c-api.h>
+#import <wfloat-core/wfloat_llm.h>
 #import <string.h>
+#include <string>
 #include <vector>
 
 typedef NS_ENUM(NSInteger, WfloatLoadModelDownloadPhase) {
@@ -17,6 +19,16 @@ typedef NS_ENUM(NSInteger, WfloatLoadModelDownloadPhase) {
 
 static NSString *const WfloatErrorDomain = @"WfloatErrorDomain";
 static NSString *const WfloatReadyMarkerFileName = @".ready";
+
+@class Wfloat;
+
+@interface Wfloat (LlmTokenEmitter)
+- (void)emitLlmTokenWithRequestId:(NSInteger)requestId
+                              text:(NSString *)text
+                        tokenIndex:(NSInteger)tokenIndex
+                           tokenId:(NSInteger)tokenId
+                            isDone:(BOOL)isDone;
+@end
 
 typedef NS_ENUM(NSInteger, WfloatGenerateResult) {
   WfloatGenerateResultCompleted = 0,
@@ -75,6 +87,89 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
   return (double)frameCount / (double)sampleRate;
 }
 
+static NSString *WfloatStringFromCString(const char *value) {
+  return value ? [NSString stringWithUTF8String:value] : @"";
+}
+
+static NSString *WfloatLlmErrorMessage(wfloat_status_t status, NSString *operation) {
+  switch (status) {
+    case WFLOAT_STATUS_INVALID_ARGUMENT:
+      return [NSString stringWithFormat:@"%@ failed because the input was invalid.", operation];
+    case WFLOAT_STATUS_NOT_SUPPORTED:
+      return [NSString stringWithFormat:@"%@ is not supported by this build.", operation];
+    case WFLOAT_STATUS_CANCELLED:
+      return [NSString stringWithFormat:@"%@ was cancelled.", operation];
+    case WFLOAT_STATUS_BACKEND_ERROR:
+      return [NSString stringWithFormat:@"%@ failed in the llama.cpp backend.", operation];
+    case WFLOAT_STATUS_INTERNAL_ERROR:
+      return [NSString stringWithFormat:@"%@ failed because of an internal error.", operation];
+    case WFLOAT_STATUS_OK:
+    default:
+      return [NSString stringWithFormat:@"%@ failed.", operation];
+  }
+}
+
+static wfloat_llm_family_t WfloatLlmFamilyFromString(NSString *family) {
+  NSString *normalizedFamily = [[family lowercaseString] stringByReplacingOccurrencesOfString:@"_"
+                                                                                   withString:@"-"];
+  if ([normalizedFamily isEqualToString:@"llama"]) {
+    return WFLOAT_LLM_FAMILY_LLAMA;
+  }
+  if ([normalizedFamily isEqualToString:@"qwen"]) {
+    return WFLOAT_LLM_FAMILY_QWEN;
+  }
+  if ([normalizedFamily isEqualToString:@"smollm"] || [normalizedFamily isEqualToString:@"smol-lm"]) {
+    return WFLOAT_LLM_FAMILY_SMOLLM;
+  }
+  if ([normalizedFamily isEqualToString:@"gemma"]) {
+    return WFLOAT_LLM_FAMILY_GEMMA;
+  }
+  if ([normalizedFamily isEqualToString:@"mistral"]) {
+    return WFLOAT_LLM_FAMILY_MISTRAL;
+  }
+  if ([normalizedFamily isEqualToString:@"phi"]) {
+    return WFLOAT_LLM_FAMILY_PHI;
+  }
+  if ([normalizedFamily isEqualToString:@"liquid"]) {
+    return WFLOAT_LLM_FAMILY_LIQUID;
+  }
+
+  return WFLOAT_LLM_FAMILY_UNKNOWN;
+}
+
+struct WfloatLlmTokenCallbackContext {
+  __unsafe_unretained Wfloat *module;
+  NSInteger requestId;
+};
+
+static int32_t WfloatLlmTokenCallback(const wfloat_llm_token_event_t *event, void *userData) {
+  if (!event || !userData) {
+    return 0;
+  }
+
+  WfloatLlmTokenCallbackContext *context =
+      reinterpret_cast<WfloatLlmTokenCallbackContext *>(userData);
+  Wfloat *module = context->module;
+  if (!module) {
+    return 0;
+  }
+
+  NSString *text = WfloatStringFromCString(event->text);
+  NSInteger requestId = context->requestId;
+  int32_t tokenIndex = event->token_index;
+  int32_t tokenId = event->token_id;
+  BOOL isDone = event->is_done != 0;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [module emitLlmTokenWithRequestId:requestId
+                                 text:text
+                           tokenIndex:tokenIndex
+                              tokenId:tokenId
+                               isDone:isDone];
+  });
+
+  return 0;
+}
+
 @interface Wfloat () <NSURLSessionDownloadDelegate, AVAudioRecorderDelegate> {
   std::vector<float> _vadMicrophonePendingSamples;
 }
@@ -82,6 +177,7 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 @property (nonatomic, assign) const SherpaOnnxOfflineRecognizer *offlineRecognizer;
 @property (nonatomic, assign) const SherpaOnnxOnlineRecognizer *onlineRecognizer;
 @property (nonatomic, assign) const SherpaOnnxVoiceActivityDetector *vad;
+@property (nonatomic, assign) wfloat_llm_model_t *llm;
 @property (nonatomic, copy) NSString *loadedModelPath;
 @property (nonatomic, copy) NSString *loadedTokensPath;
 @property (nonatomic, copy) NSString *loadedDataDir;
@@ -89,6 +185,10 @@ static double WfloatFramesToSeconds(AVAudioFramePosition frameCount, int32_t sam
 @property (nonatomic, copy) NSString *loadedSttFamily;
 @property (nonatomic, copy) NSString *loadedVadModelId;
 @property (nonatomic, copy) NSString *loadedVadFamily;
+@property (nonatomic, copy) NSString *loadedLlmModelId;
+@property (nonatomic, copy) NSString *loadedLlmFamily;
+@property (nonatomic, copy) NSString *loadedLlmModelPath;
+@property (nonatomic, assign) int32_t loadedLlmContextSize;
 @property (strong, nonatomic) NSURLSession *loadModelSession;
 @property (nonatomic, copy) RCTPromiseResolveBlock loadModelResolve;
 @property (nonatomic, copy) RCTPromiseRejectBlock loadModelReject;
@@ -193,6 +293,11 @@ RCT_EXPORT_MODULE()
   if (self.vad) {
     SherpaOnnxDestroyVoiceActivityDetector(self.vad);
     self.vad = nil;
+  }
+
+  if (self.llm) {
+    wfloat_llm_model_destroy(self.llm);
+    self.llm = nil;
   }
 
   [self.loadModelSession invalidateAndCancel];
@@ -324,6 +429,28 @@ RCT_EXPORT_MODULE()
   [self emitOnSpeechPlaybackFinished:@{@"requestId" : @(requestId)}];
 #else
   (void)requestId;
+#endif
+}
+
+- (void)emitLlmTokenWithRequestId:(NSInteger)requestId
+                              text:(NSString *)text
+                        tokenIndex:(NSInteger)tokenIndex
+                           tokenId:(NSInteger)tokenId
+                            isDone:(BOOL)isDone {
+#ifdef RCT_NEW_ARCH_ENABLED
+  [self emitOnLlmToken:@{
+    @"requestId" : @(requestId),
+    @"text" : text ?: @"",
+    @"tokenIndex" : @(tokenIndex),
+    @"tokenId" : @(tokenId),
+    @"isDone" : @(isDone),
+  }];
+#else
+  (void)requestId;
+  (void)text;
+  (void)tokenIndex;
+  (void)tokenId;
+  (void)isDone;
 #endif
 }
 
@@ -2418,6 +2545,323 @@ RCT_EXPORT_MODULE()
           ? @(MIN((double)speechSampleCount / (double)samples.size(), 1.0))
           : @0,
     };
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      resolve(payload);
+    });
+  });
+}
+
+- (void)loadLlmModel:(JS::NativeWfloat::LoadLlmModelNativeOptions &)options
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  NSString *modelId = [options.modelId() copy];
+  NSString *family = [options.family() copy];
+  NSString *modelURL = [options.modelUrl() copy];
+  NSString *chatTemplate = [options.chatTemplate() copy];
+  double contextSizeValue = options.contextSize();
+  double numThreadsValue = options.numThreads();
+  double gpuLayerCountValue = options.gpuLayerCount();
+
+  if (modelId.length == 0 || modelURL.length == 0) {
+    reject(@"invalid_arguments", @"modelId and modelUrl are required.", nil);
+    return;
+  }
+
+  wfloat_llm_family_t llmFamily = WfloatLlmFamilyFromString(family);
+  if (llmFamily == WFLOAT_LLM_FAMILY_UNKNOWN) {
+    reject(@"unsupported_family",
+           [NSString stringWithFormat:@"Unsupported LLM family: %@", family ?: @""],
+           nil);
+    return;
+  }
+
+  int32_t contextSize = isfinite(contextSizeValue) && contextSizeValue > 0
+      ? (int32_t)contextSizeValue
+      : 2048;
+  int32_t numThreads = isfinite(numThreadsValue) && numThreadsValue > 0
+      ? (int32_t)numThreadsValue
+      : 1;
+  int32_t gpuLayerCount = isfinite(gpuLayerCountValue) && gpuLayerCountValue > 0
+      ? (int32_t)gpuLayerCountValue
+      : 0;
+
+  NSError *filenameError = nil;
+  NSString *fileName = [self fileNameFromURLString:modelURL error:&filenameError];
+  if (fileName.length == 0) {
+    reject(@"invalid_arguments",
+           filenameError.localizedDescription ?: @"Invalid LLM model asset URL.",
+           filenameError);
+    return;
+  }
+
+  NSString *modelDirectory = [self cacheDirectoryForModelId:modelId];
+  NSString *modelPath = [modelDirectory stringByAppendingPathComponent:fileName];
+
+  [self emitLoadModelProgressWithStatus:@"downloading" progress:@1];
+  dispatch_async(self.workQueue, ^{
+    NSError *downloadError = nil;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:modelPath] &&
+        ![self downloadURLString:modelURL toPath:modelPath error:&downloadError]) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"download_failed",
+               downloadError.localizedDescription ?: @"Failed to download LLM model asset.",
+               downloadError);
+      });
+      return;
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self emitLoadModelProgressWithStatus:@"loading" progress:nil];
+    });
+
+    wfloat_llm_model_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.model_id = modelId.UTF8String;
+    config.family = llmFamily;
+    config.model_path = modelPath.UTF8String;
+    config.chat_template = chatTemplate.length > 0 ? chatTemplate.UTF8String : nullptr;
+    config.provider = "cpu";
+    config.context_size = contextSize;
+    config.num_threads = numThreads;
+    config.gpu_layer_count = gpuLayerCount;
+    config.seed = 0;
+
+    wfloat_llm_model_t *newModel = nullptr;
+    wfloat_status_t status = wfloat_llm_model_create(&config, &newModel);
+    if (status != WFLOAT_STATUS_OK || !newModel) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"load_failed", WfloatLlmErrorMessage(status, @"LLM model load"), nil);
+      });
+      return;
+    }
+
+    wfloat_llm_model_info_t info;
+    memset(&info, 0, sizeof(info));
+    status = wfloat_llm_model_get_info(newModel, &info);
+    if (status != WFLOAT_STATUS_OK) {
+      wfloat_llm_model_destroy(newModel);
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"load_failed", WfloatLlmErrorMessage(status, @"LLM model load"), nil);
+      });
+      return;
+    }
+
+    if (self.llm) {
+      wfloat_llm_model_destroy(self.llm);
+    }
+    self.llm = newModel;
+    self.loadedLlmModelId = modelId;
+    self.loadedLlmFamily = WfloatStringFromCString(info.family);
+    self.loadedLlmModelPath = modelPath;
+    self.loadedLlmContextSize = info.context_size;
+
+    NSDictionary *payload = @{
+      @"family" : self.loadedLlmFamily ?: family ?: @"",
+      @"contextSize" : @(info.context_size),
+    };
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self emitLoadModelProgressWithStatus:@"completed" progress:nil];
+      resolve(payload);
+    });
+  });
+}
+
+- (void)generateLlm:(JS::NativeWfloat::LlmGenerateNativeOptions &)options
+            resolve:(RCTPromiseResolveBlock)resolve
+             reject:(RCTPromiseRejectBlock)reject {
+  if (!self.llm || self.loadedLlmModelId.length == 0) {
+    reject(@"not_loaded", @"LLM model is not loaded. Call loadLlmModel(...) first.", nil);
+    return;
+  }
+
+  double requestIdValue = options.requestId();
+  NSString *prompt = [options.prompt() copy];
+  if (!isfinite(requestIdValue) || requestIdValue < 0 || floor(requestIdValue) != requestIdValue) {
+    reject(@"invalid_arguments", @"requestId must be a non-negative integer.", nil);
+    return;
+  }
+  if (prompt.length == 0) {
+    reject(@"invalid_arguments", @"prompt is required.", nil);
+    return;
+  }
+
+  NSInteger requestId = (NSInteger)requestIdValue;
+  int32_t maxTokens = (int32_t)options.maxTokens();
+  float temperature = (float)options.temperature();
+  float topP = (float)options.topP();
+  int32_t topK = (int32_t)options.topK();
+  float repeatPenalty = (float)options.repeatPenalty();
+  int32_t seed = (int32_t)options.seed();
+
+  dispatch_async(self.workQueue, ^{
+    wfloat_llm_generate_options_t generateOptions;
+    memset(&generateOptions, 0, sizeof(generateOptions));
+    generateOptions.prompt = prompt.UTF8String;
+    generateOptions.max_tokens = maxTokens;
+    generateOptions.temperature = temperature;
+    generateOptions.top_p = topP;
+    generateOptions.top_k = topK;
+    generateOptions.repeat_penalty = repeatPenalty;
+    generateOptions.seed = seed;
+
+    WfloatLlmTokenCallbackContext callbackContext;
+    callbackContext.module = self;
+    callbackContext.requestId = requestId;
+
+    wfloat_llm_generate_result_t *result = nullptr;
+    wfloat_status_t status = wfloat_llm_model_generate(
+        self.llm, &generateOptions, WfloatLlmTokenCallback, &callbackContext, &result);
+    if (status != WFLOAT_STATUS_OK || !result) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"generate_failed", WfloatLlmErrorMessage(status, @"LLM generate"), nil);
+      });
+      return;
+    }
+
+    NSDictionary *payload = @{
+      @"text" : WfloatStringFromCString(result->text),
+      @"modelId" : WfloatStringFromCString(result->model_id),
+      @"finishReason" : WfloatStringFromCString(result->finish_reason),
+      @"promptTokenCount" : @(result->prompt_token_count),
+      @"completionTokenCount" : @(result->completion_token_count),
+      @"json" : WfloatStringFromCString(result->json),
+    };
+    wfloat_llm_generate_result_destroy(result);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      resolve(payload);
+    });
+  });
+}
+
+- (void)chatLlm:(JS::NativeWfloat::LlmChatNativeOptions &)options
+        resolve:(RCTPromiseResolveBlock)resolve
+         reject:(RCTPromiseRejectBlock)reject {
+  if (!self.llm || self.loadedLlmModelId.length == 0) {
+    reject(@"not_loaded", @"LLM model is not loaded. Call loadLlmModel(...) first.", nil);
+    return;
+  }
+
+  double requestIdValue = options.requestId();
+  if (!isfinite(requestIdValue) || requestIdValue < 0 || floor(requestIdValue) != requestIdValue) {
+    reject(@"invalid_arguments", @"requestId must be a non-negative integer.", nil);
+    return;
+  }
+
+  auto nativeMessages = options.messages();
+  if (nativeMessages.empty()) {
+    reject(@"invalid_arguments", @"messages is required.", nil);
+    return;
+  }
+
+  NSMutableArray<NSDictionary<NSString *, NSString *> *> *messagePayloads =
+      [NSMutableArray arrayWithCapacity:(NSUInteger)nativeMessages.size()];
+
+  for (facebook::react::LazyVector<JS::NativeWfloat::LlmChatNativeMessage>::size_type index = 0;
+       index < nativeMessages.size();
+       index += 1) {
+    JS::NativeWfloat::LlmChatNativeMessage nativeMessage = nativeMessages[index];
+    NSString *role = nativeMessage.role();
+    NSString *content = nativeMessage.content();
+    if (role.length == 0) {
+      reject(@"invalid_arguments",
+             [NSString stringWithFormat:@"messages[%d].role is required.", index],
+             nil);
+      return;
+    }
+
+    [messagePayloads addObject:@{
+      @"role" : role,
+      @"content" : content ?: @"",
+    }];
+  }
+
+  NSInteger requestId = (NSInteger)requestIdValue;
+  bool addGenerationPrompt = options.addGenerationPrompt();
+  int32_t maxTokens = (int32_t)options.maxTokens();
+  float temperature = (float)options.temperature();
+  float topP = (float)options.topP();
+  int32_t topK = (int32_t)options.topK();
+  float repeatPenalty = (float)options.repeatPenalty();
+  int32_t seed = (int32_t)options.seed();
+
+  dispatch_async(self.workQueue, ^{
+    std::vector<std::string> roles;
+    std::vector<std::string> contents;
+    std::vector<wfloat_llm_chat_message_t> messages;
+    roles.reserve(messagePayloads.count);
+    contents.reserve(messagePayloads.count);
+    messages.reserve(messagePayloads.count);
+
+    for (NSDictionary<NSString *, NSString *> *messagePayload in messagePayloads) {
+      roles.push_back(messagePayload[@"role"].UTF8String);
+      contents.push_back(messagePayload[@"content"].UTF8String);
+    }
+
+    for (size_t index = 0; index < roles.size(); index += 1) {
+      wfloat_llm_chat_message_t message;
+      memset(&message, 0, sizeof(message));
+      message.role = roles[index].c_str();
+      message.content = contents[index].c_str();
+      messages.push_back(message);
+    }
+
+    wfloat_llm_chat_template_options_t templateOptions;
+    memset(&templateOptions, 0, sizeof(templateOptions));
+    templateOptions.messages = messages.data();
+    templateOptions.message_count = messages.size();
+    templateOptions.add_generation_prompt = addGenerationPrompt ? 1 : 0;
+
+    wfloat_llm_chat_template_result_t *templateResult = nullptr;
+    wfloat_status_t status =
+        wfloat_llm_model_format_chat(self.llm, &templateOptions, &templateResult);
+    if (status != WFLOAT_STATUS_OK || !templateResult || !templateResult->prompt) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"chat_template_failed",
+               WfloatLlmErrorMessage(status, @"LLM chat formatting"),
+               nil);
+      });
+      return;
+    }
+
+    std::string prompt(templateResult->prompt);
+    wfloat_llm_chat_template_result_destroy(templateResult);
+
+    wfloat_llm_generate_options_t generateOptions;
+    memset(&generateOptions, 0, sizeof(generateOptions));
+    generateOptions.prompt = prompt.c_str();
+    generateOptions.max_tokens = maxTokens;
+    generateOptions.temperature = temperature;
+    generateOptions.top_p = topP;
+    generateOptions.top_k = topK;
+    generateOptions.repeat_penalty = repeatPenalty;
+    generateOptions.seed = seed;
+
+    WfloatLlmTokenCallbackContext callbackContext;
+    callbackContext.module = self;
+    callbackContext.requestId = requestId;
+
+    wfloat_llm_generate_result_t *result = nullptr;
+    status = wfloat_llm_model_generate(
+        self.llm, &generateOptions, WfloatLlmTokenCallback, &callbackContext, &result);
+    if (status != WFLOAT_STATUS_OK || !result) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        reject(@"chat_failed", WfloatLlmErrorMessage(status, @"LLM chat"), nil);
+      });
+      return;
+    }
+
+    NSDictionary *payload = @{
+      @"text" : WfloatStringFromCString(result->text),
+      @"modelId" : WfloatStringFromCString(result->model_id),
+      @"finishReason" : WfloatStringFromCString(result->finish_reason),
+      @"promptTokenCount" : @(result->prompt_token_count),
+      @"completionTokenCount" : @(result->completion_token_count),
+      @"json" : WfloatStringFromCString(result->json),
+    };
+    wfloat_llm_generate_result_destroy(result);
 
     dispatch_async(dispatch_get_main_queue(), ^{
       resolve(payload);

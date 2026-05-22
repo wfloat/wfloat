@@ -13,9 +13,11 @@ import {
 import {
   SPEAKER_IDS,
   VALID_EMOTIONS,
+  loadLlmModel,
   loadSttModel,
   loadTtsModel,
   loadVadModel,
+  type LlmModel,
   type LoadModelProgressEvent,
   type StreamingTranscriptionResult,
   type SttMicrophoneRecording,
@@ -41,6 +43,10 @@ const DEFAULT_TTS_MODEL_ID = 'wfloat/wfloat-tts';
 const DEFAULT_OFFLINE_STT_MODEL_ID = 'openai/whisper-tiny-en';
 const DEFAULT_STREAMING_STT_MODEL_ID = 'k2-fsa/streaming-zipformer-en';
 const DEFAULT_VAD_MODEL_ID = 'silero-vad';
+const DEFAULT_LLM_MODEL_ID = 'smollm2-360m-instruct-q4_k_m';
+const DEFAULT_LLM_PROMPT = 'Write one friendly sentence about local-first AI.';
+const DEFAULT_LLM_MAX_TOKENS = '64';
+const DEFAULT_LLM_TEMPERATURE = '0.7';
 const DEFAULT_TEXT =
   'Wfloat on React Native is now generating speech directly on device.';
 const DEFAULT_VOICE_ID = 'narrator_woman';
@@ -117,8 +123,9 @@ export default function App() {
   const [emotion, setEmotion] = useState<TtsEmotion>(DEFAULT_EMOTION);
   const [intensity, setIntensity] = useState(DEFAULT_INTENSITY);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
-  const [silencePaddingSec, setSilencePaddingSec] =
-    useState(DEFAULT_SILENCE_PADDING);
+  const [silencePaddingSec, setSilencePaddingSec] = useState(
+    DEFAULT_SILENCE_PADDING
+  );
   const [ttsLoadProgress, setTtsLoadProgress] =
     useState<LoadModelProgressEvent | null>(null);
   const [ttsProgressEvent, setTtsProgressEvent] =
@@ -128,7 +135,8 @@ export default function App() {
     DEFAULT_OFFLINE_STT_MODEL_ID
   );
   const [offlineSttModel, setOfflineSttModel] = useState<SttModel | null>(null);
-  const [offlineSttStatus, setOfflineSttStatus] = useState<ExampleStatus>('idle');
+  const [offlineSttStatus, setOfflineSttStatus] =
+    useState<ExampleStatus>('idle');
   const [offlineSttLoadProgress, setOfflineSttLoadProgress] =
     useState<LoadModelProgressEvent | null>(null);
   const [offlineTranscript, setOfflineTranscript] = useState('');
@@ -165,7 +173,20 @@ export default function App() {
     useState<LoadModelProgressEvent | null>(null);
   const [vadSummary, setVadSummary] = useState('No VAD result yet.');
   const [vadLiveRecording, setVadLiveRecording] = useState(false);
-  const [vadLiveSummary, setVadLiveSummary] = useState('Live VAD has not started.');
+  const [vadLiveSummary, setVadLiveSummary] = useState(
+    'Live VAD has not started.'
+  );
+
+  const [llmModelId, setLlmModelId] = useState(DEFAULT_LLM_MODEL_ID);
+  const [llmModel, setLlmModel] = useState<LlmModel | null>(null);
+  const [llmStatus, setLlmStatus] = useState<ExampleStatus>('idle');
+  const [llmPrompt, setLlmPrompt] = useState(DEFAULT_LLM_PROMPT);
+  const [llmMaxTokens, setLlmMaxTokens] = useState(DEFAULT_LLM_MAX_TOKENS);
+  const [llmTemperature, setLlmTemperature] = useState(DEFAULT_LLM_TEMPERATURE);
+  const [llmOutput, setLlmOutput] = useState('');
+  const [llmSummary, setLlmSummary] = useState('Idle');
+  const [llmTiming, setLlmTiming] = useState('No generation yet.');
+  const [llmProgressPercent, setLlmProgressPercent] = useState(0);
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const streamingSessionRef = useRef<SttSession | null>(null);
@@ -207,6 +228,16 @@ export default function App() {
     : offlineRecordedClip
       ? `${(offlineRecordedClip.durationMs / 1000).toFixed(1)}s`
       : 'none';
+  const llmMaxTokenCount = Math.max(
+    1,
+    Math.round(
+      parsePositiveNumber(llmMaxTokens, Number(DEFAULT_LLM_MAX_TOKENS))
+    )
+  );
+  const llmTemperatureValue = parseNonNegativeNumber(
+    llmTemperature,
+    Number(DEFAULT_LLM_TEMPERATURE)
+  );
 
   useEffect(() => {
     return () => {
@@ -408,7 +439,9 @@ export default function App() {
     } catch (error) {
       setOfflineSttStatus('idle');
       addLog(
-        error instanceof Error ? error.message : 'Failed to load offline STT model.',
+        error instanceof Error
+          ? error.message
+          : 'Failed to load offline STT model.',
         'error'
       );
     }
@@ -429,7 +462,10 @@ export default function App() {
 
     try {
       await offlineSttModel.startMicrophone({ sampleRate });
-      addLog('Recorder is live. Tap Stop Recording when you are done.', 'success');
+      addLog(
+        'Recorder is live. Tap Stop Recording when you are done.',
+        'success'
+      );
     } catch (error) {
       setOfflineRecording(false);
       setOfflineSttStatus('ready');
@@ -499,7 +535,9 @@ export default function App() {
     } catch (error) {
       setOfflineSttStatus('ready');
       addLog(
-        error instanceof Error ? error.message : 'Offline transcription failed.',
+        error instanceof Error
+          ? error.message
+          : 'Offline transcription failed.',
         'error'
       );
     }
@@ -588,7 +626,9 @@ export default function App() {
           if (vadLiveRunTokenRef.current !== runToken) {
             return;
           }
-          setVadLiveSummary(`Speech started around ${event.startSec.toFixed(2)}s.`);
+          setVadLiveSummary(
+            `Speech started around ${event.startSec.toFixed(2)}s.`
+          );
         },
         onSpeechEnd(segment) {
           if (vadLiveRunTokenRef.current !== runToken) {
@@ -611,7 +651,10 @@ export default function App() {
       setVadStatus(vadModel ? 'ready' : 'idle');
       setVadLiveRecording(false);
       vadSessionRef.current = null;
-      addLog(error instanceof Error ? error.message : 'Failed to start live VAD.', 'error');
+      addLog(
+        error instanceof Error ? error.message : 'Failed to start live VAD.',
+        'error'
+      );
     }
   };
 
@@ -636,7 +679,10 @@ export default function App() {
       vadSessionRef.current = null;
       setVadStatus('ready');
       setVadLiveRecording(false);
-      addLog(error instanceof Error ? error.message : 'Failed to stop live VAD.', 'error');
+      addLog(
+        error instanceof Error ? error.message : 'Failed to stop live VAD.',
+        'error'
+      );
     }
   };
 
@@ -659,7 +705,9 @@ export default function App() {
     } catch (error) {
       setStreamingSttStatus('idle');
       addLog(
-        error instanceof Error ? error.message : 'Failed to load streaming STT model.',
+        error instanceof Error
+          ? error.message
+          : 'Failed to load streaming STT model.',
         'error'
       );
     }
@@ -704,7 +752,8 @@ export default function App() {
           }
           setStreamingResult(partial);
           setStreamingCaptureSummary(
-            partial.text || (partial.isEndpoint ? 'Endpoint detected' : 'Listening...')
+            partial.text ||
+              (partial.isEndpoint ? 'Endpoint detected' : 'Listening...')
           );
         },
       });
@@ -720,7 +769,9 @@ export default function App() {
       setStreamingSttStatus(streamingSttModel ? 'ready' : 'idle');
       setStreamingCaptureSummary('Streaming start failed.');
       addLog(
-        error instanceof Error ? error.message : 'Failed to start streaming session.',
+        error instanceof Error
+          ? error.message
+          : 'Failed to start streaming session.',
         'error'
       );
     }
@@ -766,7 +817,141 @@ export default function App() {
       setStreamingSttStatus(streamingSttModel ? 'ready' : 'idle');
       setStreamingCaptureSummary('Streaming stop failed.');
       addLog(
-        error instanceof Error ? error.message : 'Failed to stop streaming session.',
+        error instanceof Error
+          ? error.message
+          : 'Failed to stop streaming session.',
+        'error'
+      );
+    }
+  };
+
+  const handleLoadLlm = async () => {
+    setLlmStatus('loading');
+    setLlmOutput('');
+    setLlmSummary('Loading LLM model');
+    setLlmProgressPercent(0);
+    addLog(`Loading LLM model ${llmModelId}`);
+
+    try {
+      const model = await loadLlmModel(llmModelId, {
+        modelAssetHost: normalizedAssetHost,
+        onProgress: (event) => {
+          if (event.status === 'downloading') {
+            setLlmSummary(
+              `Downloading model ${Math.round(event.progress * 100)}%`
+            );
+            setLlmProgressPercent(Math.round(event.progress * 100));
+          } else if (event.status === 'loading') {
+            setLlmSummary('Initializing runtime');
+            setLlmProgressPercent(100);
+          } else if (event.status === 'completed') {
+            setLlmSummary('Model ready');
+            setLlmProgressPercent(100);
+          }
+        },
+      });
+      setLlmModel(model);
+      setLlmStatus('ready');
+      setLlmSummary('Model ready');
+      addLog('LLM model loaded successfully.', 'success');
+    } catch (error) {
+      setLlmStatus('idle');
+      setLlmSummary('LLM load failed');
+      addLog(
+        error instanceof Error ? error.message : 'Failed to load LLM model.',
+        'error'
+      );
+    }
+  };
+
+  const handleLlmChat = async () => {
+    if (!llmModel) {
+      addLog('Load the LLM model first.', 'error');
+      return;
+    }
+
+    setLlmStatus('running');
+    setLlmOutput('');
+    setLlmSummary('Chatting');
+    setLlmProgressPercent(0);
+    const startedAt = Date.now();
+
+    try {
+      const result = await llmModel.chat({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are concise, warm, and practical.',
+          },
+          {
+            role: 'user',
+            content: llmPrompt,
+          },
+        ],
+        maxTokens: llmMaxTokenCount,
+        temperature: llmTemperatureValue,
+        onToken(event) {
+          if (!event.isDone) {
+            setLlmOutput((current) => `${current}${event.text}`);
+            setLlmTiming(`Streaming ${event.tokenIndex + 1} completion tokens`);
+          }
+        },
+      });
+      setLlmStatus('ready');
+      setLlmOutput(result.text || '(empty generation)');
+      setLlmSummary('Chat complete');
+      setLlmTiming(
+        `${Date.now() - startedAt} ms, ${result.completionTokenCount} completion tokens`
+      );
+      setLlmProgressPercent(100);
+      addLog(`LLM chat result: "${result.text}"`, 'success');
+    } catch (error) {
+      setLlmStatus('ready');
+      setLlmSummary('Chat failed');
+      addLog(
+        error instanceof Error ? error.message : 'LLM chat failed.',
+        'error'
+      );
+    }
+  };
+
+  const handleLlmGenerate = async () => {
+    if (!llmModel) {
+      addLog('Load the LLM model first.', 'error');
+      return;
+    }
+
+    setLlmStatus('running');
+    setLlmOutput('');
+    setLlmSummary('Generating');
+    setLlmProgressPercent(0);
+    const startedAt = Date.now();
+
+    try {
+      const result = await llmModel.generate({
+        prompt: llmPrompt,
+        maxTokens: llmMaxTokenCount,
+        temperature: llmTemperatureValue,
+        onToken(event) {
+          if (!event.isDone) {
+            setLlmOutput((current) => `${current}${event.text}`);
+            setLlmTiming(`Streaming ${event.tokenIndex + 1} completion tokens`);
+          }
+        },
+      });
+      setLlmStatus('ready');
+      setLlmOutput(result.text || '(empty raw generation)');
+      setLlmSummary('Generation complete');
+      setLlmTiming(
+        `${Date.now() - startedAt} ms, ${result.completionTokenCount} completion tokens`
+      );
+      setLlmProgressPercent(100);
+      addLog(`LLM raw generate result: "${result.text}"`, 'success');
+    } catch (error) {
+      setLlmStatus('ready');
+      setLlmSummary('Generation failed');
+      addLog(
+        error instanceof Error ? error.message : 'LLM generate failed.',
         'error'
       );
     }
@@ -789,8 +974,8 @@ export default function App() {
           <View style={styles.header}>
             <Text style={styles.title}>Wfloat RN Example</Text>
             <Text style={styles.subtitle}>
-              Manual smoke test for TTS, offline STT, and streaming STT on
-              React Native.
+              Manual smoke test for TTS, offline STT, and streaming STT on React
+              Native.
             </Text>
           </View>
 
@@ -970,7 +1155,9 @@ export default function App() {
               <ActionButton
                 title="Transcribe"
                 onPress={handleOfflineTranscribeRecorded}
-                disabled={!offlineSttModel || offlineRecording || !offlineRecordedClip}
+                disabled={
+                  !offlineSttModel || offlineRecording || !offlineRecordedClip
+                }
               />
             </View>
             <Text style={styles.helpText}>
@@ -997,7 +1184,10 @@ export default function App() {
                 }
               />
               <Metric label="Clip" value={offlineClipSummary} />
-              <Metric label="Live" value={vadLiveRecording ? 'recording' : 'idle'} />
+              <Metric
+                label="Live"
+                value={vadLiveRecording ? 'recording' : 'idle'}
+              />
             </View>
             <Text style={styles.label}>Detection result</Text>
             <Text style={styles.previewText}>{vadSummary}</Text>
@@ -1013,7 +1203,9 @@ export default function App() {
                 title="Detect Clip"
                 onPress={handleDetectVadOnRecordedClip}
                 secondary
-                disabled={!vadModel || !offlineRecordedClip || vadStatus === 'running'}
+                disabled={
+                  !vadModel || !offlineRecordedClip || vadStatus === 'running'
+                }
               />
             </View>
             <View style={styles.buttonRow}>
@@ -1021,7 +1213,9 @@ export default function App() {
                 title="Start Live VAD"
                 onPress={handleStartLiveVad}
                 secondary
-                disabled={!vadModel || vadLiveRecording || vadStatus === 'loading'}
+                disabled={
+                  !vadModel || vadLiveRecording || vadStatus === 'loading'
+                }
               />
               <ActionButton
                 title="Stop Live VAD"
@@ -1107,6 +1301,78 @@ export default function App() {
           </View>
 
           <View style={styles.card}>
+            <Text style={styles.cardTitle}>LLM</Text>
+            <InputField
+              label="LLM Model ID"
+              value={llmModelId}
+              onChangeText={setLlmModelId}
+            />
+            <View style={styles.inlineInputs}>
+              <InputField
+                label="Max Tokens"
+                value={llmMaxTokens}
+                onChangeText={setLlmMaxTokens}
+                keyboardType="decimal-pad"
+                compact
+              />
+              <InputField
+                label="Temperature"
+                value={llmTemperature}
+                onChangeText={setLlmTemperature}
+                keyboardType="decimal-pad"
+                compact
+              />
+            </View>
+            <InputField
+              label="Prompt"
+              value={llmPrompt}
+              onChangeText={setLlmPrompt}
+              multiline
+              tall
+            />
+            <View style={styles.buttonRow}>
+              <ActionButton
+                title="Load LLM"
+                onPress={handleLoadLlm}
+                disabled={llmStatus === 'loading'}
+              />
+              <ActionButton
+                title="Chat"
+                onPress={handleLlmChat}
+                disabled={!llmModel || llmStatus === 'running'}
+              />
+            </View>
+            <View style={styles.buttonRow}>
+              <ActionButton
+                title="Raw Generate"
+                onPress={handleLlmGenerate}
+                secondary
+                disabled={!llmModel || llmStatus === 'running'}
+              />
+            </View>
+            <View style={styles.llmStatusPanel}>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusSummary}>{llmSummary}</Text>
+                <Text style={styles.statusTiming}>{llmTiming}</Text>
+              </View>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    { width: `${llmProgressPercent}%` },
+                  ]}
+                />
+              </View>
+              <Text style={styles.llmResultText}>{llmOutput}</Text>
+            </View>
+            <Text style={styles.helpText}>
+              Chat applies the model's chat template and is the normal path. Raw
+              Generate sends the prompt directly and is mostly useful for
+              debugging completion behavior.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
             <Text style={styles.cardTitle}>TTS Progress Preview</Text>
             <Text style={styles.label}>Latest chunk</Text>
             <Text style={styles.previewText}>{highlightedTextPreview}</Text>
@@ -1177,10 +1443,7 @@ function ActionButton({
       ]}
     >
       <Text
-        style={[
-          styles.buttonText,
-          secondary && styles.buttonTextSecondary,
-        ]}
+        style={[styles.buttonText, secondary && styles.buttonTextSecondary]}
       >
         {title}
       </Text>
@@ -1389,6 +1652,55 @@ const styles = StyleSheet.create({
     color: '#203020',
     fontSize: 15,
     lineHeight: 24,
+  },
+  llmStatusPanel: {
+    backgroundColor: '#f5f1e8',
+    borderColor: '#d8ceb9',
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 8,
+    padding: 12,
+  },
+  statusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  statusSummary: {
+    color: '#203020',
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  statusTiming: {
+    color: '#6d776d',
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'right',
+  },
+  progressTrack: {
+    backgroundColor: '#d8dece',
+    borderRadius: 999,
+    height: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    backgroundColor: '#244f3d',
+    borderRadius: 999,
+    height: '100%',
+  },
+  llmResultText: {
+    color: '#203020',
+    fontFamily: Platform.select({
+      android: 'monospace',
+      ios: 'Menlo',
+      default: 'monospace',
+    }),
+    fontSize: 14,
+    minHeight: 96,
+    lineHeight: 22,
   },
   logHeader: {
     alignItems: 'center',

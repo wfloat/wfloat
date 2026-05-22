@@ -1,4 +1,5 @@
 import {
+  fetchLlmModelManifest,
   fetchSttModelManifest,
   fetchTtsModelManifest,
   fetchVadModelManifest,
@@ -26,6 +27,14 @@ export type SttModelAssetsResponse = {
 export type VadModelAssetsResponse = {
   family: string;
   model: string;
+};
+
+export type LlmModelAssetsResponse = {
+  family: string;
+  model: string;
+  contextSize?: number;
+  chatTemplate?: string;
+  chatTemplateFormat?: 'gguf' | 'chatml';
 };
 
 export async function getModelAssets(
@@ -117,5 +126,43 @@ export async function getVadModelAssets(
   return {
     family,
     model: files.model.url,
+  };
+}
+
+export async function getLlmModelAssets(
+  modelId: string,
+  modelAssetHost?: string
+): Promise<LlmModelAssetsResponse> {
+  const trimmedModelId = modelId.trim();
+  if (!trimmedModelId) {
+    throw new Error('modelId is required.');
+  }
+
+  const data = await fetchLlmModelManifest({
+    modelName: trimmedModelId,
+    host: modelAssetHost,
+  });
+  const files =
+    data.files && typeof data.files === 'object' ? data.files : undefined;
+  const family = typeof data.family === 'string' ? data.family : '';
+
+  if (!family || !files?.model?.url) {
+    throw new Error('LLM model asset manifest is missing required fields.');
+  }
+
+  const contextSize =
+    typeof data.context_size === 'number' && Number.isFinite(data.context_size)
+      ? Math.max(1, Math.trunc(data.context_size))
+      : undefined;
+
+  return {
+    family,
+    model: files.model.url,
+    contextSize,
+    chatTemplate:
+      typeof data.chat_template === 'string' && data.chat_template.trim()
+        ? data.chat_template
+        : undefined,
+    chatTemplateFormat: data.chat_template_format,
   };
 }
