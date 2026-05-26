@@ -27,6 +27,8 @@ WFLOAT_STT_FAMILY_MOONSHINE = 2
 WFLOAT_STT_FAMILY_PARAKEET_CTC = 3
 WFLOAT_STT_FAMILY_PARAKEET_TDT = 4
 WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER = 5
+WFLOAT_VAD_FAMILY_SILERO = 1
+WFLOAT_VAD_FAMILY_TEN = 2
 WFLOAT_LLM_FAMILY_LLAMA = 1
 WFLOAT_LLM_FAMILY_QWEN = 2
 WFLOAT_LLM_FAMILY_SMOLLM = 3
@@ -264,6 +266,43 @@ class _WfloatSttTranscribeOptions(ctypes.Structure):
     ]
 
 
+class _WfloatVadModelConfig(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("family", ctypes.c_int32),
+        ("model_path", ctypes.c_char_p),
+        ("threshold", ctypes.c_float),
+        ("min_silence_duration_sec", ctypes.c_float),
+        ("min_speech_duration_sec", ctypes.c_float),
+        ("max_speech_duration_sec", ctypes.c_float),
+        ("sample_rate", ctypes.c_int32),
+        ("window_size", ctypes.c_int32),
+        ("num_threads", ctypes.c_int32),
+        ("provider", ctypes.c_char_p),
+        ("debug", ctypes.c_int32),
+        ("buffer_size_in_seconds", ctypes.c_float),
+    ]
+
+
+class _WfloatVadModelInfo(ctypes.Structure):
+    _fields_ = [
+        ("model_id", ctypes.c_char_p),
+        ("backend", ctypes.c_char_p),
+        ("family", ctypes.c_char_p),
+        ("feature_flags", ctypes.c_uint64),
+        ("sample_rate", ctypes.c_int32),
+        ("window_size", ctypes.c_int32),
+    ]
+
+
+class _WfloatVadSegment(ctypes.Structure):
+    _fields_ = [
+        ("start_sample", ctypes.c_int32),
+        ("samples", ctypes.POINTER(ctypes.c_float)),
+        ("sample_count", ctypes.c_size_t),
+    ]
+
+
 class _WfloatLlmModelConfig(ctypes.Structure):
     _fields_ = [
         ("model_id", ctypes.c_char_p),
@@ -360,6 +399,13 @@ def _decode(value: Optional[bytes]) -> str:
 
 
 def _iter_candidate_library_paths() -> Sequence[Path]:
+    try:
+        import wfloat_core
+
+        return [Path(wfloat_core.get_library_path())]
+    except ImportError:
+        pass
+
     env_path = os.environ.get("WFLOAT_CORE_LIBRARY")
     if env_path:
         return [Path(env_path)]
@@ -396,7 +442,8 @@ def _load_core_library() -> ctypes.CDLL:
 
     raise _CoreLibraryError(
         "Could not find a built wfloat-core shared library. "
-        "Set WFLOAT_CORE_LIBRARY or build wfloat-core as a shared library."
+        "Install the wfloat-core package, set WFLOAT_CORE_LIBRARY, or build "
+        "wfloat-core as a shared library."
     )
 
 
@@ -502,6 +549,63 @@ def _prepare_library(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(_WfloatSttTranscriptionResult)
     ]
     lib.wfloat_stt_transcription_result_destroy.restype = None
+
+    lib.wfloat_vad_model_create.argtypes = [
+        ctypes.POINTER(_WfloatVadModelConfig),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.wfloat_vad_model_create.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_destroy.argtypes = [ctypes.c_void_p]
+    lib.wfloat_vad_model_destroy.restype = None
+
+    lib.wfloat_vad_model_get_info.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WfloatVadModelInfo),
+    ]
+    lib.wfloat_vad_model_get_info.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_accept_waveform.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.c_size_t,
+    ]
+    lib.wfloat_vad_model_accept_waveform.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_reset.argtypes = [ctypes.c_void_p]
+    lib.wfloat_vad_model_reset.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_flush.argtypes = [ctypes.c_void_p]
+    lib.wfloat_vad_model_flush.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_empty.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int32),
+    ]
+    lib.wfloat_vad_model_empty.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_detected.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int32),
+    ]
+    lib.wfloat_vad_model_detected.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_front.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(_WfloatVadSegment)),
+    ]
+    lib.wfloat_vad_model_front.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_pop.argtypes = [ctypes.c_void_p]
+    lib.wfloat_vad_model_pop.restype = ctypes.c_int32
+
+    lib.wfloat_vad_model_clear.argtypes = [ctypes.c_void_p]
+    lib.wfloat_vad_model_clear.restype = ctypes.c_int32
+
+    lib.wfloat_vad_segment_destroy.argtypes = [
+        ctypes.POINTER(_WfloatVadSegment)
+    ]
+    lib.wfloat_vad_segment_destroy.restype = None
 
     lib.wfloat_llm_model_create.argtypes = [
         ctypes.POINTER(_WfloatLlmModelConfig),
@@ -1216,6 +1320,190 @@ def create_core_stt(
         task=task,
         enable_token_timestamps=enable_token_timestamps,
         enable_segment_timestamps=enable_segment_timestamps,
+    )
+
+
+class _CoreVadNativeSegment:
+    def __init__(self, *, start: int, samples: Sequence[float]) -> None:
+        self.start = int(start)
+        self.samples = list(samples)
+
+
+class CoreVad:
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        family: int,
+        model_path: Path,
+        threshold: float,
+        min_silence_duration_sec: float,
+        min_speech_duration_sec: float,
+        max_speech_duration_sec: float,
+        sample_rate: int,
+        window_size: int,
+        buffer_size_in_seconds: float,
+    ) -> None:
+        self._lib = _prepare_library(_load_core_library())
+        self._model = ctypes.c_void_p()
+        self._config_bytes = {
+            "model_id": model_id.encode("utf-8"),
+            "model_path": str(model_path).encode("utf-8"),
+            "provider": DEFAULT_PROVIDER.encode("utf-8"),
+        }
+
+        config = _WfloatVadModelConfig(
+            model_id=self._config_bytes["model_id"],
+            family=family,
+            model_path=self._config_bytes["model_path"],
+            threshold=float(threshold),
+            min_silence_duration_sec=float(min_silence_duration_sec),
+            min_speech_duration_sec=float(min_speech_duration_sec),
+            max_speech_duration_sec=float(max_speech_duration_sec),
+            sample_rate=int(sample_rate),
+            window_size=int(window_size),
+            num_threads=1,
+            provider=self._config_bytes["provider"],
+            debug=0,
+            buffer_size_in_seconds=float(buffer_size_in_seconds),
+        )
+
+        status = self._lib.wfloat_vad_model_create(
+            ctypes.byref(config),
+            ctypes.byref(self._model),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD model creation failed with status {status}.")
+
+        info = _WfloatVadModelInfo()
+        status = self._lib.wfloat_vad_model_get_info(self._model, ctypes.byref(info))
+        if status != WFLOAT_STATUS_OK:
+            self.close()
+            raise RuntimeError(f"wfloat-core VAD model info failed with status {status}.")
+
+        self.sample_rate = int(info.sample_rate)
+        self.window_size = int(info.window_size)
+
+    def close(self) -> None:
+        if self._model and self._model.value:
+            self._lib.wfloat_vad_model_destroy(self._model)
+            self._model = ctypes.c_void_p()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def reset(self) -> None:
+        status = self._lib.wfloat_vad_model_reset(self._model)
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD reset failed with status {status}.")
+
+    def accept_waveform(self, samples: Sequence[float]) -> None:
+        sample_values = [float(sample) for sample in samples]
+        if not sample_values:
+            return
+
+        sample_array = (ctypes.c_float * len(sample_values))(*sample_values)
+        status = self._lib.wfloat_vad_model_accept_waveform(
+            self._model,
+            sample_array,
+            len(sample_values),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(
+                f"wfloat-core VAD accept_waveform failed with status {status}."
+            )
+
+    def flush(self) -> None:
+        status = self._lib.wfloat_vad_model_flush(self._model)
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD flush failed with status {status}.")
+
+    def empty(self) -> bool:
+        value = ctypes.c_int32()
+        status = self._lib.wfloat_vad_model_empty(self._model, ctypes.byref(value))
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD empty failed with status {status}.")
+        return bool(value.value)
+
+    def detected(self) -> bool:
+        value = ctypes.c_int32()
+        status = self._lib.wfloat_vad_model_detected(self._model, ctypes.byref(value))
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD detected failed with status {status}.")
+        return bool(value.value)
+
+    @property
+    def front(self) -> _CoreVadNativeSegment:
+        segment_ptr = ctypes.POINTER(_WfloatVadSegment)()
+        status = self._lib.wfloat_vad_model_front(
+            self._model,
+            ctypes.byref(segment_ptr),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD front failed with status {status}.")
+
+        try:
+            segment = segment_ptr.contents
+            samples = [
+                float(segment.samples[index])
+                for index in range(int(segment.sample_count))
+            ]
+            return _CoreVadNativeSegment(
+                start=int(segment.start_sample),
+                samples=samples,
+            )
+        finally:
+            self._lib.wfloat_vad_segment_destroy(segment_ptr)
+
+    def pop(self) -> None:
+        status = self._lib.wfloat_vad_model_pop(self._model)
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD pop failed with status {status}.")
+
+    def clear(self) -> None:
+        status = self._lib.wfloat_vad_model_clear(self._model)
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD clear failed with status {status}.")
+
+
+def create_core_vad(
+    *,
+    model_name: str,
+    family: str,
+    model_path: Path,
+    threshold: float,
+    min_silence_duration_sec: float,
+    min_speech_duration_sec: float,
+    max_speech_duration_sec: float,
+    sample_rate: int,
+    buffer_size_in_seconds: float,
+):
+    normalized_family = family.strip().lower().replace("_", "-")
+    family_map = {
+        "silero": WFLOAT_VAD_FAMILY_SILERO,
+        "silero-vad": WFLOAT_VAD_FAMILY_SILERO,
+        "ten-vad": WFLOAT_VAD_FAMILY_TEN,
+        "tenvad": WFLOAT_VAD_FAMILY_TEN,
+    }
+    family_value = family_map.get(normalized_family)
+    if family_value is None:
+        raise ValueError(f"Unsupported VAD family: {family}")
+
+    window_size = 256 if family_value == WFLOAT_VAD_FAMILY_TEN else 512
+    return CoreVad(
+        model_id=model_name,
+        family=family_value,
+        model_path=model_path,
+        threshold=threshold,
+        min_silence_duration_sec=min_silence_duration_sec,
+        min_speech_duration_sec=min_speech_duration_sec,
+        max_speech_duration_sec=max_speech_duration_sec,
+        sample_rate=sample_rate,
+        window_size=window_size,
+        buffer_size_in_seconds=buffer_size_in_seconds,
     )
 
 

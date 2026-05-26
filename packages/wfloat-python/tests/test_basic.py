@@ -1,5 +1,4 @@
 import hashlib
-import importlib
 import sys
 import tempfile
 import types
@@ -154,7 +153,7 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertTrue(hasattr(wfloat, "VadSegment"))
         self.assertIn("narrator_woman", wfloat.SPEAKER_IDS)
 
-    def test_create_native_tts_prefers_wfloat_core_when_available(self):
+    def test_create_native_tts_uses_wfloat_core(self):
         sentinel = object()
 
         with mock.patch.object(_native, "create_core_tts", return_value=sentinel) as mock_core:
@@ -168,35 +167,35 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertIs(result, sentinel)
         mock_core.assert_called_once()
 
-    def test_create_native_tts_falls_back_to_bindings(self):
-        fake_bindings = types.SimpleNamespace(
-            OfflineTtsWfloatModelConfig=lambda **kwargs: ("wfloat", kwargs),
-            OfflineTtsModelConfig=lambda **kwargs: ("model", kwargs),
-            OfflineTtsConfig=lambda **kwargs: ("config", kwargs),
-            OfflineTts=lambda config: ("tts", config),
-        )
-
-        with mock.patch.object(
-            _native, "create_core_tts", side_effect=ImportError("missing core")
-        ), mock.patch.object(_native, "require_bindings", return_value=fake_bindings):
-            result = _native.create_native_tts(
-                "wfloat/wfloat-tts",
-                Path("/tmp/model.onnx"),
-                Path("/tmp/tokens.txt"),
-                Path("/tmp/espeak"),
-            )
-
-        self.assertEqual(result[0], "tts")
-
     def test_core_loader_uses_explicit_library_path(self):
         with mock.patch.dict(
             "os.environ",
             {"WFLOAT_CORE_LIBRARY": "/tmp/libwfloat-core.so"},
             clear=False,
         ):
-            candidates = list(_core._iter_candidate_library_paths())
+            original_module = sys.modules.pop("wfloat_core", None)
+            try:
+                candidates = list(_core._iter_candidate_library_paths())
+            finally:
+                if original_module is not None:
+                    sys.modules["wfloat_core"] = original_module
 
         self.assertEqual(candidates, [Path("/tmp/libwfloat-core.so")])
+
+    def test_core_loader_prefers_packaged_runtime(self):
+        fake_runtime = types.SimpleNamespace(
+            get_library_path=lambda: "/tmp/packaged/libwfloat-core.so"
+        )
+
+        with mock.patch.dict(sys.modules, {"wfloat_core": fake_runtime}):
+            with mock.patch.dict(
+                "os.environ",
+                {"WFLOAT_CORE_LIBRARY": "/tmp/libwfloat-core.so"},
+                clear=False,
+            ):
+                candidates = list(_core._iter_candidate_library_paths())
+
+        self.assertEqual(candidates, [Path("/tmp/packaged/libwfloat-core.so")])
 
     def test_stt_model_transcribe_uses_native_backend(self):
         sentinel = wfloat.TranscriptionResult(
@@ -370,7 +369,7 @@ class TestWfloatSmoke(unittest.TestCase):
                 tokens="https://example.com/tokens.txt",
             )
 
-    def test_load_vad_model_wires_cache_and_native_loader(self):
+    def test_load_vad_model_wires_cache_and_core_loader(self):
         fake_cached = types.SimpleNamespace(
             model_name="silero-vad",
             family="silero-vad",
@@ -387,7 +386,7 @@ class TestWfloatSmoke(unittest.TestCase):
             "wfloat._vad_load.cache_vad_assets",
             return_value=fake_cached,
         ) as cache_mock, mock.patch(
-            "wfloat._vad_load.create_native_vad",
+            "wfloat._vad_load.create_core_vad",
             return_value=fake_native,
         ) as create_mock:
             model = wfloat.load_vad_model(
@@ -401,6 +400,7 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertEqual(model.model_id, "silero-vad")
         cache_mock.assert_called_once()
         create_mock.assert_called_once_with(
+            model_name="silero-vad",
             family="silero-vad",
             model_path=Path("/tmp/cache/silero_vad.onnx"),
             threshold=0.6,
@@ -439,7 +439,7 @@ class TestWfloatSmoke(unittest.TestCase):
                 "wfloat._vad_load.cache_vad_model_assets",
                 return_value=fake_cached,
             ) as cache_mock, mock.patch(
-                "wfloat._vad_load.create_native_vad",
+                "wfloat._vad_load.create_core_vad",
                 return_value=object(),
             ):
                 model = wfloat.load_vad_model(
@@ -822,32 +822,6 @@ class TestWfloatSmoke(unittest.TestCase):
 
         self.assertTrue(wav_bytes.startswith(b"RIFF"))
         self.assertGreater(len(wav_bytes), 44)
-
-    def test_bindings_import_without_generated_audio(self):
-        fake_module = types.SimpleNamespace(
-            GenerationConfig=object(),
-            OfflineTts=object(),
-            OfflineTtsConfig=object(),
-            OfflineTtsModelConfig=object(),
-            OfflineTtsWfloatModelConfig=object(),
-            WfloatPreparedText=object(),
-            git_date="today",
-            git_sha1="abc123",
-            prepare_wfloat_text=lambda text, *args, **kwargs: text,
-            version="1.12.24",
-            write_wave=lambda *args, **kwargs: None,
-        )
-
-        original_module = sys.modules.pop("wfloat._bindings", None)
-        try:
-            with mock.patch.dict(sys.modules, {"sherpa_onnx": fake_module}):
-                bindings = importlib.import_module("wfloat._bindings")
-                self.assertIs(bindings.OfflineTts, fake_module.OfflineTts)
-                self.assertNotIn("GeneratedAudio", bindings.__all__)
-        finally:
-            sys.modules.pop("wfloat._bindings", None)
-            if original_module is not None:
-                sys.modules["wfloat._bindings"] = original_module
 
     def test_generate_returns_audio_and_timeline(self):
         fake_native_tts = FakeNativeTts(sample_rate=10)

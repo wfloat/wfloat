@@ -5,7 +5,7 @@ from typing import Mapping, Optional
 
 from ._assets import fetch_vad_assets
 from ._cache import get_default_cache_dir, load_persistent_id, save_persistent_id
-from ._native import create_native_vad
+from ._core import create_core_vad
 from ._vad import DEFAULT_VAD_SAMPLE_RATE, VadModel
 from ._vad_assets import cache_vad_assets, cache_vad_model_assets
 
@@ -71,7 +71,8 @@ def load_vad_model(
     if family is None:
         raise ValueError("family is required to load a VAD model.")
 
-    native_vad = create_native_vad(
+    native_vad = create_core_vad(
+        model_name=model_name,
         family=family,
         model_path=cached.require("model"),
         threshold=_finite_float_or_default(threshold, DEFAULT_VAD_THRESHOLD),

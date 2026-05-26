@@ -32,7 +32,9 @@ Install `wfloat`:
 python3 -m pip install -e .
 ```
 
-That also installs the matching `wfloat-sherpa-onnx` dependency.
+That also installs the matching `wfloat-core` runtime dependency in normal
+release installs. In this monorepo, local development can point at a freshly
+built `wfloat-core` shared library with `WFLOAT_CORE_LIBRARY`.
 
 ## Build release artifacts
 
@@ -48,7 +50,7 @@ That produces:
 
 ## Tests
 
-Unit tests do not require `sherpa_onnx`:
+Unit tests do not require native runtime binaries:
 
 ```bash
 PYTHONPATH=python python3 -m unittest discover -s tests -v
@@ -57,7 +59,7 @@ PYTHONPATH=python python3 -m unittest discover -s tests -v
 You can also run a smoke check:
 
 ```bash
-python3 -c "import sherpa_onnx, wfloat; print(wfloat.__version__)"
+python3 -c "import wfloat, wfloat_core; print(wfloat.__version__, wfloat_core.get_library_path())"
 ```
 
 ## CI
@@ -66,7 +68,7 @@ CI:
 
 - builds pure Python artifacts once
 - installs those artifacts on each target platform
-- relies on normal dependency resolution for `wfloat-sherpa-onnx`
+- relies on normal dependency resolution for `wfloat-core`
 - runs the unit test suite and an integration smoke test
 
 ## Notes for changes

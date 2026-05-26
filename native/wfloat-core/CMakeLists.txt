@@ -13,10 +13,12 @@ if(WFLOAT_CORE_ENABLE_SPEECH)
     list(APPEND WFLOAT_CORE_PUBLIC_HEADERS
         include/wfloat-core/wfloat_stt.h
         include/wfloat-core/wfloat_tts.h
+        include/wfloat-core/wfloat_vad.h
     )
     list(APPEND WFLOAT_CORE_SOURCES
         src/wfloat_stt.cc
         src/wfloat_tts.cc
+        src/wfloat_vad.cc
     )
 endif()
 
@@ -88,3 +90,15 @@ set_target_properties(wfloat-core-shared PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     OUTPUT_NAME wfloat-core
 )
+
+if(APPLE)
+    set_target_properties(wfloat-core-shared PROPERTIES
+        BUILD_RPATH "@loader_path"
+        INSTALL_RPATH "@loader_path"
+    )
+elseif(UNIX)
+    set_target_properties(wfloat-core-shared PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+    )
+endif()

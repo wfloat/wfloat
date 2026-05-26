@@ -36,7 +36,7 @@ setuptools.setup(
     package_dir={"": "python"},
     packages=setuptools.find_packages(where="python"),
     install_requires=[
-        "wfloat-sherpa-onnx==1.12.24",
+        "wfloat-core==2.0.0",
     ],
     include_package_data=True,
     entry_points={

@@ -1,0 +1,67 @@
+name: publish-wfloat-core
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "wfloat-core-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build_wheels:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-15-intel
+          - os: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.1.4
+        env:
+          CIBW_BUILD: "cp311-*"
+          CIBW_SKIP: "pp* *-musllinux* *-win32"
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_TEST_COMMAND: 'python -c "import wfloat_core; print(wfloat_core.get_library_path())"'
+          CIBW_ENVIRONMENT: >-
+            WFLOAT_CORE_BUILD_PARALLEL="2"
+            MACOSX_DEPLOYMENT_TARGET="12.0"
+        with:
+          package-dir: packages/wfloat-core-python
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: error
+
+  publish_pypi:
+    name: Publish to PyPI
+    needs:
+      - build_wheels
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/wfloat-core/
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: dist
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -141,7 +141,8 @@ stt = wfloat.load_stt_model(
 
 Python also exposes the same one-shot VAD model shape as the web and React
 Native packages. It is intentionally file/buffer based for now; there is no
-Python live microphone/session helper.
+Python live microphone/session helper. The Python VAD path uses `wfloat-core`,
+matching the TTS, STT, and LLM backend boundary.
 
 ```python
 vad = wfloat.load_vad_model(
@@ -191,18 +192,17 @@ wfloat generate --help
 The first load downloads the model assets. After that, the package uses the
 cached local copy.
 
-## Native Backend During Monorepo Development
+## Native Backend
 
-Inside this monorepo, the Python package now prefers a built `wfloat-core`
-shared library when one is available. You can point it at an explicit build
-artifact with:
+Python TTS, STT, VAD, and LLM use the `wfloat-core` native runtime package.
+Release installs get that runtime through the `wfloat-core` PyPI dependency.
+
+Inside this monorepo, local development can point at an explicit build artifact
+with:
 
 ```bash
 export WFLOAT_CORE_LIBRARY=/abs/path/to/libwfloat-core.so
 ```
-
-If no shared library is available, the package falls back to the direct
-`sherpa_onnx` Python binding path.
 
 ## Speaker IDs
 
