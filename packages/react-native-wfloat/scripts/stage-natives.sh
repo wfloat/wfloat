@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 SHERPA_DIR="${REPO_ROOT}/vendor/sherpa-onnx"
+IOS_LLM_XCFRAMEWORK="${REPO_ROOT}/out/rn-llm-ios/wfloat-core-llm.xcframework"
 
 IOS_DIR="${PACKAGE_DIR}/ios"
 JNI_LIBS_DIR="${PACKAGE_DIR}/android/src/main/jniLibs"
@@ -249,10 +250,12 @@ if [[ "${stage_ios}" == true ]]; then
 
   require_dir "${sherpa_xcframework}" "sherpa-onnx.xcframework"
   require_dir "${onnxruntime_xcframework}" "onnxruntime.xcframework"
+  require_dir "${IOS_LLM_XCFRAMEWORK}" "wfloat-core-llm.xcframework"
 
   echo "Staging iOS XCFrameworks..."
   copy_real_dir "${sherpa_xcframework}" "${IOS_DIR}/sherpa-onnx.xcframework"
   copy_real_dir "${onnxruntime_xcframework}" "${IOS_DIR}/onnxruntime.xcframework"
+  copy_real_dir "${IOS_LLM_XCFRAMEWORK}" "${IOS_DIR}/wfloat-core-llm.xcframework"
   trim_onnxruntime_ios_xcframework "${IOS_DIR}/onnxruntime.xcframework"
 fi
 

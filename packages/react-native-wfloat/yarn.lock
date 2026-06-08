@@ -3347,7 +3347,6 @@ __metadata:
     prettier: ^3.0.3
     react: 18.3.1
     react-native: 0.76.5
-    react-native-blob-util: ^0.21.2
     react-native-builder-bob: ^0.35.2
     release-it: ^17.10.0
     turbo: ^1.10.7
@@ -3975,13 +3974,6 @@ __metadata:
   version: 1.0.2
   resolution: "balanced-match@npm:1.0.2"
   checksum: 9706c088a283058a8a99e0bf91b0a2f75497f185980d9ffa8b304de1d9e58ebda7c72c07ebf01dadedaac5b2907b2c6f566f660d62bd336c3468e960403b9d65
-  languageName: node
-  linkType: hard
-
-"base-64@npm:0.1.0":
-  version: 0.1.0
-  resolution: "base-64@npm:0.1.0"
-  checksum: 5a42938f82372ab5392cbacc85a5a78115cbbd9dbef9f7540fa47d78763a3a8bd7d598475f0d92341f66285afd377509851a9bb5c67bbecb89686e9255d5b3eb
   languageName: node
   linkType: hard
 
@@ -10627,19 +10619,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-native-blob-util@npm:^0.21.2":
-  version: 0.21.2
-  resolution: "react-native-blob-util@npm:0.21.2"
-  dependencies:
-    base-64: 0.1.0
-    glob: ^10.3.10
-  peerDependencies:
-    react: "*"
-    react-native: "*"
-  checksum: e8558a00a7aeaf619b7661f251649ac15e28b62836fc3dad9890ae69d57dd498ef8f7de0de6bb45294ff7a6119ebe71e89f7e343f0b67dcf76e40852460adf11
-  languageName: node
-  linkType: hard
-
 "react-native-builder-bob@npm:^0.35.2":
   version: 0.35.3
   resolution: "react-native-builder-bob@npm:0.35.3"
@@ -10687,7 +10666,6 @@ __metadata:
     "@react-native/typescript-config": 0.76.5
     react: 18.3.1
     react-native: 0.76.5
-    react-native-blob-util: ^0.21.2
     react-native-builder-bob: ^0.35.2
   languageName: unknown
   linkType: soft

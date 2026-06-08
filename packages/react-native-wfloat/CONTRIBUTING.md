@@ -30,7 +30,8 @@ yarn
 
 Native build artifacts are not tracked in git. Maintainers stage real native files into this package before running `npm pack` or `npm publish`.
 
-Build native artifacts from `../../vendor/sherpa-onnx`:
+Build native artifacts from `../../vendor/sherpa-onnx`, `../../vendor/llama.cpp`,
+and `../../native/wfloat-core`:
 
 ```sh
 yarn rn:build-natives
@@ -70,6 +71,15 @@ yarn rn:build-natives ios
 yarn rn:stage-natives android
 ```
 
+The iOS LLM runtime can also be rebuilt directly:
+
+```sh
+yarn rn:build-ios-llm
+```
+
+That writes `../../out/rn-llm-ios/wfloat-core-llm.xcframework`, which
+`yarn rn:stage-natives ios` then copies into `ios/`.
+
 Before publishing, verify the tarball contains the staged native files:
 
 ```sh
@@ -80,6 +90,7 @@ Confirm the dry-run output includes:
 
 - `ios/onnxruntime.xcframework/**/libonnxruntime.a`
 - `ios/sherpa-onnx.xcframework/**/libsherpa-onnx.a`
+- `ios/wfloat-core-llm.xcframework/**/libwfloat-core-llm.a`
 - `android/src/main/jniLibs/*/*.so`
 - `ios/generated/**`
 - `android/generated/**`

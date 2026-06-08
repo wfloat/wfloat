@@ -12,6 +12,7 @@
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
     "rn:build-natives": "bash scripts/build-natives.sh",
+    "rn:build-ios-llm": "bash scripts/build-ios-llm-xcframework.sh",
     "rn:stage-natives": "bash scripts/stage-natives.sh",
     "prepare": "bob build",
     "release": "release-it"
@@ -66,7 +67,6 @@
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
-  "dependencies": {},
   "devDependencies": {
     "@commitlint/config-conventional": "^17.0.2",
     "@evilmartians/lefthook": "^1.5.0",

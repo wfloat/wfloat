@@ -69,7 +69,12 @@ swift-api-examples/k2fsa-*
 run-*.sh
 two-pass-*.sh
 build-*
+# Keep source-controlled build helpers visible; generated build directories
+# remain ignored by the patterns above.
 !build-android-*.sh
+!build-ios.sh
+!build-ios-shared.sh
+!build-ios-no-tts.sh
 !build-wasm-simd-tts.sh
 !build-wasm-simd-speech.sh
 

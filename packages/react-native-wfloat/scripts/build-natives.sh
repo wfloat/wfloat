@@ -6,6 +6,7 @@ PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 SHERPA_DIR="${REPO_ROOT}/vendor/sherpa-onnx"
 ANDROID_LLM_JNI_DIR="${PACKAGE_DIR}/android/llm-jni"
+IOS_LLM_BUILD_SCRIPT="${SCRIPT_DIR}/build-ios-llm-xcframework.sh"
 
 android_build_dir_for_abi() {
   case "$1" in
@@ -106,6 +107,9 @@ if [[ "${build_ios}" == true ]]; then
 
   echo "Building iOS sherpa-onnx XCFrameworks..."
   (cd "${SHERPA_DIR}" && ./build-ios.sh)
+
+  echo "Building iOS wfloat-core LLM XCFramework..."
+  bash "${IOS_LLM_BUILD_SCRIPT}"
 fi
 
 if [[ "${build_android}" == true ]]; then
