@@ -1,0 +1,71 @@
+name: Python Wheel CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "CMakeLists.txt"
+      - "native/wfloat-core/**"
+      - "packages/wfloat-python/**"
+      - "vendor/**"
+      - ".github/workflows/python-wheel-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "CMakeLists.txt"
+      - "native/wfloat-core/**"
+      - "packages/wfloat-python/**"
+      - "vendor/**"
+      - ".github/workflows/python-wheel-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unit_tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run unit tests
+        run: PYTHONPATH=packages/wfloat-python/python python -m unittest discover -s packages/wfloat-python/tests -v
+
+  build_wheels:
+    name: Build wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+          - os: windows-latest
+          - os: macos-15-intel
+          - os: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build wheel
+        uses: pypa/cibuildwheel@v3.1.4
+        env:
+          CIBW_BUILD: "cp311-*"
+          CIBW_SKIP: "pp* *-musllinux* *-win32"
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_TEST_COMMAND: 'python -c "from wfloat import _core; print(_core._load_core_library())"'
+          CIBW_ENVIRONMENT: >-
+            WFLOAT_CORE_BUILD_PARALLEL="2"
+            MACOSX_DEPLOYMENT_TARGET="12.0"
+        with:
+          package-dir: packages/wfloat-python

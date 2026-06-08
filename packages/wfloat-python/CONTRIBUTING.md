@@ -32,9 +32,9 @@ Install `wfloat`:
 python3 -m pip install -e .
 ```
 
-That also installs the matching `wfloat-core` runtime dependency in normal
-release installs. In this monorepo, local development can point at a freshly
-built `wfloat-core` shared library with `WFLOAT_CORE_LIBRARY`.
+Release wheels bundle the matching `wfloat-core` native runtime inside the
+`wfloat` package. In this monorepo, local development can point at a freshly
+built runtime shared library with `WFLOAT_CORE_LIBRARY`.
 
 ## Build release artifacts
 
@@ -43,7 +43,7 @@ rm -rf build dist
 python3 -m build
 ```
 
-That produces:
+That produces platform-specific release artifacts:
 
 - `dist/*.whl`
 - `dist/*.tar.gz`
@@ -59,17 +59,21 @@ PYTHONPATH=python python3 -m unittest discover -s tests -v
 You can also run a smoke check:
 
 ```bash
-python3 -c "import wfloat, wfloat_core; print(wfloat.__version__, wfloat_core.get_library_path())"
+python3 -c "import wfloat; from wfloat import _core; print(wfloat.__version__, _core._load_core_library())"
 ```
 
 ## CI
 
 CI:
 
-- builds pure Python artifacts once
-- installs those artifacts on each target platform
-- relies on normal dependency resolution for `wfloat-core`
-- runs the unit test suite and an integration smoke test
+- runs the unit test suite without native runtime binaries
+- builds platform wheels with the bundled `wfloat-core` native runtime
+- smoke-loads the bundled native runtime from each built wheel
+
+## Release
+
+Publish Python with the `wfloat-v*` tag. The publish workflow builds and tests
+all supported platform wheels before uploading `wfloat` to PyPI.
 
 ## Notes for changes
 

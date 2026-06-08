@@ -1,5 +1,7 @@
 import ctypes
 import os
+import platform
+import sys
 import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -394,24 +396,49 @@ class _CoreLibraryError(ImportError):
     pass
 
 
+_DLL_DIRECTORY_HANDLES = []
+
+
 def _decode(value: Optional[bytes]) -> str:
     return value.decode("utf-8") if value else ""
 
 
-def _iter_candidate_library_paths() -> Sequence[Path]:
-    try:
-        import wfloat_core
+def _native_dir() -> Path:
+    return Path(__file__).resolve().parent / "native"
 
-        return [Path(wfloat_core.get_library_path())]
-    except ImportError:
-        pass
+
+def _library_names() -> tuple[str, ...]:
+    if sys.platform == "win32":
+        return ("wfloat-core.dll", "libwfloat-core.dll")
+    if sys.platform == "darwin":
+        return ("libwfloat-core.dylib",)
+    return ("libwfloat-core.so",)
+
+
+def _iter_packaged_library_paths() -> Sequence[Path]:
+    native_dir = _native_dir()
+    return [native_dir / name for name in _library_names()]
+
+
+def _iter_candidate_library_paths() -> Sequence[Path]:
+    candidates: List[Path] = []
 
     env_path = os.environ.get("WFLOAT_CORE_LIBRARY")
     if env_path:
-        return [Path(env_path)]
+        candidates.append(Path(env_path))
+
+    candidates.extend(
+        candidate for candidate in _iter_packaged_library_paths() if candidate.exists()
+    )
+
+    try:
+        import wfloat_core
+
+        candidates.append(Path(wfloat_core.get_library_path()))
+    except ImportError:
+        pass
 
     repo_root = Path(__file__).resolve().parents[4]
-    candidates: List[Path] = []
     for pattern in (
         "out/**/libwfloat-core.so",
         "out/**/libwfloat-core.dylib",
@@ -425,11 +452,24 @@ def _iter_candidate_library_paths() -> Sequence[Path]:
     return candidates
 
 
+def _prepare_dll_directory(candidate: Path) -> None:
+    if sys.platform != "win32" or not hasattr(os, "add_dll_directory"):
+        return
+
+    native_dir = candidate.parent
+    if not native_dir.exists():
+        return
+
+    # Keep the handle alive so dependent DLL lookup stays enabled.
+    _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(str(native_dir)))
+
+
 def _load_core_library() -> ctypes.CDLL:
     errors: List[str] = []
 
     for candidate in _iter_candidate_library_paths():
         try:
+            _prepare_dll_directory(candidate)
             return ctypes.CDLL(str(candidate))
         except OSError as exc:
             errors.append(f"{candidate}: {exc}")
@@ -442,8 +482,9 @@ def _load_core_library() -> ctypes.CDLL:
 
     raise _CoreLibraryError(
         "Could not find a built wfloat-core shared library. "
-        "Install the wfloat-core package, set WFLOAT_CORE_LIBRARY, or build "
-        "wfloat-core as a shared library."
+        f"Looked in {_native_dir()} for {', '.join(_library_names())} on "
+        f"{sys.platform}/{platform.machine() or 'unknown'}. "
+        "Set WFLOAT_CORE_LIBRARY or build wfloat-core as a shared library."
     )
 
 

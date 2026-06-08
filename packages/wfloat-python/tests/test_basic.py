@@ -182,20 +182,37 @@ class TestWfloatSmoke(unittest.TestCase):
 
         self.assertEqual(candidates, [Path("/tmp/libwfloat-core.so")])
 
-    def test_core_loader_prefers_packaged_runtime(self):
+    def test_core_loader_uses_packaged_runtime(self):
+        packaged = Path("/tmp/wfloat/native/libwfloat-core.so")
         fake_runtime = types.SimpleNamespace(
-            get_library_path=lambda: "/tmp/packaged/libwfloat-core.so"
+            get_library_path=lambda: "/tmp/legacy/libwfloat-core.so"
         )
 
         with mock.patch.dict(sys.modules, {"wfloat_core": fake_runtime}):
-            with mock.patch.dict(
-                "os.environ",
-                {"WFLOAT_CORE_LIBRARY": "/tmp/libwfloat-core.so"},
-                clear=False,
+            with mock.patch.object(
+                _core,
+                "_iter_packaged_library_paths",
+                return_value=[packaged],
+            ):
+                with mock.patch.object(Path, "exists", return_value=True):
+                    candidates = list(_core._iter_candidate_library_paths())
+
+        self.assertEqual(candidates[0], packaged)
+
+    def test_core_loader_uses_legacy_wfloat_core_runtime(self):
+        fake_runtime = types.SimpleNamespace(
+            get_library_path=lambda: "/tmp/legacy/libwfloat-core.so"
+        )
+
+        with mock.patch.dict(sys.modules, {"wfloat_core": fake_runtime}):
+            with mock.patch.object(
+                _core,
+                "_iter_packaged_library_paths",
+                return_value=[Path("/tmp/missing/libwfloat-core.so")],
             ):
                 candidates = list(_core._iter_candidate_library_paths())
 
-        self.assertEqual(candidates, [Path("/tmp/packaged/libwfloat-core.so")])
+        self.assertIn(Path("/tmp/legacy/libwfloat-core.so"), candidates)
 
     def test_stt_model_transcribe_uses_native_backend(self):
         sentinel = wfloat.TranscriptionResult(
