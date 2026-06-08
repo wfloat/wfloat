@@ -183,6 +183,11 @@ class build_py(_build_py):
             shutil.copy2(library, target_dir / library.name)
 
 
+class BinaryDistribution(setuptools.Distribution):
+    def has_ext_modules(self) -> bool:
+        return True
+
+
 if _bdist_wheel is not None:
 
     class bdist_wheel(_bdist_wheel):
@@ -216,6 +221,7 @@ setuptools.setup(
     url="https://github.com/wfloat/wfloat-python",
     package_dir={"": "python"},
     packages=setuptools.find_packages(where="python"),
+    distclass=BinaryDistribution,
     package_data={
         "wfloat": [
             "native/*.dll",

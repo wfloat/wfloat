@@ -91,6 +91,12 @@ set_target_properties(wfloat-core-shared PROPERTIES
     OUTPUT_NAME wfloat-core
 )
 
+if(WIN32)
+    set_target_properties(wfloat-core-shared PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 if(APPLE)
     set_target_properties(wfloat-core-shared PROPERTIES
         BUILD_RPATH "@loader_path"

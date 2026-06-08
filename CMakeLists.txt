@@ -10,6 +10,10 @@ option(WFLOAT_CORE_ENABLE_SPEECH "Build wfloat-core speech support with sherpa-o
 # libraries cleanly.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if(MSVC AND NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 if(WFLOAT_BUILD_CORE)
   # On Linux, wrapping sherpa's static onnxruntime stack inside a second shared
   # library is crashing during recognizer creation. Match upstream sherpa's
