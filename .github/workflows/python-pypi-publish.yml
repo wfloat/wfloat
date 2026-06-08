@@ -79,6 +79,7 @@ jobs:
           CIBW_BUILD_VERBOSITY: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux2014
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
           CIBW_TEST_COMMAND: 'python -c "from wfloat import _core; print(_core._load_core_library())"'
           CIBW_ENVIRONMENT: >-
             WFLOAT_CORE_BUILD_PARALLEL="2"
