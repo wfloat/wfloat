@@ -194,8 +194,8 @@ cached local copy.
 
 ## Native Backend
 
-Python TTS, STT, VAD, and LLM use the `wfloat-core` native runtime package.
-Release installs get that runtime through the `wfloat-core` PyPI dependency.
+Python TTS, STT, VAD, and LLM use the `wfloat-core` native runtime. Release
+wheels bundle the platform-specific shared library inside the `wfloat` package.
 
 Inside this monorepo, local development can point at an explicit build artifact
 with:
