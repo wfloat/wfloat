@@ -24,7 +24,7 @@ REPO_ROOT = ROOT_DIR.parents[1]
 PACKAGE_NATIVE_DIR = Path("wfloat") / "native"
 
 if sys.platform == "darwin":
-    os.environ.setdefault("MACOSX_DEPLOYMENT_TARGET", "12.0")
+    os.environ["MACOSX_DEPLOYMENT_TARGET"] = "12.0"
 
 
 def read_long_description() -> str:
@@ -127,6 +127,9 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
 
     if sys.platform != "win32":
         configure.append("-DCMAKE_BUILD_TYPE=Release")
+
+    if sys.platform == "darwin":
+        configure.append("-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0")
 
     configure.extend(_split_cmake_args(os.environ.get("WFLOAT_CORE_CMAKE_ARGS", "")))
 
