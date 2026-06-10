@@ -42,20 +42,20 @@ jobs:
           - x86
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: zulu
           java-version: "17"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Install Android build dependencies
         run: |
@@ -88,7 +88,7 @@ jobs:
             -C packages/react-native-wfloat/android/src/main/jniLibs \
             "${{ matrix.abi }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: react-native-wfloat-android-${{ matrix.abi }}
           path: react-native-wfloat-android-${{ matrix.abi }}.tgz
@@ -99,13 +99,13 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install JavaScript dependencies
         working-directory: packages/react-native-wfloat
@@ -127,7 +127,7 @@ jobs:
             ios/onnxruntime.xcframework \
             ios/wfloat-core-llm.xcframework
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: react-native-wfloat-ios
           path: react-native-wfloat-ios.tgz
@@ -141,13 +141,13 @@ jobs:
       - ios_natives
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install JavaScript dependencies
         working-directory: packages/react-native-wfloat
@@ -155,7 +155,7 @@ jobs:
           corepack enable
           yarn install --immutable
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: react-native-wfloat-*
           path: native-artifacts
@@ -191,25 +191,34 @@ jobs:
       - name: Build package tarball
         working-directory: packages/react-native-wfloat
         run: |
+          node --version
+          npm --version
+          yarn --version
+
           yarn prepare
-          npm pack --ignore-scripts --json > npm-pack.json
 
-          tarball="$(node -e 'console.log(require("./npm-pack.json")[0].filename)')"
-          tar -tzf "${tarball}" > npm-pack-files.txt
+          rm -rf pack-output
+          mkdir -p pack-output
+          npm pack --ignore-scripts --pack-destination pack-output
 
-          grep -q "package/android/src/main/jniLibs/arm64-v8a/libwfloat-llm-jni.so" npm-pack-files.txt
-          grep -q "package/android/src/main/jniLibs/armeabi-v7a/libwfloat-llm-jni.so" npm-pack-files.txt
-          grep -q "package/android/src/main/jniLibs/x86_64/libwfloat-llm-jni.so" npm-pack-files.txt
-          grep -q "package/android/src/main/jniLibs/x86/libwfloat-llm-jni.so" npm-pack-files.txt
-          grep -q "package/ios/sherpa-onnx.xcframework/ios-arm64/libsherpa-onnx.a" npm-pack-files.txt
-          grep -q "package/ios/onnxruntime.xcframework/ios-arm64/libonnxruntime.a" npm-pack-files.txt
-          grep -q "package/ios/wfloat-core-llm.xcframework/ios-arm64/libwfloat-core-llm.a" npm-pack-files.txt
+          tarball="$(find pack-output -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "${tarball}"
 
-      - uses: actions/upload-artifact@v4
+          while IFS= read -r expected_file; do
+            tar -tzf "${tarball}" | grep -Fqx "${expected_file}"
+          done <<'EOF'
+          package/android/src/main/jniLibs/arm64-v8a/libwfloat-llm-jni.so
+          package/android/src/main/jniLibs/armeabi-v7a/libwfloat-llm-jni.so
+          package/android/src/main/jniLibs/x86_64/libwfloat-llm-jni.so
+          package/android/src/main/jniLibs/x86/libwfloat-llm-jni.so
+          package/ios/sherpa-onnx.xcframework/ios-arm64/libsherpa-onnx.a
+          package/ios/onnxruntime.xcframework/ios-arm64/libonnxruntime.a
+          package/ios/wfloat-core-llm.xcframework/ios-arm64/libwfloat-core-llm.a
+          EOF
+
+      - uses: actions/upload-artifact@v7
         with:
           name: react-native-wfloat-package
           path: |
-            packages/react-native-wfloat/*.tgz
-            packages/react-native-wfloat/npm-pack.json
-            packages/react-native-wfloat/npm-pack-files.txt
+            packages/react-native-wfloat/pack-output/*.tgz
           if-no-files-found: error
