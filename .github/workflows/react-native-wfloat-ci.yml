@@ -203,9 +203,10 @@ jobs:
 
           tarball="$(find pack-output -maxdepth 1 -type f -name '*.tgz' -print -quit)"
           test -n "${tarball}"
+          package_files="$(tar -tzf "${tarball}")"
 
           while IFS= read -r expected_file; do
-            tar -tzf "${tarball}" | grep -Fqx "${expected_file}"
+            grep -Fqx "${expected_file}" <<<"${package_files}"
           done <<'EOF'
           package/android/src/main/jniLibs/arm64-v8a/libwfloat-llm-jni.so
           package/android/src/main/jniLibs/armeabi-v7a/libwfloat-llm-jni.so
