@@ -18,7 +18,7 @@ Pod::Spec.new do |s|
   s.authors      = package["author"]
 
   s.platforms    = { :ios => min_ios_version_supported }
-  s.source       = { :git => "https://github.com/wfloat/react-native-wfloat.git", :tag => "#{s.version}" }
+  s.source       = { :git => "https://github.com/wfloat/wfloat.git", :tag => "#{s.version}" }
 
   s.vendored_frameworks = "ios/onnxruntime.xcframework", "ios/sherpa-onnx.xcframework", "ios/wfloat-core-llm.xcframework"
   s.source_files = "ios/**/*.{h,m,mm,cpp}"

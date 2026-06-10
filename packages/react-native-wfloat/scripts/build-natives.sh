@@ -7,6 +7,77 @@ REPO_ROOT="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 SHERPA_DIR="${REPO_ROOT}/vendor/sherpa-onnx"
 ANDROID_LLM_JNI_DIR="${PACKAGE_DIR}/android/llm-jni"
 IOS_LLM_BUILD_SCRIPT="${SCRIPT_DIR}/build-ios-llm-xcframework.sh"
+ANDROID_ABIS=()
+
+normalize_android_abi() {
+  case "$1" in
+    arm64-v8a)
+      echo "arm64-v8a"
+      ;;
+    armeabi-v7a | armv7-eabi)
+      echo "armeabi-v7a"
+      ;;
+    x86_64 | x86-64)
+      echo "x86_64"
+      ;;
+    x86)
+      echo "x86"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+read_android_abis() {
+  local raw abi normalized
+  raw="${WFLOAT_ANDROID_ABIS:-}"
+
+  if [[ -z "${raw}" ]]; then
+    ANDROID_ABIS=(arm64-v8a armeabi-v7a x86_64 x86)
+    return 0
+  fi
+
+  raw="${raw//,/ }"
+  ANDROID_ABIS=()
+
+  for abi in ${raw}; do
+    normalized="$(normalize_android_abi "${abi}" || true)"
+
+    if [[ -z "${normalized}" ]]; then
+      echo "Unsupported Android ABI: ${abi}" >&2
+      echo "Supported ABIs: arm64-v8a armeabi-v7a x86_64 x86" >&2
+      exit 1
+    fi
+
+    ANDROID_ABIS+=("${normalized}")
+  done
+
+  if [[ ${#ANDROID_ABIS[@]} -eq 0 ]]; then
+    echo "WFLOAT_ANDROID_ABIS did not contain any Android ABIs." >&2
+    exit 1
+  fi
+}
+
+android_sherpa_script_for_abi() {
+  case "$1" in
+    arm64-v8a)
+      echo "build-android-arm64-v8a.sh"
+      ;;
+    armeabi-v7a)
+      echo "build-android-armv7-eabi.sh"
+      ;;
+    x86_64)
+      echo "build-android-x86-64.sh"
+      ;;
+    x86)
+      echo "build-android-x86.sh"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
 android_build_dir_for_abi() {
   case "$1" in
@@ -49,8 +120,9 @@ find_android_ndk() {
 
 build_android_llm_jni() {
   local ndk_dir="$1"
+  shift
   local abi build_dir
-  local abis=(arm64-v8a armeabi-v7a x86_64 x86)
+  local abis=("$@")
 
   for abi in "${abis[@]}"; do
     build_dir="$(android_build_dir_for_abi "${abi}")"
@@ -113,14 +185,11 @@ if [[ "${build_ios}" == true ]]; then
 fi
 
 if [[ "${build_android}" == true ]]; then
-  required_android_scripts=(
-    build-android-arm64-v8a.sh
-    build-android-armv7-eabi.sh
-    build-android-x86-64.sh
-    build-android-x86.sh
-  )
+  read_android_abis
+  echo "Android ABIs: ${ANDROID_ABIS[*]}"
 
-  for required_script in "${required_android_scripts[@]}"; do
+  for abi in "${ANDROID_ABIS[@]}"; do
+    required_script="$(android_sherpa_script_for_abi "${abi}")"
     if [[ ! -x "${SHERPA_DIR}/${required_script}" ]]; then
       cat >&2 <<EOF
 Missing Android sherpa-onnx build helper: ${SHERPA_DIR}/${required_script}
@@ -135,7 +204,7 @@ EOF
   done
 
   echo "Building Android sherpa-onnx JNI libraries..."
-  (cd "${SHERPA_DIR}" && ./prepare-react-native-wfloat-android.sh)
+  (cd "${SHERPA_DIR}" && ./prepare-react-native-wfloat-android.sh "${ANDROID_ABIS[@]}")
 
   ndk_dir="$(find_android_ndk || true)"
   if [[ -z "${ndk_dir}" ]]; then
@@ -143,7 +212,7 @@ EOF
     exit 1
   fi
 
-  build_android_llm_jni "${ndk_dir}"
+  build_android_llm_jni "${ndk_dir}" "${ANDROID_ABIS[@]}"
 fi
 
 echo
