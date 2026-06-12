@@ -1,0 +1,225 @@
+name: React Native Wfloat CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "CMakeLists.txt"
+      - "native/wfloat-core/**"
+      - "packages/react-native-wfloat/**"
+      - "vendor/**"
+      - ".github/workflows/react-native-wfloat-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "CMakeLists.txt"
+      - "native/wfloat-core/**"
+      - "packages/react-native-wfloat/**"
+      - "vendor/**"
+      - ".github/workflows/react-native-wfloat-ci.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  android_natives:
+    name: Android natives (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86_64
+          - x86
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make ninja-build unzip wget zip
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;26.1.10909125"
+
+      - name: Install JavaScript dependencies
+        working-directory: packages/react-native-wfloat
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Build Android native artifacts
+        working-directory: packages/react-native-wfloat
+        env:
+          WFLOAT_ANDROID_ABIS: ${{ matrix.abi }}
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.1.10909125"
+          yarn rn:build-natives android
+          yarn rn:stage-natives android
+
+      - name: Archive Android ABI artifacts
+        run: |
+          tar -czf "react-native-wfloat-android-${{ matrix.abi }}.tgz" \
+            -C packages/react-native-wfloat/android/src/main/jniLibs \
+            "${{ matrix.abi }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: react-native-wfloat-android-${{ matrix.abi }}
+          path: react-native-wfloat-android-${{ matrix.abi }}.tgz
+          if-no-files-found: error
+
+  ios_natives:
+    name: iOS natives
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install JavaScript dependencies
+        working-directory: packages/react-native-wfloat
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Build iOS native artifacts
+        working-directory: packages/react-native-wfloat
+        run: |
+          yarn rn:build-natives ios
+          yarn rn:stage-natives ios
+
+      - name: Archive iOS artifacts
+        run: |
+          tar -czf react-native-wfloat-ios.tgz \
+            -C packages/react-native-wfloat \
+            ios/sherpa-onnx.xcframework \
+            ios/onnxruntime.xcframework \
+            ios/wfloat-core-llm.xcframework
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: react-native-wfloat-ios
+          path: react-native-wfloat-ios.tgz
+          if-no-files-found: error
+
+  package:
+    name: Package tarball
+    runs-on: ubuntu-latest
+    needs:
+      - android_natives
+      - ios_natives
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install JavaScript dependencies
+        working-directory: packages/react-native-wfloat
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: react-native-wfloat-*
+          path: native-artifacts
+
+      - name: Restore native artifacts
+        run: |
+          mkdir -p packages/react-native-wfloat/android/src/main/jniLibs
+
+          find native-artifacts -name 'react-native-wfloat-android-*.tgz' -print0 \
+            | while IFS= read -r -d '' archive; do
+                tar -xzf "${archive}" \
+                  -C packages/react-native-wfloat/android/src/main/jniLibs
+              done
+
+          tar -xzf native-artifacts/react-native-wfloat-ios/react-native-wfloat-ios.tgz \
+            -C packages/react-native-wfloat
+
+      - name: Verify native artifact layout
+        working-directory: packages/react-native-wfloat
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            test -f "android/src/main/jniLibs/${abi}/libonnxruntime.so"
+            test -f "android/src/main/jniLibs/${abi}/libsherpa-onnx-jni.so"
+            test -f "android/src/main/jniLibs/${abi}/libsherpa-onnx-c-api.so"
+            test -f "android/src/main/jniLibs/${abi}/libsherpa-onnx-cxx-api.so"
+            test -f "android/src/main/jniLibs/${abi}/libwfloat-llm-jni.so"
+          done
+
+          test -d ios/sherpa-onnx.xcframework
+          test -d ios/onnxruntime.xcframework
+          test -d ios/wfloat-core-llm.xcframework
+
+      - name: Build package tarball
+        working-directory: packages/react-native-wfloat
+        run: |
+          node --version
+          npm --version
+          yarn --version
+
+          yarn prepare
+
+          rm -rf pack-output
+          mkdir -p pack-output
+          npm pack --ignore-scripts --pack-destination pack-output
+
+          tarball="$(find pack-output -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "${tarball}"
+          package_files="$(tar -tzf "${tarball}")"
+
+          while IFS= read -r expected_file; do
+            grep -Fqx "${expected_file}" <<<"${package_files}"
+          done <<'EOF'
+          package/android/src/main/jniLibs/arm64-v8a/libwfloat-llm-jni.so
+          package/android/src/main/jniLibs/armeabi-v7a/libwfloat-llm-jni.so
+          package/android/src/main/jniLibs/x86_64/libwfloat-llm-jni.so
+          package/android/src/main/jniLibs/x86/libwfloat-llm-jni.so
+          package/ios/sherpa-onnx.xcframework/ios-arm64/libsherpa-onnx.a
+          package/ios/onnxruntime.xcframework/ios-arm64/libonnxruntime.a
+          package/ios/wfloat-core-llm.xcframework/ios-arm64/libwfloat-core-llm.a
+          EOF
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: react-native-wfloat-package
+          path: |
+            packages/react-native-wfloat/pack-output/*.tgz
+          if-no-files-found: error

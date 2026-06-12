@@ -9,6 +9,7 @@ IOS_LLM_XCFRAMEWORK="${REPO_ROOT}/out/rn-llm-ios/wfloat-core-llm.xcframework"
 
 IOS_DIR="${PACKAGE_DIR}/ios"
 JNI_LIBS_DIR="${PACKAGE_DIR}/android/src/main/jniLibs"
+ANDROID_ABIS=()
 
 stage_ios=false
 stage_android=false
@@ -37,6 +38,56 @@ else
     esac
   done
 fi
+
+normalize_android_abi() {
+  case "$1" in
+    arm64-v8a)
+      echo "arm64-v8a"
+      ;;
+    armeabi-v7a | armv7-eabi)
+      echo "armeabi-v7a"
+      ;;
+    x86_64 | x86-64)
+      echo "x86_64"
+      ;;
+    x86)
+      echo "x86"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+read_android_abis() {
+  local raw abi normalized
+  raw="${WFLOAT_ANDROID_ABIS:-}"
+
+  if [[ -z "${raw}" ]]; then
+    ANDROID_ABIS=(arm64-v8a armeabi-v7a x86_64 x86)
+    return 0
+  fi
+
+  raw="${raw//,/ }"
+  ANDROID_ABIS=()
+
+  for abi in ${raw}; do
+    normalized="$(normalize_android_abi "${abi}" || true)"
+
+    if [[ -z "${normalized}" ]]; then
+      echo "Unsupported Android ABI: ${abi}" >&2
+      echo "Supported ABIs: arm64-v8a armeabi-v7a x86_64 x86" >&2
+      exit 1
+    fi
+
+    ANDROID_ABIS+=("${normalized}")
+  done
+
+  if [[ ${#ANDROID_ABIS[@]} -eq 0 ]]; then
+    echo "WFLOAT_ANDROID_ABIS did not contain any Android ABIs." >&2
+    exit 1
+  fi
+}
 
 require_dir() {
   local dir="$1"
@@ -166,7 +217,7 @@ android_llm_build_dir_for_abi() {
 stage_android_from_build_dirs() {
   local staged_any=false
   local abi build_dir source_dir destination_dir
-  local abis=(arm64-v8a armeabi-v7a x86_64 x86)
+  local abis=("${ANDROID_ABIS[@]}")
 
   for abi in "${abis[@]}"; do
     build_dir="$(android_build_dir_for_abi "${abi}")"
@@ -189,7 +240,7 @@ stage_android_from_build_dirs() {
 stage_android_from_zip() {
   local archive_path="${SHERPA_DIR}/sherpa-onnx-android.zip"
   local temp_dir abi source_dir destination_dir
-  local abis=(arm64-v8a armeabi-v7a x86_64 x86)
+  local abis=("${ANDROID_ABIS[@]}")
 
   if [[ ! -f "${archive_path}" ]]; then
     return 1
@@ -223,7 +274,7 @@ stage_android_from_zip() {
 
 stage_android_llm_from_build_dirs() {
   local abi build_dir source_lib destination_dir
-  local abis=(arm64-v8a armeabi-v7a x86_64 x86)
+  local abis=("${ANDROID_ABIS[@]}")
 
   for abi in "${abis[@]}"; do
     build_dir="$(android_llm_build_dir_for_abi "${abi}")"
@@ -260,6 +311,8 @@ if [[ "${stage_ios}" == true ]]; then
 fi
 
 if [[ "${stage_android}" == true ]]; then
+  read_android_abis
+  echo "Android ABIs: ${ANDROID_ABIS[*]}"
   echo "Staging Android JNI libraries..."
   mkdir -p "${JNI_LIBS_DIR}"
 
