@@ -1,5 +1,4 @@
 import { createMicrophoneCapture, type MicrophoneCapture } from "../audio/microphone.js";
-import { getPersistentId, setPersistentId } from "../util/persistentIdStorage.js";
 import { SttWorkerBridge } from "../worker/sttWorkerBridge.js";
 import type {
   DecodedAudio,
@@ -122,21 +121,17 @@ export class SttModel {
   ) {}
 
   static async load(modelId: string, options: LoadSttModelOptions = {}): Promise<SttModel> {
-    const cachedPersistentId = getPersistentId();
     const response = await SttWorkerBridge.loadModel(
       {
         modelId,
-        modelAssetHost: options.modelAssetHost,
         language: options.language,
         task: options.task,
       },
-      cachedPersistentId ?? undefined,
       (message) => {
         options.onProgress?.(message.event);
       },
     );
 
-    setPersistentId(response.persistentId);
     options.onProgress?.({ status: "completed" });
 
     return new SttModel(modelId, response.family, response.supportsStreaming);

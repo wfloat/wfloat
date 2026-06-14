@@ -295,10 +295,9 @@ building voice pickers and validating user input.
   replaces any offline model.
 - Microphone capture helpers are package-owned on iOS and Android. Android
   requests `RECORD_AUDIO` at runtime before native capture starts.
-- When testing against a local asset server from the Android Emulator, forward
-  host ports with `adb reverse tcp:4000 tcp:4000` for the asset API and
-  `adb reverse tcp:8081 tcp:8081` for Metro. iOS Simulator can usually reach
-  the Mac host through `localhost` directly.
+- When testing the example app from the Android Emulator, forward Metro with
+  `adb reverse tcp:8081 tcp:8081`. iOS Simulator can usually reach the Mac host
+  through `localhost` directly.
 - Android Emulator microphone testing requires host microphone input to be
   enabled in the emulator's extended controls. If permission is granted but STT
   hears silence, check `Extended controls > Microphone > Virtual microphone

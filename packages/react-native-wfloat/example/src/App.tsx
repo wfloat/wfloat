@@ -42,8 +42,8 @@ type LogEntry = {
 const DEFAULT_TTS_MODEL_ID = 'wfloat/wfloat-tts';
 const DEFAULT_OFFLINE_STT_MODEL_ID = 'openai/whisper-tiny-en';
 const DEFAULT_STREAMING_STT_MODEL_ID = 'k2-fsa/streaming-zipformer-en';
-const DEFAULT_VAD_MODEL_ID = 'silero-vad';
-const DEFAULT_LLM_MODEL_ID = 'smollm2-360m-instruct-q4_k_m';
+const DEFAULT_VAD_MODEL_ID = 'snakers4/silero-vad';
+const DEFAULT_LLM_MODEL_ID = 'HuggingFaceTB/SmolLM2-360M-Instruct';
 const DEFAULT_LLM_PROMPT = 'Write one friendly sentence about local-first AI.';
 const DEFAULT_LLM_MAX_TOKENS = '64';
 const DEFAULT_LLM_TEMPERATURE = '0.7';
@@ -113,8 +113,6 @@ function renderHighlightedText(progressEvent: TtsProgressEvent | null): string {
 }
 
 export default function App() {
-  const [assetHost, setAssetHost] = useState('');
-
   const [ttsModelId, setTtsModelId] = useState(DEFAULT_TTS_MODEL_ID);
   const [ttsModel, setTtsModel] = useState<TtsModel | null>(null);
   const [ttsStatus, setTtsStatus] = useState<ExampleStatus>('idle');
@@ -222,7 +220,6 @@ export default function App() {
     [ttsProgressEvent]
   );
 
-  const normalizedAssetHost = assetHost.trim() || undefined;
   const offlineClipSummary = offlineRecording
     ? 'recording'
     : offlineRecordedClip
@@ -263,7 +260,6 @@ export default function App() {
 
     try {
       const model = await loadTtsModel(ttsModelId, {
-        modelAssetHost: normalizedAssetHost,
         onProgress: (event) => setTtsLoadProgress(event),
       });
       setTtsModel(model);
@@ -429,7 +425,6 @@ export default function App() {
 
     try {
       const model = await loadSttModel(offlineSttModelId, {
-        modelAssetHost: normalizedAssetHost,
         language: 'en',
         onProgress: (event) => setOfflineSttLoadProgress(event),
       });
@@ -551,7 +546,6 @@ export default function App() {
 
     try {
       const model = await loadVadModel(vadModelId, {
-        modelAssetHost: normalizedAssetHost,
         onProgress: (event) => setVadLoadProgress(event),
       });
       setVadModel(model);
@@ -696,7 +690,6 @@ export default function App() {
 
     try {
       const model = await loadSttModel(streamingSttModelId, {
-        modelAssetHost: normalizedAssetHost,
         onProgress: (event) => setStreamingSttLoadProgress(event),
       });
       setStreamingSttModel(model);
@@ -834,7 +827,6 @@ export default function App() {
 
     try {
       const model = await loadLlmModel(llmModelId, {
-        modelAssetHost: normalizedAssetHost,
         onProgress: (event) => {
           if (event.status === 'downloading') {
             setLlmSummary(
@@ -976,19 +968,6 @@ export default function App() {
             <Text style={styles.subtitle}>
               Manual smoke test for TTS, offline STT, and streaming STT on React
               Native.
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Asset API</Text>
-            <InputField
-              label="Model Asset Host"
-              value={assetHost}
-              onChangeText={setAssetHost}
-            />
-            <Text style={styles.helpText}>
-              Leave blank for production. Set this to your local asset API host
-              when testing against a dev server.
             </Text>
           </View>
 

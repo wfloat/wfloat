@@ -1,16 +1,12 @@
-import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional
-from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 
-from ._version import __version__ as PACKAGE_VERSION
-
-
-DEFAULT_MODEL_ASSET_HOST = "https://wfloat.com"
-DEFAULT_MODEL_ASSET_PATH = "/api/model-assets"
+REGISTRY_BASE_URL = "https://registry.wfloat.com"
+WFLOAT_TTS_MODEL_ID = "wfloat/wfloat-tts"
+SILERO_VAD_MODEL_ID = "snakers4/silero-vad"
+SMOLLM2_360M_INSTRUCT_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct"
 
 
 @dataclass(frozen=True)
@@ -21,7 +17,6 @@ class ModelAssets:
     model_tokens_checksum: str
     espeak_data: str
     espeak_checksum: str
-    persistent_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "ModelAssets":
@@ -52,9 +47,6 @@ class ModelAssets:
             model_tokens_checksum=str(data["model_tokens_checksum"]),
             espeak_data=str(data["espeak_data"]),
             espeak_checksum=str(data["espeak_checksum"]),
-            persistent_id=str(data["persistent_id"]).strip()
-            if isinstance(data.get("persistent_id"), str) and str(data.get("persistent_id")).strip()
-            else None,
         )
 
     def to_dict(self) -> Dict[str, str]:
@@ -65,7 +57,6 @@ class ModelAssets:
             "model_tokens_checksum": self.model_tokens_checksum,
             "espeak_data": self.espeak_data,
             "espeak_checksum": self.espeak_checksum,
-            **({"persistent_id": self.persistent_id} if self.persistent_id else {}),
         }
 
 
@@ -88,7 +79,6 @@ class SttModelAssets:
     uncached_decoder_checksum: Optional[str] = None
     cached_decoder: Optional[str] = None
     cached_decoder_checksum: Optional[str] = None
-    persistent_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "SttModelAssets":
@@ -149,7 +139,6 @@ class SttModelAssets:
             uncached_decoder_checksum=optional_string("uncached_decoder_checksum"),
             cached_decoder=optional_string("cached_decoder"),
             cached_decoder_checksum=optional_string("cached_decoder_checksum"),
-            persistent_id=optional_string("persistent_id"),
         )
 
     def to_dict(self) -> Dict[str, str]:
@@ -173,7 +162,6 @@ class SttModelAssets:
             "uncached_decoder_checksum": self.uncached_decoder_checksum,
             "cached_decoder": self.cached_decoder,
             "cached_decoder_checksum": self.cached_decoder_checksum,
-            "persistent_id": self.persistent_id,
         }
         for key, value in optional_fields.items():
             if value:
@@ -186,7 +174,6 @@ class VadModelAssets:
     family: str
     model: str
     model_checksum: Optional[str] = None
-    persistent_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "VadModelAssets":
@@ -221,7 +208,6 @@ class VadModelAssets:
             family=family,
             model=model,
             model_checksum=optional_string("model_checksum"),
-            persistent_id=optional_string("persistent_id"),
         )
 
     def to_dict(self) -> Dict[str, str]:
@@ -231,8 +217,6 @@ class VadModelAssets:
         }
         if self.model_checksum:
             data["model_checksum"] = self.model_checksum
-        if self.persistent_id:
-            data["persistent_id"] = self.persistent_id
         return data
 
 
@@ -244,7 +228,6 @@ class LlmModelAssets:
     context_size: Optional[int] = None
     chat_template: Optional[str] = None
     chat_template_format: Optional[str] = None
-    persistent_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "LlmModelAssets":
@@ -287,7 +270,6 @@ class LlmModelAssets:
             context_size=context_size,
             chat_template=optional_string("chat_template"),
             chat_template_format=optional_string("chat_template_format"),
-            persistent_id=optional_string("persistent_id"),
         )
 
     def to_dict(self) -> Dict[str, object]:
@@ -303,17 +285,7 @@ class LlmModelAssets:
             data["chat_template"] = self.chat_template
         if self.chat_template_format:
             data["chat_template_format"] = self.chat_template_format
-        if self.persistent_id:
-            data["persistent_id"] = self.persistent_id
         return data
-
-
-def get_package_version(default: str = "0.0.0") -> str:
-    return PACKAGE_VERSION or default
-
-
-def get_model_asset_host() -> str:
-    return os.environ.get("WFLOAT_MODEL_ASSET_HOST", DEFAULT_MODEL_ASSET_HOST).rstrip("/")
 
 
 def filename_from_url(url: str, fallback: str) -> str:
@@ -322,127 +294,80 @@ def filename_from_url(url: str, fallback: str) -> str:
     return filename or fallback
 
 
-def _fetch_asset_payload(
-    model_name: str,
-    *,
-    persistent_id: Optional[str] = None,
-    package_version_override: Optional[str] = None,
-    timeout: float = 60.0,
-    extra_query: Optional[Mapping[str, str]] = None,
-) -> Dict[str, object]:
-    version = package_version_override or get_package_version()
-    query = {
-        "platform": "python",
-        "version": version,
-        "model_name": model_name,
-    }
-    if extra_query:
-        query.update(extra_query)
-    if persistent_id:
-        query["persistent_id"] = persistent_id
+def fetch_model_assets(model_name: str) -> ModelAssets:
+    if model_name != WFLOAT_TTS_MODEL_ID:
+        raise ValueError("Unsupported TTS model: %s" % model_name)
 
-    params = urlencode(query)
-    url = "%s%s?%s" % (get_model_asset_host(), DEFAULT_MODEL_ASSET_PATH, params)
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "wfloat-python/%s" % version,
-        },
-        method="GET",
+    return ModelAssets(
+        model_onnx="%s/models/wfloat-model/1.0.2/wfloat-model-1.0.2.onnx" % REGISTRY_BASE_URL,
+        model_onnx_checksum="a7e65773a29499b80a393bbe08af3507e18f6ef95faa0eaf7cb4ba353c8693ae",
+        model_tokens="%s/models/wfloat-model/1.0.2/wfloat-model-1.0.2_tokens.txt"
+        % REGISTRY_BASE_URL,
+        model_tokens_checksum="96fd291bede0544469d4d8935d462fdd6dc947f22ad47369753e1a82db3d748e",
+        espeak_data="%s/espeak-ng-data/espeak-ng-data-2023.9.7-4.zip" % REGISTRY_BASE_URL,
+        espeak_checksum="56c2879ab1ab44c594c78f34e76c50cf1dd7b8f6ca0ca2634b6766a6edb32add",
     )
 
-    with urlopen(request, timeout=timeout) as response:
-        payload = response.read().decode("utf-8")
 
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Failed to decode model asset response JSON.") from exc
+def fetch_stt_assets(model_name: str) -> SttModelAssets:
+    if model_name == "openai/whisper-tiny-en":
+        return SttModelAssets(
+            family="whisper",
+            encoder="%s/models/openai/whisper-tiny-en/tiny.en-encoder.int8.onnx"
+            % REGISTRY_BASE_URL,
+            decoder="%s/models/openai/whisper-tiny-en/tiny.en-decoder.int8.onnx"
+            % REGISTRY_BASE_URL,
+            tokens="%s/models/openai/whisper-tiny-en/tiny.en-tokens.txt" % REGISTRY_BASE_URL,
+        )
 
-    if not isinstance(data, dict):
-        raise RuntimeError("Model asset response must be a JSON object.")
+    if model_name == "k2-fsa/streaming-zipformer-en":
+        return SttModelAssets(
+            family="zipformer-transducer",
+            encoder="%s/models/k2-fsa/streaming-zipformer-en/encoder-epoch-99-avg-1.int8.onnx"
+            % REGISTRY_BASE_URL,
+            decoder="%s/models/k2-fsa/streaming-zipformer-en/decoder-epoch-99-avg-1.onnx"
+            % REGISTRY_BASE_URL,
+            joiner="%s/models/k2-fsa/streaming-zipformer-en/joiner-epoch-99-avg-1.onnx"
+            % REGISTRY_BASE_URL,
+            tokens="%s/models/k2-fsa/streaming-zipformer-en/tokens.txt" % REGISTRY_BASE_URL,
+        )
 
-    return data
+    if model_name == "UsefulSensors/moonshine-tiny":
+        return SttModelAssets(
+            family="moonshine",
+            preprocessor="%s/models/usefulsensors-moonshine-tiny/preprocessor.onnx"
+            % REGISTRY_BASE_URL,
+            encoder="%s/models/usefulsensors-moonshine-tiny/encoder.int8.onnx"
+            % REGISTRY_BASE_URL,
+            uncached_decoder="%s/models/usefulsensors-moonshine-tiny/uncached_decoder.int8.onnx"
+            % REGISTRY_BASE_URL,
+            cached_decoder="%s/models/usefulsensors-moonshine-tiny/cached_decoder.int8.onnx"
+            % REGISTRY_BASE_URL,
+            tokens="%s/models/usefulsensors-moonshine-tiny/tokens.txt" % REGISTRY_BASE_URL,
+        )
+
+    raise ValueError("Unsupported STT model: %s" % model_name)
 
 
-def fetch_model_assets(
-    model_name: str,
-    *,
-    persistent_id: Optional[str] = None,
-    package_version_override: Optional[str] = None,
-    timeout: float = 60.0,
-) -> ModelAssets:
-    data = _fetch_asset_payload(
-        model_name,
-        persistent_id=persistent_id,
-        package_version_override=package_version_override,
-        timeout=timeout,
+def fetch_vad_assets(model_name: str) -> VadModelAssets:
+    if model_name != SILERO_VAD_MODEL_ID:
+        raise ValueError("Unsupported VAD model: %s" % model_name)
+
+    return VadModelAssets(
+        family="silero-vad",
+        model="%s/models/snakers4/silero-vad/silero_vad.onnx" % REGISTRY_BASE_URL,
     )
-    return ModelAssets.from_dict(data)
 
 
-def fetch_stt_assets(
-    model_name: str,
-    *,
-    family: Optional[str] = None,
-    persistent_id: Optional[str] = None,
-    package_version_override: Optional[str] = None,
-    timeout: float = 60.0,
-) -> SttModelAssets:
-    extra_query = {}
-    if family:
-        extra_query["family"] = family
+def fetch_llm_assets(model_name: str) -> LlmModelAssets:
+    if model_name != SMOLLM2_360M_INSTRUCT_MODEL_ID:
+        raise ValueError("Unsupported LLM model: %s" % model_name)
 
-    data = _fetch_asset_payload(
-        model_name,
-        persistent_id=persistent_id,
-        package_version_override=package_version_override,
-        timeout=timeout,
-        extra_query=extra_query,
+    return LlmModelAssets(
+        family="smollm",
+        model="%s/models/huggingface/smollm2-360m-instruct/SmolLM2-360M-Instruct.Q4_K_M.gguf"
+        % REGISTRY_BASE_URL,
+        model_checksum="75c4346ef9e855ed630f80078a2430cf63aaca599e340360998a313070fcdc47",
+        context_size=8192,
+        chat_template_format="chatml",
     )
-    return SttModelAssets.from_dict(data)
-
-
-def fetch_vad_assets(
-    model_name: str,
-    *,
-    family: Optional[str] = None,
-    persistent_id: Optional[str] = None,
-    package_version_override: Optional[str] = None,
-    timeout: float = 60.0,
-) -> VadModelAssets:
-    extra_query = {}
-    if family:
-        extra_query["family"] = family
-
-    data = _fetch_asset_payload(
-        model_name,
-        persistent_id=persistent_id,
-        package_version_override=package_version_override,
-        timeout=timeout,
-        extra_query=extra_query,
-    )
-    return VadModelAssets.from_dict(data)
-
-
-def fetch_llm_assets(
-    model_name: str,
-    *,
-    family: Optional[str] = None,
-    persistent_id: Optional[str] = None,
-    package_version_override: Optional[str] = None,
-    timeout: float = 60.0,
-) -> LlmModelAssets:
-    extra_query = {"capability": "llm"}
-    if family:
-        extra_query["family"] = family
-
-    data = _fetch_asset_payload(
-        model_name,
-        persistent_id=persistent_id,
-        package_version_override=package_version_override,
-        timeout=timeout,
-        extra_query=extra_query,
-    )
-    return LlmModelAssets.from_dict(data)

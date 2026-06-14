@@ -6,8 +6,6 @@ from ._assets import fetch_model_assets
 from ._cache import (
     CachedModelAssets,
     cache_model_assets,
-    load_persistent_id,
-    save_persistent_id,
 )
 from ._constants import (
     DEFAULT_MODEL_NAME,
@@ -372,12 +370,7 @@ def load(
 ) -> Model:
     normalized_model_name = normalize_text(model_name)
     resolved_cache_dir = Path(cache_dir) if cache_dir is not None else None
-    persistent_id = load_persistent_id(resolved_cache_dir)
-    assets = fetch_model_assets(
-        normalized_model_name,
-        persistent_id=persistent_id,
-    )
-    save_persistent_id(assets.persistent_id or persistent_id, resolved_cache_dir)
+    assets = fetch_model_assets(normalized_model_name)
     cached_assets = cache_model_assets(
         normalized_model_name,
         assets,

@@ -194,13 +194,8 @@
     <h1>Wfloat Web Smoke Test</h1>
     <p>
       This page loads <code>wfloat/wfloat-tts</code> through the shared sherpa
-      speech runtime using a local asset API override.
+      speech runtime.
     </p>
-
-    <div class="field">
-      <label for="assetHost">Asset API Host</label>
-      <input id="assetHost" value="http://localhost:4000" />
-    </div>
 
     <div class="stack">
       <section>
@@ -345,7 +340,7 @@
         <div class="grid">
           <div class="field">
             <label for="vadModelId">Model ID</label>
-            <input id="vadModelId" value="silero-vad" />
+            <input id="vadModelId" value="snakers4/silero-vad" />
           </div>
           <div class="field">
             <label for="vadAudio">Audio File</label>
@@ -373,15 +368,15 @@
       <section>
         <h2>LLM Smoke</h2>
         <p class="hint">
-          This loads a GGUF through the local model asset API and runs it with
-          the llama.cpp WASM runtime. Use Chat for instruct/chat GGUF models;
-          Raw Generate sends the prompt without chat formatting.
+          This loads a GGUF from the registry and runs it with the llama.cpp WASM
+          runtime. Use Chat for instruct/chat GGUF models; Raw Generate sends the
+          prompt without chat formatting.
         </p>
 
         <div class="grid">
           <div class="field">
             <label for="llmModelId">Model ID</label>
-            <input id="llmModelId" value="smollm2-360m-instruct-q4_k_m" />
+            <input id="llmModelId" value="HuggingFaceTB/SmolLM2-360M-Instruct" />
           </div>
           <div class="field">
             <label for="llmMaxTokens">Max Tokens</label>

@@ -33,7 +33,6 @@ export type StreamingTranscriptionResult = {
 
 export type LoadSttModelOptions = {
   onProgress?: (event: LoadModelProgressEvent) => void;
-  modelAssetHost?: string;
   language?: string;
   task?: 'transcribe' | 'translate';
 };

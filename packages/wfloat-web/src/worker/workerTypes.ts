@@ -9,15 +9,13 @@ import type { LoadModelProgressEvent, TtsEmotion } from "../tts/types.js";
 import type { VadDetectionResult, VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 
 export type WorkerRequestTemplate =
-  | { type: "speech-load-model"; modelId: string; persistentId?: string; modelAssetHost?: string }
+  | { type: "speech-load-model"; modelId: string }
   | { type: "speech-generate"; options: SpeechGenerateWorkerOptions }
   | { type: "speech-generate-dialogue"; options: SpeechGenerateDialogueWorkerOptions }
   | { type: "speech-terminate-early" }
   | {
       type: "stt-load-model";
       modelId: string;
-      persistentId?: string;
-      modelAssetHost?: string;
       language?: string;
       task?: "transcribe" | "translate";
     }
@@ -54,8 +52,6 @@ export type WorkerRequestTemplate =
   | {
       type: "vad-load-model";
       modelId: string;
-      persistentId?: string;
-      modelAssetHost?: string;
       threshold?: number;
       minSilenceDurationSec?: number;
       minSpeechDurationSec?: number;
@@ -90,8 +86,6 @@ export type WorkerRequestTemplate =
   | {
       type: "llm-load-model";
       modelId: string;
-      persistentId?: string;
-      modelAssetHost?: string;
       contextSize?: number;
       numThreads?: number;
     }
@@ -107,7 +101,7 @@ export type WorkerRequestTemplate =
 export type WorkerRequest = WorkerRequestTemplate & { id: number };
 
 export type WorkerResponse =
-  | { id: number; type: "speech-load-model-done"; sampleRate: number; persistentId?: string }
+  | { id: number; type: "speech-load-model-done"; sampleRate: number }
   | { id: number; type: "speech-load-model-progress"; event: LoadModelProgressEvent }
   | { id: number; type: "speech-generate-done" }
   | { id: number; type: "request-error"; error: string }
@@ -136,7 +130,6 @@ export type WorkerResponse =
       type: "stt-load-model-done";
       family: string;
       supportsStreaming: boolean;
-      persistentId?: string;
     }
   | {
       id: number;
@@ -189,7 +182,6 @@ export type WorkerResponse =
       id: number;
       type: "vad-load-model-done";
       family: string;
-      persistentId?: string;
     }
 	  | {
 	      id: number;
@@ -237,7 +229,6 @@ export type WorkerResponse =
       family: string;
       contextSize: number;
       chatTemplateFormat: "gguf" | "chatml";
-      persistentId?: string;
     }
   | {
       id: number;
@@ -274,19 +265,12 @@ export type SpeechGenerateDialogueWorkerOptions = {
   silenceBetweenSegmentsSec?: number;
 };
 
-export type GetModelAssetsArgs = {
-  modelId: string;
-  platform: string;
-  version: string;
-};
-
 export type ModelAssetsResponse = {
   model_onnx: string;
   model_tokens: string;
   wasm_binary: string;
   wasm_data?: string;
   espeak_data?: string;
-  persistent_id?: string;
 };
 
 export type SttModelAssetsResponse = {
@@ -300,7 +284,6 @@ export type SttModelAssetsResponse = {
   joiner?: string;
   uncached_decoder?: string;
   cached_decoder?: string;
-  persistent_id?: string;
 };
 
 export type VadModelAssetsResponse = {
@@ -308,7 +291,6 @@ export type VadModelAssetsResponse = {
   model: string;
   wasm_binary: string;
   wasm_data?: string;
-  persistent_id?: string;
 };
 
 export type LlmModelAssetsResponse = {
@@ -318,7 +300,6 @@ export type LlmModelAssetsResponse = {
   wasm_data?: string;
   context_size?: number;
   chat_template_format?: "gguf" | "chatml";
-  persistent_id?: string;
 };
 
 type SerializableLlmGenerationOptions = Omit<LlmGenerationOptions, "onToken">;

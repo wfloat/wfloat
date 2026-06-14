@@ -101,16 +101,12 @@ export class TtsWorkerBridge {
 
   static async loadModel(
     modelId: string,
-    persistentId: string | undefined,
-    modelAssetHost: string | undefined,
     onProgress?: (message: Extract<WorkerResponse, { type: "speech-load-model-progress" }>) => void,
   ): Promise<Extract<WorkerResponse, { type: "speech-load-model-done" }>> {
     const response = await this.request(
       {
         type: "speech-load-model",
         modelId,
-        ...(persistentId ? { persistentId } : {}),
-        ...(modelAssetHost ? { modelAssetHost } : {}),
       },
       {
         onLoadProgress: onProgress,

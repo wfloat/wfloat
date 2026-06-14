@@ -34,7 +34,6 @@ export type LlmGenerationOptions = {
 export type LlmChatTemplateFormat = "gguf" | "chatml";
 
 export type LoadLlmModelOptions = {
-  modelAssetHost?: string;
   contextSize?: number;
   numThreads?: number;
   onProgress?: (event: LoadModelProgressEvent) => void;

@@ -2,7 +2,6 @@ import type { LoadModelProgressEvent } from '../tts/types';
 
 export type LoadVadModelOptions = {
   onProgress?: (event: LoadModelProgressEvent) => void;
-  modelAssetHost?: string;
   threshold?: number;
   minSilenceDurationSec?: number;
   minSpeechDurationSec?: number;

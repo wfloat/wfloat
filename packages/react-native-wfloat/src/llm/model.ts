@@ -153,7 +153,7 @@ export class LlmModel {
     modelId: string,
     options: LoadLlmModelOptions = {}
   ): Promise<LlmModel> {
-    const assets = await getLlmModelAssets(modelId, options.modelAssetHost);
+    const assets = await getLlmModelAssets(modelId);
     const progressSubscription = Wfloat.onLoadModelProgress(
       (event: NativeLoadModelProgressEvent) => {
         const normalized = normalizeLoadProgressEvent(event);

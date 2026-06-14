@@ -216,7 +216,7 @@ export class TtsModel {
     );
 
     try {
-      const assets = await getModelAssets(modelId, options.modelAssetHost);
+      const assets = await getModelAssets(modelId);
       await Wfloat.loadModel({
         modelId,
         modelUrl: assets.model_onnx,

@@ -1,6 +1,6 @@
 import type { LoadModelProgressEvent } from "../tts/types.js";
 import type { StreamingTranscriptionResult, TranscriptionResult } from "../stt/types.js";
-import type { SttModelAssetsResponse, WorkerRequest, WorkerResponse } from "./workerTypes.js";
+import type { WorkerRequest, WorkerResponse } from "./workerTypes.js";
 // @ts-ignore
 import workerCode from "./worker-inline.js";
 
@@ -84,9 +84,7 @@ export class SttWorkerBridge {
       modelId: string;
       language?: string;
       task?: "transcribe" | "translate";
-      modelAssetHost?: string;
     },
-    persistentId: string | undefined,
     onProgress?: (message: { event: LoadModelProgressEvent }) => void,
   ): Promise<Extract<WorkerResponse, { type: "stt-load-model-done" }>> {
     const id = this.id;
@@ -97,8 +95,6 @@ export class SttWorkerBridge {
         id,
         type: "stt-load-model",
         modelId: options.modelId,
-        ...(persistentId ? { persistentId } : {}),
-        ...(options.modelAssetHost ? { modelAssetHost: options.modelAssetHost } : {}),
         ...(options.language ? { language: options.language } : {}),
         ...(options.task ? { task: options.task } : {}),
       },
@@ -236,5 +232,3 @@ export class SttWorkerBridge {
     }
   }
 }
-
-export type { SttModelAssetsResponse };

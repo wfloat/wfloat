@@ -1,5 +1,4 @@
 import { createMicrophoneCapture, type MicrophoneCapture } from "../audio/microphone.js";
-import { getPersistentId, setPersistentId } from "../util/persistentIdStorage.js";
 import { VadWorkerBridge } from "../worker/vadWorkerBridge.js";
 import type {
   DecodedVadAudio,
@@ -247,23 +246,19 @@ export class VadModel {
   ) {}
 
   static async load(modelId: string, options: LoadVadModelOptions = {}): Promise<VadModel> {
-    const cachedPersistentId = getPersistentId();
     const response = await VadWorkerBridge.loadModel(
       {
         modelId,
-        modelAssetHost: options.modelAssetHost,
         threshold: options.threshold,
         minSilenceDurationSec: options.minSilenceDurationSec,
         minSpeechDurationSec: options.minSpeechDurationSec,
         maxSpeechDurationSec: options.maxSpeechDurationSec,
       },
-      cachedPersistentId ?? undefined,
       (message) => {
         options.onProgress?.(message.event);
       },
     );
 
-    setPersistentId(response.persistentId);
     options.onProgress?.({ status: "completed" });
 
     return new VadModel(modelId, response.family);

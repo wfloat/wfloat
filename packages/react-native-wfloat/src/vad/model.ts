@@ -223,7 +223,7 @@ export class VadModel {
     modelId: string,
     options: LoadVadModelOptions = {}
   ): Promise<VadModel> {
-    const modelAssets = await getVadModelAssets(modelId, options.modelAssetHost);
+    const modelAssets = await getVadModelAssets(modelId);
     const progressSubscription = Wfloat.onLoadModelProgress(
       (event: NativeLoadModelProgressEvent) => {
         const normalized = normalizeLoadProgressEvent(event);

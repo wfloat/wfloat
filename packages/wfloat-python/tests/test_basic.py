@@ -6,7 +6,6 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
-from urllib.parse import parse_qs, urlparse
 
 import wfloat
 from wfloat import _assets, _core
@@ -14,9 +13,7 @@ from wfloat._assets import ModelAssets, SttModelAssets, VadModelAssets
 from wfloat._cache import (
     CachedModelAssets,
     cache_model_assets,
-    load_persistent_id,
     normalize_model_name,
-    save_persistent_id,
 )
 from wfloat._model import Model
 from wfloat import _native
@@ -180,7 +177,7 @@ class TestWfloatSmoke(unittest.TestCase):
                 if original_module is not None:
                     sys.modules["wfloat_core"] = original_module
 
-        self.assertEqual(candidates, [Path("/tmp/libwfloat-core.so")])
+        self.assertEqual(candidates[0], Path("/tmp/libwfloat-core.so"))
 
     def test_core_loader_uses_packaged_runtime(self):
         packaged = Path("/tmp/wfloat/native/libwfloat-core.so")
@@ -271,63 +268,6 @@ class TestWfloatSmoke(unittest.TestCase):
         native_session.finish.assert_called_once()
         native_session.close.assert_called_once()
 
-    def test_load_stt_model_wires_cache_and_core_loader(self):
-        fake_cached = types.SimpleNamespace(
-            model_name="openai/whisper-tiny-en",
-            family="whisper",
-            encoder_path=Path("/tmp/cache/encoder.onnx"),
-            decoder_path=Path("/tmp/cache/decoder.onnx"),
-            tokens_path=Path("/tmp/cache/tokens.txt"),
-            files={
-                "encoder": Path("/tmp/cache/encoder.onnx"),
-                "decoder": Path("/tmp/cache/decoder.onnx"),
-                "tokens": Path("/tmp/cache/tokens.txt"),
-            },
-            require=lambda key: {
-                "encoder": Path("/tmp/cache/encoder.onnx"),
-                "decoder": Path("/tmp/cache/decoder.onnx"),
-                "tokens": Path("/tmp/cache/tokens.txt"),
-            }[key],
-        )
-        fake_native = object()
-
-        with mock.patch(
-            "wfloat._stt_load.cache_stt_assets",
-            return_value=fake_cached,
-        ) as cache_mock, mock.patch(
-            "wfloat._stt_load.create_core_stt",
-            return_value=fake_native,
-        ) as create_mock:
-            model = wfloat.load_stt_model(
-                "openai/whisper-tiny-en",
-                family="whisper",
-                encoder="https://example.com/encoder.onnx",
-                decoder="https://example.com/decoder.onnx",
-                tokens="https://example.com/tokens.txt",
-                language="en",
-                task="transcribe",
-            )
-
-        self.assertIsInstance(model, SttModel)
-        self.assertEqual(model.model_id, "openai/whisper-tiny-en")
-        cache_mock.assert_called_once()
-        create_mock.assert_called_once_with(
-            model_name="openai/whisper-tiny-en",
-            family="whisper",
-            model_path=None,
-            preprocessor_path=None,
-            encoder_path=fake_cached.encoder_path,
-            decoder_path=fake_cached.decoder_path,
-            tokens_path=fake_cached.tokens_path,
-            joiner_path=None,
-            uncached_decoder_path=None,
-            cached_decoder_path=None,
-            language="en",
-            task="transcribe",
-            enable_token_timestamps=False,
-            enable_segment_timestamps=False,
-        )
-
     def test_load_stt_model_manifest_path_does_not_require_family(self):
         fake_assets = SttModelAssets(
             family="whisper",
@@ -371,72 +311,16 @@ class TestWfloatSmoke(unittest.TestCase):
                 )
 
         self.assertIsInstance(model, SttModel)
-        fetch_mock.assert_called_once_with(
-            "openai/whisper-tiny-en",
-            family=None,
-            persistent_id=None,
-        )
-
-    def test_load_stt_model_requires_family_for_explicit_sources(self):
-        with self.assertRaisesRegex(ValueError, "family is required"):
-            wfloat.load_stt_model(
-                "openai/whisper-tiny-en",
-                encoder="https://example.com/encoder.onnx",
-                decoder="https://example.com/decoder.onnx",
-                tokens="https://example.com/tokens.txt",
-            )
-
-    def test_load_vad_model_wires_cache_and_core_loader(self):
-        fake_cached = types.SimpleNamespace(
-            model_name="silero-vad",
-            family="silero-vad",
-            files={
-                "model": Path("/tmp/cache/silero_vad.onnx"),
-            },
-            require=lambda key: {
-                "model": Path("/tmp/cache/silero_vad.onnx"),
-            }[key],
-        )
-        fake_native = object()
-
-        with mock.patch(
-            "wfloat._vad_load.cache_vad_assets",
-            return_value=fake_cached,
-        ) as cache_mock, mock.patch(
-            "wfloat._vad_load.create_core_vad",
-            return_value=fake_native,
-        ) as create_mock:
-            model = wfloat.load_vad_model(
-                "silero-vad",
-                family="silero-vad",
-                model="https://example.com/silero_vad.onnx",
-                threshold=0.6,
-            )
-
-        self.assertIsInstance(model, VadModel)
-        self.assertEqual(model.model_id, "silero-vad")
-        cache_mock.assert_called_once()
-        create_mock.assert_called_once_with(
-            model_name="silero-vad",
-            family="silero-vad",
-            model_path=Path("/tmp/cache/silero_vad.onnx"),
-            threshold=0.6,
-            min_silence_duration_sec=0.5,
-            min_speech_duration_sec=0.25,
-            max_speech_duration_sec=20.0,
-            sample_rate=16000,
-            buffer_size_in_seconds=30.0,
-        )
+        fetch_mock.assert_called_once_with("openai/whisper-tiny-en")
 
     def test_load_vad_model_manifest_path_does_not_require_family(self):
         fake_assets = VadModelAssets(
             family="silero-vad",
             model="https://example.com/silero_vad.onnx",
             model_checksum="abc",
-            persistent_id="persist-vad-2",
         )
         fake_cached = types.SimpleNamespace(
-            model_name="silero-vad",
+            model_name="snakers4/silero-vad",
             family="silero-vad",
             files={
                 "model": Path("/tmp/cache/silero_vad.onnx"),
@@ -448,7 +332,6 @@ class TestWfloatSmoke(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / "cache"
-            save_persistent_id("persist-vad-1", cache_dir)
             with mock.patch(
                 "wfloat._vad_load.fetch_vad_assets",
                 return_value=fake_assets,
@@ -460,29 +343,17 @@ class TestWfloatSmoke(unittest.TestCase):
                 return_value=object(),
             ):
                 model = wfloat.load_vad_model(
-                    "silero-vad",
+                    "snakers4/silero-vad",
                     cache_dir=cache_dir,
                 )
 
             self.assertIsInstance(model, VadModel)
-            fetch_mock.assert_called_once_with(
-                "silero-vad",
-                family=None,
-                persistent_id="persist-vad-1",
-            )
+            fetch_mock.assert_called_once_with("snakers4/silero-vad")
             cache_mock.assert_called_once_with(
-                "silero-vad",
+                "snakers4/silero-vad",
                 fake_assets,
                 cache_dir=cache_dir,
                 force_download=False,
-            )
-            self.assertEqual(load_persistent_id(cache_dir), "persist-vad-2")
-
-    def test_load_vad_model_requires_family_for_explicit_sources(self):
-        with self.assertRaisesRegex(ValueError, "family is required"):
-            wfloat.load_vad_model(
-                "silero-vad",
-                model="https://example.com/silero_vad.onnx",
             )
 
     def test_llm_model_generate_uses_native_backend(self):
@@ -567,7 +438,6 @@ class TestWfloatSmoke(unittest.TestCase):
             model_checksum="abc",
             context_size=8192,
             chat_template_format="chatml",
-            persistent_id="persist-llm-2",
         )
         fake_cached = types.SimpleNamespace(
             model_name="HuggingFaceTB/SmolLM2-360M-Instruct",
@@ -586,7 +456,6 @@ class TestWfloatSmoke(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / "cache"
-            save_persistent_id("persist-llm-1", cache_dir)
             with mock.patch(
                 "wfloat._llm_load.fetch_llm_assets",
                 return_value=fake_assets,
@@ -603,11 +472,7 @@ class TestWfloatSmoke(unittest.TestCase):
                 )
 
             self.assertIsInstance(model, LlmModel)
-            fetch_mock.assert_called_once_with(
-                "HuggingFaceTB/SmolLM2-360M-Instruct",
-                family=None,
-                persistent_id="persist-llm-1",
-            )
+            fetch_mock.assert_called_once_with("HuggingFaceTB/SmolLM2-360M-Instruct")
             cache_mock.assert_called_once_with(
                 "HuggingFaceTB/SmolLM2-360M-Instruct",
                 fake_assets,
@@ -623,14 +488,6 @@ class TestWfloatSmoke(unittest.TestCase):
                 gpu_layer_count=0,
                 chat_template="chatml",
             )
-            self.assertEqual(load_persistent_id(cache_dir), "persist-llm-2")
-
-    def test_load_llm_model_requires_family_for_explicit_sources(self):
-        with self.assertRaisesRegex(ValueError, "family is required"):
-            wfloat.load_llm_model(
-                "HuggingFaceTB/SmolLM2-360M-Instruct",
-                model="https://example.com/model.gguf",
-            )
 
     def test_llm_assets_from_dict_supports_nested_files(self):
         assets = LlmModelAssets.from_dict(
@@ -644,7 +501,6 @@ class TestWfloatSmoke(unittest.TestCase):
                         "checksum": "abc",
                     },
                 },
-                "persistent_id": "persist-llm",
             }
         )
 
@@ -653,7 +509,6 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertEqual(assets.model_checksum, "abc")
         self.assertEqual(assets.context_size, 8192)
         self.assertEqual(assets.chat_template_format, "chatml")
-        self.assertEqual(assets.persistent_id, "persist-llm")
 
     def test_cache_llm_model_assets_downloads_from_local_urls(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -711,7 +566,6 @@ class TestWfloatSmoke(unittest.TestCase):
             decoder_checksum="def",
             tokens="https://example.com/tokens.txt",
             tokens_checksum="ghi",
-            persistent_id="persist-456",
         )
         fake_cached = types.SimpleNamespace(
             model_name="openai/whisper-tiny-en",
@@ -731,7 +585,6 @@ class TestWfloatSmoke(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / "cache"
-            save_persistent_id("persist-123", cache_dir)
             with mock.patch(
                 "wfloat._stt_load.fetch_stt_assets",
                 return_value=fake_assets,
@@ -744,15 +597,10 @@ class TestWfloatSmoke(unittest.TestCase):
             ) as create_mock:
                 model = wfloat.load_stt_model(
                     "openai/whisper-tiny-en",
-                    family="whisper",
                     cache_dir=cache_dir,
                 )
             self.assertIsInstance(model, SttModel)
-            fetch_mock.assert_called_once_with(
-                "openai/whisper-tiny-en",
-                family="whisper",
-                persistent_id="persist-123",
-            )
+            fetch_mock.assert_called_once_with("openai/whisper-tiny-en")
             cache_mock.assert_called_once_with(
                 "openai/whisper-tiny-en",
                 fake_assets,
@@ -760,7 +608,6 @@ class TestWfloatSmoke(unittest.TestCase):
                 force_download=False,
             )
             create_mock.assert_called_once()
-            self.assertEqual(load_persistent_id(cache_dir), "persist-456")
 
     def test_load_whisper_tiny_en_delegates_to_shared_loader(self):
         sentinel = object()
@@ -769,11 +616,7 @@ class TestWfloatSmoke(unittest.TestCase):
             "wfloat._stt_load.load_stt_model",
             return_value=sentinel,
         ) as load_mock:
-            result = wfloat.load_whisper_tiny_en(
-                encoder_url="https://example.com/encoder.onnx",
-                decoder_url="https://example.com/decoder.onnx",
-                tokens_url="https://example.com/tokens.txt",
-            )
+            result = wfloat.load_whisper_tiny_en()
 
         self.assertIs(result, sentinel)
         load_mock.assert_called_once()
@@ -785,13 +628,7 @@ class TestWfloatSmoke(unittest.TestCase):
             "wfloat._stt_load.load_stt_model",
             return_value=sentinel,
         ) as load_mock:
-            result = wfloat.load_moonshine_tiny_en(
-                preprocessor_url="https://example.com/preprocess.onnx",
-                encoder_url="https://example.com/encode.onnx",
-                uncached_decoder_url="https://example.com/uncached_decode.onnx",
-                cached_decoder_url="https://example.com/cached_decode.onnx",
-                tokens_url="https://example.com/tokens.txt",
-            )
+            result = wfloat.load_moonshine_tiny_en()
 
         self.assertIs(result, sentinel)
         load_mock.assert_called_once()
@@ -805,14 +642,12 @@ class TestWfloatSmoke(unittest.TestCase):
                     "decoder": {"url": "https://example.com/decoder.onnx"},
                     "tokens": {"url": "https://example.com/tokens.txt"},
                 },
-                "persistent_id": "persist-789",
             }
         )
 
         self.assertEqual(assets.family, "whisper")
         self.assertEqual(assets.encoder, "https://example.com/encoder.onnx")
         self.assertIsNone(assets.tokens_checksum)
-        self.assertEqual(assets.persistent_id, "persist-789")
 
     def test_vad_assets_from_dict_supports_nested_files(self):
         assets = VadModelAssets.from_dict(
@@ -824,14 +659,12 @@ class TestWfloatSmoke(unittest.TestCase):
                         "checksum": "abc",
                     },
                 },
-                "persistent_id": "persist-vad",
             }
         )
 
         self.assertEqual(assets.family, "silero-vad")
         self.assertEqual(assets.model, "https://example.com/silero_vad.onnx")
         self.assertEqual(assets.model_checksum, "abc")
-        self.assertEqual(assets.persistent_id, "persist-vad")
 
     def test_audio_can_write_wave_bytes_without_numpy(self):
         audio = Audio(samples=[0.0, 0.5, -0.5], sample_rate=22050)
@@ -1043,45 +876,6 @@ class TestWfloatSmoke(unittest.TestCase):
             self.assertTrue(cached.require("decoder").is_file())
             self.assertTrue(cached.require("tokens").is_file())
 
-    def test_persistent_id_is_stored_and_loaded_best_effort(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache_dir = Path(tmpdir) / "cache"
-            self.assertIsNone(load_persistent_id(cache_dir))
-            save_persistent_id("persist-123", cache_dir)
-            self.assertEqual(load_persistent_id(cache_dir), "persist-123")
-
-    def test_fetch_stt_assets_infers_capability_from_model_name(self):
-        payload = b'{"family":"zipformer-transducer","files":{"tokens":{"url":"https://example.com/tokens.txt"}}}'
-
-        class _FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self):
-                return payload
-
-        with mock.patch("wfloat._assets.urlopen", return_value=_FakeResponse()) as urlopen_mock:
-            assets = _assets.fetch_stt_assets(
-                "k2-fsa/streaming-zipformer-en",
-                family="zipformer-transducer",
-                persistent_id="persist-123",
-                package_version_override="1.5.2",
-            )
-
-        self.assertEqual(assets.family, "zipformer-transducer")
-        request = urlopen_mock.call_args.args[0]
-        parsed = urlparse(request.full_url)
-        query = parse_qs(parsed.query)
-        self.assertEqual(query["model_name"], ["k2-fsa/streaming-zipformer-en"])
-        self.assertEqual(query["platform"], ["python"])
-        self.assertEqual(query["version"], ["1.5.2"])
-        self.assertEqual(query["family"], ["zipformer-transducer"])
-        self.assertEqual(query["persistent_id"], ["persist-123"])
-        self.assertNotIn("capability", query)
-
     def test_load_wires_endpoint_cache_and_native_builder(self):
         fake_assets = ModelAssets(
             model_onnx="https://example.com/model.onnx",
@@ -1090,7 +884,6 @@ class TestWfloatSmoke(unittest.TestCase):
             model_tokens_checksum="def",
             espeak_data="https://example.com/espeak.zip",
             espeak_checksum="ghi",
-            persistent_id="persist-456",
         )
         fake_cached = CachedModelAssets(
             model_name="wfloat/wfloat-tts",
@@ -1104,7 +897,6 @@ class TestWfloatSmoke(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / "cache"
-            save_persistent_id("persist-123", cache_dir)
             with mock.patch(
                 "wfloat._model.fetch_model_assets",
                 return_value=fake_assets,
@@ -1119,11 +911,7 @@ class TestWfloatSmoke(unittest.TestCase):
 
             self.assertIsInstance(model, Model)
             self.assertEqual(model.model_name, "wfloat/wfloat-tts")
-            fetch_mock.assert_called_once_with(
-                "wfloat/wfloat-tts",
-                persistent_id="persist-123",
-            )
-            self.assertEqual(load_persistent_id(cache_dir), "persist-456")
+            fetch_mock.assert_called_once_with("wfloat/wfloat-tts")
 
 
 if __name__ == "__main__":

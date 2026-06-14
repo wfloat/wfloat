@@ -10,10 +10,8 @@ VENDOR_LLAMA_DIR="${REPO_ROOT}/vendor/llama.cpp"
 BUILD_DIR="${VENDOR_LLAMA_DIR}/build-wasm-wfloat"
 DEST_DIR="${PACKAGE_DIR}/src/wasm"
 
-if ! command -v emcmake >/dev/null 2>&1; then
-  echo "emcmake not found. Activate/install Emscripten before building llama.cpp WASM." >&2
-  exit 1
-fi
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/scripts/ensure-emscripten.sh"
 
 if ! command -v cmake >/dev/null 2>&1; then
   echo "cmake not found." >&2

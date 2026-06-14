@@ -61,33 +61,6 @@ def _ensure_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def get_persistent_id_path(cache_dir: Optional[Path] = None) -> Path:
-    cache_root = Path(cache_dir) if cache_dir is not None else get_default_cache_dir()
-    return cache_root / "persistent_id"
-
-
-def load_persistent_id(cache_dir: Optional[Path] = None) -> Optional[str]:
-    path = get_persistent_id_path(cache_dir)
-    if not path.is_file():
-        return None
-
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-
-    return value or None
-
-
-def save_persistent_id(persistent_id: Optional[str], cache_dir: Optional[Path] = None) -> None:
-    if not persistent_id:
-        return
-
-    path = get_persistent_id_path(cache_dir)
-    _ensure_directory(path.parent)
-    path.write_text(persistent_id.strip() + "\n", encoding="utf-8")
-
-
 def _cleanup_stale_model_files(model_dir: Path, active_names) -> None:
     if not model_dir.exists():
         return

@@ -36,8 +36,8 @@ vendor/sherpa-onnx/.emscripten_cache/
 vendor/sherpa-onnx/build-wasm-simd-speech/
 
 # Generated web runtime artifacts
-packages/wfloat-web/src/wasm/wfloat-llama-wasm.js
-packages/wfloat-web/src/wasm/wfloat-llama-wasm.wasm
+packages/wfloat-web/src/wasm/*.js
+packages/wfloat-web/src/wasm/*.wasm
 
 # Local env files
 .env

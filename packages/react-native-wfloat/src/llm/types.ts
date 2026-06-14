@@ -44,7 +44,6 @@ export type LlmChatOptions = LlmGenerationOptions & {
 
 export type LoadLlmModelOptions = {
   onProgress?: (event: LoadModelProgressEvent) => void;
-  modelAssetHost?: string;
   contextSize?: number;
   numThreads?: number;
   gpuLayerCount?: number;

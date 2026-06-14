@@ -10,12 +10,6 @@ import { createVad } from "../wasm/sherpa-onnx-vad.js";
 import { createLlamaModule, LlamaModule, LlamaWasmModel } from "../wasm/wfloat-llama.js";
 import { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "../tts/catalog.js";
 import type { TtsEmotion } from "../tts/types.js";
-import {
-  fetchLlmModelManifest,
-  fetchSttModelManifest,
-  fetchTtsModelManifest,
-  fetchVadModelManifest,
-} from "../modelManifest.js";
 // @ts-ignore
 import createSherpaSpeechModule from "../wasm/sherpa-onnx-wasm-main-speech.js";
 import {
@@ -73,42 +67,15 @@ let LLAMA_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = nul
 
 type ModuleWithFs = Pick<SherpaModule, "FS">;
 
-const WEB_PLATFORM = "web";
-const WFLOAT_WEB_VERSION = "1.5.2";
+const REGISTRY_BASE_URL = "https://registry.wfloat.com";
 const SHERPA_ONNX_VERSION = "1.13.1";
 const LLAMA_CPP_WASM_VERSION = "llama.cpp-bb28c1fe-wfloat";
-
-function assertPinnedSherpaRuntimeVersion(
-  runtimeVersion: string | undefined,
-  requestedVersion: string,
-  modelId: string,
-): void {
-  if (!runtimeVersion) {
-    throw new Error(`Model asset manifest for ${modelId} is missing runtime.version.`);
-  }
-
-  if (runtimeVersion !== requestedVersion) {
-    throw new Error(
-      `Model asset manifest for ${modelId} returned sherpa runtime ${runtimeVersion}, expected ${requestedVersion}.`,
-    );
-  }
-}
-
-function assertPinnedLlamaRuntimeVersion(
-  runtimeVersion: string | undefined,
-  requestedVersion: string,
-  modelId: string,
-): void {
-  if (!runtimeVersion) {
-    throw new Error(`Model asset manifest for ${modelId} is missing runtime.version.`);
-  }
-
-  if (runtimeVersion !== requestedVersion) {
-    throw new Error(
-      `Model asset manifest for ${modelId} returned llama runtime ${runtimeVersion}, expected ${requestedVersion}.`,
-    );
-  }
-}
+const WFLOAT_TTS_MODEL_ID = "wfloat/wfloat-tts";
+const SILERO_VAD_MODEL_ID = "snakers4/silero-vad";
+const SMOLLM2_360M_INSTRUCT_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
+const SHERPA_SPEECH_WASM_URL = `${REGISTRY_BASE_URL}/sherpa-onnx-wasm-main-speech/sherpa-onnx-wasm-main-speech-${SHERPA_ONNX_VERSION}.wasm`;
+const LLAMA_CPP_WASM_CHECKSUM = "991d000b2f551badac60c9c73a9cfcdb711a584771450c295afb165a9cf4b129";
+const LLAMA_CPP_WASM_URL = `${REGISTRY_BASE_URL}/llama.cpp-wasm/wfloat-llama-wasm.wasm?checksum=${LLAMA_CPP_WASM_CHECKSUM}`;
 
 const defaultSpeechModuleConfig: ModuleConfig = {
   locateFile: (path: string) => {
@@ -133,143 +100,85 @@ const defaultLlamaModuleConfig = {
 
 async function getModelAssets(
   modelId: string,
-  platform: string,
-  version: string,
-  sherpaOnnxVersion: string,
-  modelAssetHost?: string,
-  persistentId?: string,
 ): Promise<ModelAssetsResponse> {
-  const data = await fetchTtsModelManifest({
-    modelName: modelId,
-    platform,
-    version,
-    sherpaOnnxVersion,
-    modelAssetHost,
-    persistentId,
-  });
-
-  assertPinnedSherpaRuntimeVersion(data.runtime?.version, sherpaOnnxVersion, modelId);
-
-  if (
-    data.files?.model?.url &&
-    data.files?.tokens?.url &&
-    data.runtime?.wasm_binary?.url
-  ) {
-    return {
-      model_onnx: data.files.model.url,
-      model_tokens: data.files.tokens.url,
-      wasm_binary: data.runtime.wasm_binary.url,
-      wasm_data: data.runtime.wasm_data?.url,
-      espeak_data: data.files.espeak_data?.url,
-      persistent_id: data.persistent_id,
-    };
+  if (modelId !== WFLOAT_TTS_MODEL_ID) {
+    throw new Error(`Unsupported TTS model: ${modelId}`);
   }
 
-  throw new Error("Model asset manifest is missing required URLs.");
+  return {
+    model_onnx: `${REGISTRY_BASE_URL}/models/wfloat-model/1.0.2/wfloat-model-1.0.2.onnx`,
+    model_tokens: `${REGISTRY_BASE_URL}/models/wfloat-model/1.0.2/wfloat-model-1.0.2_tokens.txt`,
+    wasm_binary: SHERPA_SPEECH_WASM_URL,
+    espeak_data: `${REGISTRY_BASE_URL}/espeak-ng-data/espeak-ng-data-2023.9.7-4.zip`,
+  };
 }
 
 async function getSttModelAssets(
   modelId: string,
-  platform: string,
-  version: string,
-  sherpaOnnxVersion: string,
-  modelAssetHost?: string,
-  persistentId?: string,
 ): Promise<SttModelAssetsResponse> {
-  const data = await fetchSttModelManifest({
-    modelName: modelId,
-    platform,
-    version,
-    sherpaOnnxVersion,
-    modelAssetHost,
-    persistentId,
-  });
-
-  assertPinnedSherpaRuntimeVersion(data.runtime?.version, sherpaOnnxVersion, modelId);
-
-  if (!data.family || !data.files?.tokens?.url || !data.runtime?.wasm_binary?.url) {
-    throw new Error("STT model asset manifest is missing required URLs.");
+  if (modelId === "openai/whisper-tiny-en") {
+    return {
+      family: "whisper",
+      tokens: `${REGISTRY_BASE_URL}/models/openai/whisper-tiny-en/tiny.en-tokens.txt`,
+      wasm_binary: SHERPA_SPEECH_WASM_URL,
+      encoder: `${REGISTRY_BASE_URL}/models/openai/whisper-tiny-en/tiny.en-encoder.int8.onnx`,
+      decoder: `${REGISTRY_BASE_URL}/models/openai/whisper-tiny-en/tiny.en-decoder.int8.onnx`,
+    };
   }
 
-  const response: SttModelAssetsResponse = {
-    family: data.family,
-    tokens: data.files.tokens.url,
-    wasm_binary: data.runtime.wasm_binary.url,
-    wasm_data: data.runtime.wasm_data?.url,
-    persistent_id: data.persistent_id,
-  };
+  if (modelId === "k2-fsa/streaming-zipformer-en") {
+    return {
+      family: "zipformer-transducer",
+      tokens: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/tokens.txt`,
+      wasm_binary: SHERPA_SPEECH_WASM_URL,
+      encoder: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/encoder-epoch-99-avg-1.int8.onnx`,
+      decoder: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/decoder-epoch-99-avg-1.onnx`,
+      joiner: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/joiner-epoch-99-avg-1.onnx`,
+    };
+  }
 
-  if (data.files.encoder?.url) response.encoder = data.files.encoder.url;
-  if (data.files.decoder?.url) response.decoder = data.files.decoder.url;
-  if (data.files.preprocessor?.url) response.preprocessor = data.files.preprocessor.url;
-  if (data.files.joiner?.url) response.joiner = data.files.joiner.url;
-  if (data.files.uncached_decoder?.url) response.uncached_decoder = data.files.uncached_decoder.url;
-  if (data.files.cached_decoder?.url) response.cached_decoder = data.files.cached_decoder.url;
+  if (modelId === "UsefulSensors/moonshine-tiny") {
+    return {
+      family: "moonshine",
+      tokens: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/tokens.txt`,
+      wasm_binary: SHERPA_SPEECH_WASM_URL,
+      preprocessor: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/preprocessor.onnx`,
+      encoder: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/encoder.int8.onnx`,
+      uncached_decoder: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/uncached_decoder.int8.onnx`,
+      cached_decoder: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/cached_decoder.int8.onnx`,
+    };
+  }
 
-  return response;
+  throw new Error(`Unsupported STT model: ${modelId}`);
 }
 
 async function getVadModelAssets(
   modelId: string,
-  platform: string,
-  version: string,
-  sherpaOnnxVersion: string,
-  modelAssetHost?: string,
-  persistentId?: string,
 ): Promise<VadModelAssetsResponse> {
-  const data = await fetchVadModelManifest({
-    modelName: modelId,
-    platform,
-    version,
-    sherpaOnnxVersion,
-    modelAssetHost,
-    persistentId,
-  });
-
-  assertPinnedSherpaRuntimeVersion(data.runtime?.version, sherpaOnnxVersion, modelId);
-
-  if (!data.family || !data.files?.model?.url || !data.runtime?.wasm_binary?.url) {
-    throw new Error("VAD model asset manifest is missing required URLs.");
+  if (modelId !== SILERO_VAD_MODEL_ID) {
+    throw new Error(`Unsupported VAD model: ${modelId}`);
   }
 
   return {
-    family: data.family,
-    model: data.files.model.url,
-    wasm_binary: data.runtime.wasm_binary.url,
-    wasm_data: data.runtime.wasm_data?.url,
-    persistent_id: data.persistent_id,
+    family: "silero-vad",
+    model: `${REGISTRY_BASE_URL}/models/snakers4/silero-vad/silero_vad.onnx`,
+    wasm_binary: SHERPA_SPEECH_WASM_URL,
   };
 }
 
 async function getLlmModelAssets(
   modelId: string,
-  platform: string,
-  version: string,
-  modelAssetHost?: string,
-  persistentId?: string,
 ): Promise<LlmModelAssetsResponse> {
-  const data = await fetchLlmModelManifest({
-    modelName: modelId,
-    platform,
-    version,
-    modelAssetHost,
-    persistentId,
-  });
-
-  assertPinnedLlamaRuntimeVersion(data.runtime?.version, LLAMA_CPP_WASM_VERSION, modelId);
-
-  if (!data.family || !data.files?.model?.url || !data.runtime?.wasm_binary?.url) {
-    throw new Error("LLM model asset manifest is missing required URLs.");
+  if (modelId !== SMOLLM2_360M_INSTRUCT_MODEL_ID) {
+    throw new Error(`Unsupported LLM model: ${modelId}`);
   }
 
   return {
-    family: data.family,
-    model: data.files.model.url,
-    wasm_binary: data.runtime.wasm_binary.url,
-    wasm_data: data.runtime.wasm_data?.url,
-    context_size: data.context_size,
-    chat_template_format: data.chat_template_format === "chatml" ? "chatml" : "gguf",
-    persistent_id: data.persistent_id,
+    family: "smollm",
+    model: `${REGISTRY_BASE_URL}/models/huggingface/smollm2-360m-instruct/SmolLM2-360M-Instruct.Q4_K_M.gguf`,
+    wasm_binary: LLAMA_CPP_WASM_URL,
+    context_size: 8192,
+    chat_template_format: "chatml",
   };
 }
 
@@ -617,17 +526,8 @@ function describeUnknownError(error: unknown): string {
 async function handleLoadSpeechModel(
   id: number,
   modelId: string,
-  modelAssetHost?: string,
-  persistentId?: string,
 ): Promise<void> {
-  TTS_MODEL_ASSET_URLS = await getModelAssets(
-    modelId,
-    WEB_PLATFORM,
-    WFLOAT_WEB_VERSION,
-    SHERPA_ONNX_VERSION,
-    modelAssetHost,
-    persistentId,
-  );
+  TTS_MODEL_ASSET_URLS = await getModelAssets(modelId);
   const MODEL_NAME = new URL(TTS_MODEL_ASSET_URLS!.model_onnx).pathname.split("/").pop();
   const TOKENS_NAME = new URL(TTS_MODEL_ASSET_URLS!.model_tokens).pathname.split("/").pop();
 
@@ -756,7 +656,6 @@ async function handleLoadSpeechModel(
     id,
     type: "speech-load-model-done",
     sampleRate: TTS.sampleRate,
-    persistentId: TTS_MODEL_ASSET_URLS.persistent_id,
   });
 }
 
@@ -924,11 +823,6 @@ async function handleLoadSttModel(
 ): Promise<void> {
   STT_MODEL_ASSET_URLS = await getSttModelAssets(
     options.modelId,
-    WEB_PLATFORM,
-    WFLOAT_WEB_VERSION,
-    SHERPA_ONNX_VERSION,
-    options.modelAssetHost,
-    options.persistentId,
   );
   STT_MODEL_ID = options.modelId;
 
@@ -1006,7 +900,6 @@ async function handleLoadSttModel(
     type: "stt-load-model-done",
     family: STT_MODEL_ASSET_URLS.family,
     supportsStreaming,
-    persistentId: STT_MODEL_ASSET_URLS.persistent_id,
   });
 }
 
@@ -1206,11 +1099,6 @@ async function handleLoadVadModel(
 ): Promise<void> {
   VAD_MODEL_ASSET_URLS = await getVadModelAssets(
     options.modelId,
-    WEB_PLATFORM,
-    WFLOAT_WEB_VERSION,
-    SHERPA_ONNX_VERSION,
-    options.modelAssetHost,
-    options.persistentId,
   );
   VAD_MODEL_ID = options.modelId;
 
@@ -1258,7 +1146,6 @@ async function handleLoadVadModel(
     id,
     type: "vad-load-model-done",
     family: VAD_MODEL_ASSET_URLS.family,
-    persistentId: VAD_MODEL_ASSET_URLS.persistent_id,
   });
 }
 
@@ -1487,10 +1374,6 @@ async function handleLoadLlmModel(
 ): Promise<void> {
   LLM_MODEL_ASSET_URLS = await getLlmModelAssets(
     options.modelId,
-    WEB_PLATFORM,
-    WFLOAT_WEB_VERSION,
-    options.modelAssetHost,
-    options.persistentId,
   );
   LLM_MODEL_ID = options.modelId;
   LLM_CHAT_TEMPLATE_FORMAT = LLM_MODEL_ASSET_URLS.chat_template_format ?? "gguf";
@@ -1539,7 +1422,6 @@ async function handleLoadLlmModel(
     family: LLM_MODEL_ASSET_URLS.family,
     contextSize: LLM_CONTEXT_SIZE,
     chatTemplateFormat: LLM_CHAT_TEMPLATE_FORMAT,
-    persistentId: LLM_MODEL_ASSET_URLS.persistent_id,
   });
 }
 
@@ -1949,7 +1831,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
   try {
     if (message.type === "speech-load-model") {
-      await handleLoadSpeechModel(message.id, message.modelId, message.modelAssetHost, message.persistentId);
+      await handleLoadSpeechModel(message.id, message.modelId);
       return;
     }
 

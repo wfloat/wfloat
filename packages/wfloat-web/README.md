@@ -185,9 +185,7 @@ The first streaming web STT target is a sherpa online recognizer path for:
 Intended shape:
 
 ```ts
-const stt = await loadSttModel("k2-fsa/streaming-zipformer-en", {
-  modelAssetHost: "http://localhost:4000",
-});
+const stt = await loadSttModel("k2-fsa/streaming-zipformer-en");
 
 const session = await stt.createSession();
 
@@ -206,16 +204,15 @@ console.log(finalResult.text);
 await session.close();
 ```
 
-This path is now implemented in the package surface, but it still depends on
-the corresponding streaming model assets being staged in the asset API /
-registry.
+This path is now implemented in the package surface and resolves registry
+assets internally.
 
 ## VAD quick start
 
 ```ts
 import { loadVadModel } from "@wfloat/wfloat-web";
 
-const vad = await loadVadModel("silero-vad", {
+const vad = await loadVadModel("snakers4/silero-vad", {
   onProgress(event) {
     console.log(event.status);
   },
@@ -232,7 +229,7 @@ console.log(result.speechRatio);
 Live VAD from the browser microphone:
 
 ```ts
-const vad = await loadVadModel("silero-vad");
+const vad = await loadVadModel("snakers4/silero-vad");
 
 const session = await vad.createSession({
   onSpeechStart(event) {
@@ -251,29 +248,9 @@ console.log(stats.speechEndCount, stats.maxRms);
 await session.close();
 ```
 
-The web VAD path uses the shared sherpa speech WASM runtime and expects a
-manifest with `files.model` plus `runtime.wasm_binary`. Browser microphone
+The web VAD path uses the shared sherpa speech WASM runtime. Browser microphone
 capture is package-owned for live VAD; apps do not need to wire microphone
 chunks into the worker manually.
-
-## Local API override
-
-For smoke tests against a local asset API, pass `modelAssetHost` when loading
-the model:
-
-```ts
-const tts = await loadTtsModel("wfloat/wfloat-tts", {
-  modelAssetHost: "http://localhost:4000",
-});
-
-const stt = await loadSttModel("openai/whisper-tiny-en", {
-  modelAssetHost: "http://localhost:4000",
-});
-
-const vad = await loadVadModel("silero-vad", {
-  modelAssetHost: "http://localhost:4000",
-});
-```
 
 ## Local smoke page
 
@@ -282,11 +259,9 @@ For a quick browser smoke test from this repo:
 1. Build the package output so `dist/index.js`, `dist/worker/worker-inline.js`, and `dist/wasm/sherpa-onnx-wasm-main-speech.js` are current.
 2. From `packages/wfloat-web`, start a static server such as `python3 -m http.server 4173`.
 3. Open `http://localhost:4173`.
-4. Leave the default asset host as `http://localhost:4000` if your local Phoenix asset API is running there.
 
 The smoke page exercises:
 - shared sherpa speech wasm runtime loading
-- manifest fetch from the local asset API
 - `espeak-ng-data` zip staging
 - model download
 - browser TTS synthesis and playback controls
@@ -294,12 +269,6 @@ The smoke page exercises:
 - browser microphone capture with record -> stop -> transcribe
 - browser VAD loading, file-based speech segment detection, and live microphone
   VAD sessions
-
-Current note: the local STT smoke path depends on the asset API returning the
-uploaded Whisper tiny English files now stored at:
-- `models/openai/whisper-tiny-en/tiny.en-encoder.int8.onnx`
-- `models/openai/whisper-tiny-en/tiny.en-decoder.int8.onnx`
-- `models/openai/whisper-tiny-en/tiny.en-tokens.txt`
 
 ## Browser note
 

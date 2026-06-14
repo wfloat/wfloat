@@ -86,7 +86,6 @@ export class LlmWorkerBridge {
 
   static async loadModel(
     modelId: string,
-    persistentId: string | undefined,
     options: LoadLlmModelOptions,
   ): Promise<Extract<WorkerResponse, { type: "llm-load-model-done" }>> {
     const id = this.id;
@@ -97,8 +96,6 @@ export class LlmWorkerBridge {
         id,
         type: "llm-load-model",
         modelId,
-        ...(persistentId ? { persistentId } : {}),
-        ...(options.modelAssetHost ? { modelAssetHost: options.modelAssetHost } : {}),
         ...(typeof options.contextSize === "number" ? { contextSize: options.contextSize } : {}),
         ...(typeof options.numThreads === "number" ? { numThreads: options.numThreads } : {}),
       },

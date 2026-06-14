@@ -96,8 +96,6 @@ Confirm the dry-run output includes:
 - `android/generated/**`
 - `lib/**`
 
-The older `install-android-jni-libs.sh` registry downloader is kept as a temporary maintainer fallback for refreshing Android `.so` files from a prebuilt archive.
-
 ### iOS native changes
 
 Typical commands:
@@ -114,11 +112,10 @@ yarn example ios
 
 The Android Emulator cannot reach host-only services through its own
 `localhost` unless ADB forwards the ports. When testing the example app against
-local Metro and the local model asset API, run:
+local Metro, run:
 
 ```sh
 adb reverse tcp:8081 tcp:8081
-adb reverse tcp:4000 tcp:4000
 ```
 
 If microphone permission is granted but STT or live VAD hears silence, check

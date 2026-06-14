@@ -1,4 +1,3 @@
-import { getPersistentId, setPersistentId } from "../util/persistentIdStorage.js";
 import { LlmWorkerBridge } from "../worker/llmWorkerBridge.js";
 import type {
   LlmChatMessage,
@@ -17,14 +16,8 @@ export class LlmModel {
   ) {}
 
   static async load(modelId: string, options: LoadLlmModelOptions = {}): Promise<LlmModel> {
-    const cachedPersistentId = getPersistentId();
-    const response = await LlmWorkerBridge.loadModel(
-      modelId,
-      cachedPersistentId ?? undefined,
-      options,
-    );
+    const response = await LlmWorkerBridge.loadModel(modelId, options);
 
-    setPersistentId(response.persistentId);
     options.onProgress?.({ status: "completed" });
 
     return new LlmModel(

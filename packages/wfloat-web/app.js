@@ -1,7 +1,6 @@
 import { loadLlmModel, loadSttModel, loadTtsModel, loadVadModel } from "./dist/index.js";
 
 const elements = {
-  assetHost: document.getElementById("assetHost"),
   autoPlay: document.getElementById("autoPlay"),
   clearLog: document.getElementById("clearLog"),
   emotion: document.getElementById("emotion"),
@@ -162,13 +161,11 @@ async function loadModel() {
   setButtons({ loaded: false, busy: true });
 
   const modelId = elements.modelId.value.trim();
-  const modelAssetHost = elements.assetHost.value.trim();
 
-  appendLog("Loading TTS model", { modelAssetHost, modelId });
+  appendLog("Loading TTS model", { modelId });
 
   try {
     ttsModel = await loadTtsModel(modelId, {
-      modelAssetHost,
       onProgress(event) {
         if (event.status === "downloading") {
           setSummary(`Downloading model ${Math.round(event.progress * 100)}%`);
@@ -252,13 +249,11 @@ async function loadVad() {
   elements.vadResult.textContent = "";
 
   const modelId = elements.vadModelId.value.trim();
-  const modelAssetHost = elements.assetHost.value.trim();
 
-  appendLog("Loading VAD model", { modelAssetHost, modelId });
+  appendLog("Loading VAD model", { modelId });
 
   try {
     vadModel = await loadVadModel(modelId, {
-      modelAssetHost,
       onProgress(event) {
         if (event.status === "downloading") {
           elements.vadSummary.textContent = `Downloading model ${Math.round(event.progress * 100)}%`;
@@ -297,13 +292,11 @@ async function loadLlm() {
   elements.llmResult.textContent = "";
 
   const modelId = elements.llmModelId.value.trim();
-  const modelAssetHost = elements.assetHost.value.trim();
 
-  appendLog("Loading LLM model", { modelAssetHost, modelId });
+  appendLog("Loading LLM model", { modelId });
 
   try {
     llmModel = await loadLlmModel(modelId, {
-      modelAssetHost,
       onProgress(event) {
         if (event.status === "downloading") {
           elements.llmSummary.textContent = `Downloading model ${Math.round(event.progress * 100)}%`;
@@ -591,16 +584,14 @@ async function loadStt() {
   elements.sttProgress.value = 0;
 
   const modelId = elements.sttModelId.value.trim();
-  const modelAssetHost = elements.assetHost.value.trim();
   const language = elements.sttLanguage.value.trim() || undefined;
   const task = elements.sttTask.value;
 
-  appendLog("Loading STT model", { language, modelAssetHost, modelId, task });
+  appendLog("Loading STT model", { language, modelId, task });
 
   try {
     sttModel = await loadSttModel(modelId, {
       language,
-      modelAssetHost,
       task,
       onProgress(event) {
         if (event.status === "downloading") {
@@ -921,7 +912,6 @@ elements.clearLog.addEventListener("click", () => {
 });
 
 appendLog("Smoke page ready", {
-  modelAssetHost: elements.assetHost.value,
   llmModelId: elements.llmModelId.value,
   modelId: elements.modelId.value,
   sttModelId: elements.sttModelId.value,

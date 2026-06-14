@@ -258,7 +258,7 @@ export class SttModel {
     modelId: string,
     options: LoadSttModelOptions = {}
   ): Promise<SttModel> {
-    const modelAssets = await getSttModelAssets(modelId, options.modelAssetHost);
+    const modelAssets = await getSttModelAssets(modelId);
     const progressSubscription = Wfloat.onLoadModelProgress(
       (event: NativeLoadModelProgressEvent) => {
         const normalized = normalizeLoadProgressEvent(event);

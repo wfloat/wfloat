@@ -82,13 +82,11 @@ export class VadWorkerBridge {
   static async loadModel(
     options: {
       modelId: string;
-      modelAssetHost?: string;
       threshold?: number;
       minSilenceDurationSec?: number;
       minSpeechDurationSec?: number;
       maxSpeechDurationSec?: number;
     },
-    persistentId: string | undefined,
     onProgress?: (message: { event: LoadModelProgressEvent }) => void,
   ): Promise<Extract<WorkerResponse, { type: "vad-load-model-done" }>> {
     const id = this.id;
@@ -99,8 +97,6 @@ export class VadWorkerBridge {
         id,
         type: "vad-load-model",
         modelId: options.modelId,
-        ...(persistentId ? { persistentId } : {}),
-        ...(options.modelAssetHost ? { modelAssetHost: options.modelAssetHost } : {}),
         ...(typeof options.threshold === "number" ? { threshold: options.threshold } : {}),
         ...(typeof options.minSilenceDurationSec === "number"
           ? { minSilenceDurationSec: options.minSilenceDurationSec }

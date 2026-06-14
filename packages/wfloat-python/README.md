@@ -91,25 +91,8 @@ result = stt.transcribe(audio="/path/to/audio.wav")
 print(result.text)
 ```
 
-If you omit explicit asset URLs/paths, `load_stt_model(...)` is intended to use
-the Wfloat-controlled asset manifest flow, just like the TTS loader path.
-
-For local development you can still override assets explicitly when needed:
-
-```python
-stt = wfloat.load_stt_model(
-    "UsefulSensors/moonshine-tiny",
-    family="moonshine",
-    preprocessor="https://example.com/preprocess.onnx",
-    encoder="https://example.com/encode.onnx",
-    uncached_decoder="https://example.com/uncached_decode.onnx",
-    cached_decoder="https://example.com/cached_decode.onnx",
-    tokens="https://example.com/tokens.txt",
-)
-```
-
-That STT path is still an early monorepo development surface, not a polished
-public distribution story yet.
+The loader accepts canonical built-in model IDs and resolves Wfloat-hosted
+registry assets internally.
 
 Streaming-capable STT families also expose a separate session path instead of
 overloading `transcribe(...)`:
@@ -124,19 +107,6 @@ final_result = session.finish()
 session.close()
 ```
 
-There is also a convenience loader for explicit local/URL overrides:
-
-```python
-stt = wfloat.load_stt_model(
-    "streaming-model-id",
-    family="zipformer-transducer",
-    encoder="https://example.com/encoder-epoch-99-avg-1.int8.onnx",
-    decoder="https://example.com/decoder-epoch-99-avg-1.onnx",
-    joiner="https://example.com/joiner-epoch-99-avg-1.onnx",
-    tokens="https://example.com/tokens.txt",
-)
-```
-
 ## Early VAD Path
 
 Python also exposes the same one-shot VAD model shape as the web and React
@@ -146,7 +116,7 @@ matching the TTS, STT, and LLM backend boundary.
 
 ```python
 vad = wfloat.load_vad_model(
-    "silero-vad",
+    "snakers4/silero-vad",
     threshold=0.5,
     min_silence_duration_sec=0.5,
     min_speech_duration_sec=0.25,
@@ -157,16 +127,6 @@ result = vad.detect(audio="/path/to/mono-16khz.wav")
 
 for segment in result.segments:
     print(segment.start_sec, segment.duration_sec)
-```
-
-For local development you can override the VAD model asset explicitly:
-
-```python
-vad = wfloat.load_vad_model(
-    "silero-vad",
-    family="silero-vad",
-    model="https://example.com/silero_vad.onnx",
-)
 ```
 
 VAD currently expects mono 16 kHz audio.

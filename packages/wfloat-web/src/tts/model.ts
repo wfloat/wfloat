@@ -1,6 +1,5 @@
 import { AudioPlayer } from "../speech/audioPlayer.js";
 import { SPEAKER_IDS, VALID_EMOTIONS, VALID_SIDS } from "./catalog.js";
-import { getPersistentId, setPersistentId } from "../util/persistentIdStorage.js";
 import { TtsWorkerBridge } from "../worker/ttsWorkerBridge.js";
 import type {
   LoadModelProgressEvent,
@@ -163,17 +162,12 @@ export class TtsModel {
   ) {}
 
   static async load(modelId: string, options: LoadTtsModelOptions = {}): Promise<TtsModel> {
-    const cachedPersistentId = getPersistentId();
     const response = await TtsWorkerBridge.loadModel(
       modelId,
-      cachedPersistentId ?? undefined,
-      options.modelAssetHost,
       (message) => {
         options.onProgress?.(message.event as LoadModelProgressEvent);
       },
     );
-
-    setPersistentId(response.persistentId);
 
     options.onProgress?.({ status: "completed" });
 
