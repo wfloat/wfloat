@@ -787,6 +787,7 @@ if(SHERPA_ONNX_ENABLE_TESTS)
   set(sherpa_onnx_test_srcs
     cat-test.cc
     circular-buffer-test.cc
+    config-test.cc
     context-graph-test.cc
     math-test.cc
     offline-whisper-timestamp-rules-test.cc
@@ -804,6 +805,7 @@ if(SHERPA_ONNX_ENABLE_TESTS)
   )
   if(SHERPA_ONNX_ENABLE_TTS)
     list(APPEND sherpa_onnx_test_srcs
+      offline-tts-wfloat-text-test.cc
       sentence-piece-tokenizer-test.cc
       piper-phonemize-test.cc
     )
