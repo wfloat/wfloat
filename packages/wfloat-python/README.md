@@ -1,10 +1,10 @@
 # wfloat
 
-`wfloat` is the Python package for `wfloat-tts`, Wfloat's on-device English
-text-to-speech model.
+`wfloat` is the Python package for Wfloat's on-device model families, including
+TTS, STT, VAD, and LLM.
 
-It runs speech locally in Python instead of calling a hosted inference API.
-The model supports 20 voices with emotion and intensity control.
+It runs inference locally in Python instead of calling a hosted inference API.
+The TTS model supports 20 voices with emotion and intensity control.
 
 If you're building for the browser, use
 [`@wfloat/wfloat-web`](https://github.com/wfloat/wfloat-web). If you're
@@ -74,11 +74,10 @@ result.audio.save("dialogue.wav")
 The older `load(...)`, `generate(...)`, and `generate_dialogue(...)` names are
 still available as compatibility aliases.
 
-## Early STT Path In The Monorepo
+## STT Usage
 
-The monorepo now also has an early offline STT path through `wfloat-core`.
 The shared Python entrypoint is `load_stt_model(...)`, with
-`load_whisper_tiny_en(...)` as a convenience wrapper:
+`load_whisper_tiny_en(...)` as a convenience wrapper for offline STT:
 
 ```python
 import wfloat
@@ -107,7 +106,7 @@ final_result = session.finish()
 session.close()
 ```
 
-## Early VAD Path
+## VAD Usage
 
 Python also exposes the same one-shot VAD model shape as the web and React
 Native packages. It is intentionally file/buffer based for now; there is no
@@ -130,6 +129,21 @@ for segment in result.segments:
 ```
 
 VAD currently expects mono 16 kHz audio.
+
+## LLM Usage
+
+The Python LLM path loads local GGUF artifacts through `wfloat-core`:
+
+```python
+import wfloat
+
+llm = wfloat.load_llm_model("HuggingFaceTB/SmolLM2-360M-Instruct")
+result = llm.generate("Write one calm sentence about local inference.", seed=0)
+print(result.text)
+llm.close()
+```
+
+## CLI Usage
 
 You can also generate a WAV from the command line:
 

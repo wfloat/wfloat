@@ -24,6 +24,7 @@ import {
   WorkerRequest,
   WorkerResponse,
 } from "./workerTypes.js";
+import { MODEL_ASSETS, REGISTRY_ORIGIN, SHARED_ASSETS } from "./generatedModelUrls.js";
 import { computeStartTime } from "../util/schedulingUtil.js";
 import type { VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 
@@ -67,7 +68,7 @@ let LLAMA_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = nul
 
 type ModuleWithFs = Pick<SherpaModule, "FS">;
 
-const REGISTRY_BASE_URL = "https://registry.wfloat.com";
+const REGISTRY_BASE_URL = REGISTRY_ORIGIN;
 const SHERPA_ONNX_VERSION = "1.13.1";
 const LLAMA_CPP_WASM_VERSION = "llama.cpp-bb28c1fe-wfloat";
 const WFLOAT_TTS_MODEL_ID = "wfloat/wfloat-tts";
@@ -98,6 +99,15 @@ const defaultLlamaModuleConfig = {
   onAbort: (what: unknown) => console.error("llama wasm abort:", what),
 };
 
+type RegistryFile = {
+  readonly path: string;
+  readonly sha256: string | null;
+};
+
+function registryUrl(asset: RegistryFile): string {
+  return `${REGISTRY_ORIGIN}${asset.path}`;
+}
+
 async function getModelAssets(
   modelId: string,
 ): Promise<ModelAssetsResponse> {
@@ -105,11 +115,13 @@ async function getModelAssets(
     throw new Error(`Unsupported TTS model: ${modelId}`);
   }
 
+  const assets = MODEL_ASSETS[WFLOAT_TTS_MODEL_ID];
+
   return {
-    model_onnx: `${REGISTRY_BASE_URL}/models/wfloat-model/1.0.2/wfloat-model-1.0.2.onnx`,
-    model_tokens: `${REGISTRY_BASE_URL}/models/wfloat-model/1.0.2/wfloat-model-1.0.2_tokens.txt`,
+    model_onnx: registryUrl(assets.model_onnx),
+    model_tokens: registryUrl(assets.model_tokens),
     wasm_binary: SHERPA_SPEECH_WASM_URL,
-    espeak_data: `${REGISTRY_BASE_URL}/espeak-ng-data/espeak-ng-data-2023.9.7-4.zip`,
+    espeak_data: registryUrl(SHARED_ASSETS.espeak_ng_data_zip),
   };
 }
 
@@ -117,35 +129,38 @@ async function getSttModelAssets(
   modelId: string,
 ): Promise<SttModelAssetsResponse> {
   if (modelId === "openai/whisper-tiny-en") {
+    const assets = MODEL_ASSETS[modelId];
     return {
-      family: "whisper",
-      tokens: `${REGISTRY_BASE_URL}/models/openai/whisper-tiny-en/tiny.en-tokens.txt`,
+      family: assets.family,
+      tokens: registryUrl(assets.tokens),
       wasm_binary: SHERPA_SPEECH_WASM_URL,
-      encoder: `${REGISTRY_BASE_URL}/models/openai/whisper-tiny-en/tiny.en-encoder.int8.onnx`,
-      decoder: `${REGISTRY_BASE_URL}/models/openai/whisper-tiny-en/tiny.en-decoder.int8.onnx`,
+      encoder: registryUrl(assets.encoder),
+      decoder: registryUrl(assets.decoder),
     };
   }
 
   if (modelId === "k2-fsa/streaming-zipformer-en") {
+    const assets = MODEL_ASSETS[modelId];
     return {
-      family: "zipformer-transducer",
-      tokens: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/tokens.txt`,
+      family: assets.family,
+      tokens: registryUrl(assets.tokens),
       wasm_binary: SHERPA_SPEECH_WASM_URL,
-      encoder: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/encoder-epoch-99-avg-1.int8.onnx`,
-      decoder: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/decoder-epoch-99-avg-1.onnx`,
-      joiner: `${REGISTRY_BASE_URL}/models/k2-fsa/streaming-zipformer-en/joiner-epoch-99-avg-1.onnx`,
+      encoder: registryUrl(assets.encoder),
+      decoder: registryUrl(assets.decoder),
+      joiner: registryUrl(assets.joiner),
     };
   }
 
   if (modelId === "UsefulSensors/moonshine-tiny") {
+    const assets = MODEL_ASSETS[modelId];
     return {
-      family: "moonshine",
-      tokens: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/tokens.txt`,
+      family: assets.family,
+      tokens: registryUrl(assets.tokens),
       wasm_binary: SHERPA_SPEECH_WASM_URL,
-      preprocessor: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/preprocessor.onnx`,
-      encoder: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/encoder.int8.onnx`,
-      uncached_decoder: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/uncached_decoder.int8.onnx`,
-      cached_decoder: `${REGISTRY_BASE_URL}/models/usefulsensors-moonshine-tiny/cached_decoder.int8.onnx`,
+      preprocessor: registryUrl(assets.preprocessor),
+      encoder: registryUrl(assets.encoder),
+      uncached_decoder: registryUrl(assets.uncached_decoder),
+      cached_decoder: registryUrl(assets.cached_decoder),
     };
   }
 
@@ -159,9 +174,11 @@ async function getVadModelAssets(
     throw new Error(`Unsupported VAD model: ${modelId}`);
   }
 
+  const assets = MODEL_ASSETS[SILERO_VAD_MODEL_ID];
+
   return {
-    family: "silero-vad",
-    model: `${REGISTRY_BASE_URL}/models/snakers4/silero-vad/silero_vad.onnx`,
+    family: assets.family,
+    model: registryUrl(assets.model),
     wasm_binary: SHERPA_SPEECH_WASM_URL,
   };
 }
@@ -173,9 +190,11 @@ async function getLlmModelAssets(
     throw new Error(`Unsupported LLM model: ${modelId}`);
   }
 
+  const assets = MODEL_ASSETS[SMOLLM2_360M_INSTRUCT_MODEL_ID];
+
   return {
-    family: "smollm",
-    model: `${REGISTRY_BASE_URL}/models/huggingface/smollm2-360m-instruct/SmolLM2-360M-Instruct.Q4_K_M.gguf`,
+    family: assets.family,
+    model: registryUrl(assets.model),
     wasm_binary: LLAMA_CPP_WASM_URL,
     context_size: 8192,
     chat_template_format: "chatml",

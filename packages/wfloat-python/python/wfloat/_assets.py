@@ -3,7 +3,9 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional
 from urllib.parse import urlparse
 
-REGISTRY_BASE_URL = "https://registry.wfloat.com"
+from ._generated_model_urls import MODEL_ASSETS, REGISTRY_ORIGIN, SHARED_ASSETS
+
+REGISTRY_BASE_URL = REGISTRY_ORIGIN
 WFLOAT_TTS_MODEL_ID = "wfloat/wfloat-tts"
 SILERO_VAD_MODEL_ID = "snakers4/silero-vad"
 SMOLLM2_360M_INSTRUCT_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct"
@@ -294,68 +296,112 @@ def filename_from_url(url: str, fallback: str) -> str:
     return filename or fallback
 
 
+def _registry_url(asset: Mapping[str, object]) -> str:
+    path = asset.get("path")
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise RuntimeError("Registry asset is missing a valid path.")
+    return REGISTRY_ORIGIN + path
+
+
+def _registry_checksum(asset: Mapping[str, object]) -> Optional[str]:
+    checksum = asset.get("sha256")
+    if isinstance(checksum, str) and checksum.strip():
+        return checksum
+    return None
+
+
+def _required_checksum(asset: Mapping[str, object], name: str) -> str:
+    checksum = _registry_checksum(asset)
+    if checksum is None:
+        raise RuntimeError(f"Registry asset is missing required checksum: {name}")
+    return checksum
+
+
+def _model_assets(model_name: str) -> Mapping[str, object]:
+    data = MODEL_ASSETS.get(model_name)
+    if not isinstance(data, Mapping):
+        raise ValueError("Unsupported model: %s" % model_name)
+    return data
+
+
+def _file_asset(data: Mapping[str, object], name: str) -> Mapping[str, object]:
+    asset = data.get(name)
+    if not isinstance(asset, Mapping):
+        raise RuntimeError(f"Registry model entry is missing asset: {name}")
+    return asset
+
+
+def _optional_file_url(data: Mapping[str, object], name: str) -> Optional[str]:
+    asset = data.get(name)
+    if not isinstance(asset, Mapping):
+        return None
+    return _registry_url(asset)
+
+
+def _optional_file_checksum(data: Mapping[str, object], name: str) -> Optional[str]:
+    asset = data.get(name)
+    if not isinstance(asset, Mapping):
+        return None
+    return _registry_checksum(asset)
+
+
 def fetch_model_assets(model_name: str) -> ModelAssets:
     if model_name != WFLOAT_TTS_MODEL_ID:
         raise ValueError("Unsupported TTS model: %s" % model_name)
 
+    model_assets = _model_assets(model_name)
+    model_onnx = _file_asset(model_assets, "model_onnx")
+    model_tokens = _file_asset(model_assets, "model_tokens")
+    espeak_data = SHARED_ASSETS["espeak_ng_data_zip"]
+
     return ModelAssets(
-        model_onnx="%s/models/wfloat-model/1.0.2/wfloat-model-1.0.2.onnx" % REGISTRY_BASE_URL,
-        model_onnx_checksum="a7e65773a29499b80a393bbe08af3507e18f6ef95faa0eaf7cb4ba353c8693ae",
-        model_tokens="%s/models/wfloat-model/1.0.2/wfloat-model-1.0.2_tokens.txt"
-        % REGISTRY_BASE_URL,
-        model_tokens_checksum="96fd291bede0544469d4d8935d462fdd6dc947f22ad47369753e1a82db3d748e",
-        espeak_data="%s/espeak-ng-data/espeak-ng-data-2023.9.7-4.zip" % REGISTRY_BASE_URL,
-        espeak_checksum="56c2879ab1ab44c594c78f34e76c50cf1dd7b8f6ca0ca2634b6766a6edb32add",
+        model_onnx=_registry_url(model_onnx),
+        model_onnx_checksum=_required_checksum(model_onnx, "model_onnx"),
+        model_tokens=_registry_url(model_tokens),
+        model_tokens_checksum=_required_checksum(model_tokens, "model_tokens"),
+        espeak_data=_registry_url(espeak_data),
+        espeak_checksum=_required_checksum(espeak_data, "espeak_ng_data_zip"),
     )
 
 
 def fetch_stt_assets(model_name: str) -> SttModelAssets:
-    if model_name == "openai/whisper-tiny-en":
-        return SttModelAssets(
-            family="whisper",
-            encoder="%s/models/openai/whisper-tiny-en/tiny.en-encoder.int8.onnx"
-            % REGISTRY_BASE_URL,
-            decoder="%s/models/openai/whisper-tiny-en/tiny.en-decoder.int8.onnx"
-            % REGISTRY_BASE_URL,
-            tokens="%s/models/openai/whisper-tiny-en/tiny.en-tokens.txt" % REGISTRY_BASE_URL,
-        )
+    model_assets = _model_assets(model_name)
+    family = model_assets.get("family")
+    if family not in {"whisper", "zipformer-transducer", "moonshine"}:
+        raise ValueError("Unsupported STT model: %s" % model_name)
 
-    if model_name == "k2-fsa/streaming-zipformer-en":
-        return SttModelAssets(
-            family="zipformer-transducer",
-            encoder="%s/models/k2-fsa/streaming-zipformer-en/encoder-epoch-99-avg-1.int8.onnx"
-            % REGISTRY_BASE_URL,
-            decoder="%s/models/k2-fsa/streaming-zipformer-en/decoder-epoch-99-avg-1.onnx"
-            % REGISTRY_BASE_URL,
-            joiner="%s/models/k2-fsa/streaming-zipformer-en/joiner-epoch-99-avg-1.onnx"
-            % REGISTRY_BASE_URL,
-            tokens="%s/models/k2-fsa/streaming-zipformer-en/tokens.txt" % REGISTRY_BASE_URL,
-        )
-
-    if model_name == "UsefulSensors/moonshine-tiny":
-        return SttModelAssets(
-            family="moonshine",
-            preprocessor="%s/models/usefulsensors-moonshine-tiny/preprocessor.onnx"
-            % REGISTRY_BASE_URL,
-            encoder="%s/models/usefulsensors-moonshine-tiny/encoder.int8.onnx"
-            % REGISTRY_BASE_URL,
-            uncached_decoder="%s/models/usefulsensors-moonshine-tiny/uncached_decoder.int8.onnx"
-            % REGISTRY_BASE_URL,
-            cached_decoder="%s/models/usefulsensors-moonshine-tiny/cached_decoder.int8.onnx"
-            % REGISTRY_BASE_URL,
-            tokens="%s/models/usefulsensors-moonshine-tiny/tokens.txt" % REGISTRY_BASE_URL,
-        )
-
-    raise ValueError("Unsupported STT model: %s" % model_name)
+    return SttModelAssets(
+        family=str(family),
+        model=_optional_file_url(model_assets, "model"),
+        model_checksum=_optional_file_checksum(model_assets, "model"),
+        preprocessor=_optional_file_url(model_assets, "preprocessor"),
+        preprocessor_checksum=_optional_file_checksum(model_assets, "preprocessor"),
+        encoder=_optional_file_url(model_assets, "encoder"),
+        encoder_checksum=_optional_file_checksum(model_assets, "encoder"),
+        decoder=_optional_file_url(model_assets, "decoder"),
+        decoder_checksum=_optional_file_checksum(model_assets, "decoder"),
+        joiner=_optional_file_url(model_assets, "joiner"),
+        joiner_checksum=_optional_file_checksum(model_assets, "joiner"),
+        uncached_decoder=_optional_file_url(model_assets, "uncached_decoder"),
+        uncached_decoder_checksum=_optional_file_checksum(model_assets, "uncached_decoder"),
+        cached_decoder=_optional_file_url(model_assets, "cached_decoder"),
+        cached_decoder_checksum=_optional_file_checksum(model_assets, "cached_decoder"),
+        tokens=_registry_url(_file_asset(model_assets, "tokens")),
+        tokens_checksum=_optional_file_checksum(model_assets, "tokens"),
+    )
 
 
 def fetch_vad_assets(model_name: str) -> VadModelAssets:
     if model_name != SILERO_VAD_MODEL_ID:
         raise ValueError("Unsupported VAD model: %s" % model_name)
 
+    model_assets = _model_assets(model_name)
+    model = _file_asset(model_assets, "model")
+
     return VadModelAssets(
-        family="silero-vad",
-        model="%s/models/snakers4/silero-vad/silero_vad.onnx" % REGISTRY_BASE_URL,
+        family=str(model_assets.get("family") or "silero-vad"),
+        model=_registry_url(model),
+        model_checksum=_registry_checksum(model),
     )
 
 
@@ -363,11 +409,13 @@ def fetch_llm_assets(model_name: str) -> LlmModelAssets:
     if model_name != SMOLLM2_360M_INSTRUCT_MODEL_ID:
         raise ValueError("Unsupported LLM model: %s" % model_name)
 
+    model_assets = _model_assets(model_name)
+    model = _file_asset(model_assets, "model")
+
     return LlmModelAssets(
-        family="smollm",
-        model="%s/models/huggingface/smollm2-360m-instruct/SmolLM2-360M-Instruct.Q4_K_M.gguf"
-        % REGISTRY_BASE_URL,
-        model_checksum="75c4346ef9e855ed630f80078a2430cf63aaca599e340360998a313070fcdc47",
+        family=str(model_assets.get("family") or "smollm"),
+        model=_registry_url(model),
+        model_checksum=_registry_checksum(model),
         context_size=8192,
         chat_template_format="chatml",
     )

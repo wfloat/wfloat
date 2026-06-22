@@ -1,0 +1,42 @@
+name: Codegen Model URLs CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "assets/registry.json"
+      - "scripts/codegen_model_urls.py"
+      - "packages/wfloat-python/python/wfloat/_generated_model_urls.py"
+      - "packages/wfloat-web/src/worker/generatedModelUrls.ts"
+      - "packages/react-native-wfloat/src/generatedModelUrls.ts"
+      - ".github/workflows/codegen-model-urls-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "assets/registry.json"
+      - "scripts/codegen_model_urls.py"
+      - "packages/wfloat-python/python/wfloat/_generated_model_urls.py"
+      - "packages/wfloat-web/src/worker/generatedModelUrls.ts"
+      - "packages/react-native-wfloat/src/generatedModelUrls.ts"
+      - ".github/workflows/codegen-model-urls-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check generated model URLs
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check generated model URLs
+        run: python3 scripts/codegen_model_urls.py --check
