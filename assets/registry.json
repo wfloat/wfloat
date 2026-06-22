@@ -3,7 +3,7 @@
   "models": {
     "wfloat/wfloat-tts": {
       "model_onnx": {
-        "path": "/models/wfloat/wfloat-tts/model.onnx",
+        "path": "/models/wfloat/wfloat-tts/model.on",
         "sha256": "a7e65773a29499b80a393bbe08af3507e18f6ef95faa0eaf7cb4ba353c8693ae"
       },
       "model_tokens": {
