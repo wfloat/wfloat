@@ -40,6 +40,8 @@
     "react-native.config.js",
     "!ios/build",
     "!android/build",
+    "!test-apps",
+    "!lib/**/test-apps",
     "!android/gradle",
     "!android/gradlew",
     "!android/gradlew.bat",
