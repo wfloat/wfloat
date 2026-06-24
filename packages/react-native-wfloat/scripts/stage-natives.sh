@@ -129,6 +129,7 @@ trim_onnxruntime_ios_xcframework() {
   while IFS= read -r library_dir; do
     if [[ -f "${library_dir}/onnxruntime.a" ]]; then
       rm -f "${library_dir}/libonnxruntime.a"
+      mv "${library_dir}/onnxruntime.a" "${library_dir}/libonnxruntime.a"
     fi
   done < <(find "${xcframework_dir}" -mindepth 1 -maxdepth 1 -type d -name "ios-*")
 
@@ -158,6 +159,9 @@ trim_onnxruntime_ios_xcframework() {
           local library_path
           library_path="$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:${index}:LibraryPath" "${info_plist}" 2>/dev/null || true)"
 
+          if [[ "${library_path}" == "onnxruntime.a" ]]; then
+            /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:${index}:LibraryPath libonnxruntime.a" "${info_plist}"
+          fi
         fi
 
         index=$((index - 1))
