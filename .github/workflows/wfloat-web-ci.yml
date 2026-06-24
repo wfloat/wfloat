@@ -1,0 +1,39 @@
+name: Wfloat Web CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/wfloat-web/**"
+      - ".github/workflows/wfloat-web-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/wfloat-web/**"
+      - ".github/workflows/wfloat-web-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  browser_consumer:
+    name: Browser consumer package smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        working-directory: packages/wfloat-web
+        run: npm install
+
+      - name: Build installed package in browser consumer
+        working-directory: packages/wfloat-web
+        run: npm run package:browser-smoke

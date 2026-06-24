@@ -14,6 +14,8 @@
     "rn:build-natives": "bash scripts/build-natives.sh",
     "rn:build-ios-llm": "bash scripts/build-ios-llm-xcframework.sh",
     "rn:stage-natives": "bash scripts/stage-natives.sh",
+    "consumer:build:android": "yarn prepare && node scripts/consumer-build-smoke.mjs --android",
+    "consumer:build:ios": "yarn prepare && node scripts/consumer-build-smoke.mjs --ios",
     "prepare": "bob build"
   },
   "exports": {

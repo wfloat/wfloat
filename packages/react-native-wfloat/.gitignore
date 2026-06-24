@@ -51,6 +51,10 @@ android.iml
 # Cocoapods
 #
 example/ios/Pods
+test-apps/*/ios/Pods
+test-apps/*/ios/Podfile.lock
+test-apps/*/ios/*.xcworkspace
+test-apps/*/package-lock.json
 
 # Ruby
 example/vendor/
