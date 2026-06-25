@@ -17,7 +17,8 @@ if [[ ! -d "${SOURCE_DIR}" ]]; then
 fi
 
 for file in \
-  sherpa-onnx-wasm-main-speech.js
+  sherpa-onnx-wasm-main-speech.js \
+  sherpa-onnx-wasm-main-speech.wasm
 do
   if [[ ! -f "${SOURCE_DIR}/${file}" ]]; then
     echo "Missing expected runtime file: ${SOURCE_DIR}/${file}" >&2
@@ -26,6 +27,7 @@ do
 done
 
 cp "${SOURCE_DIR}/sherpa-onnx-wasm-main-speech.js" "${DEST_DIR}/"
+cp "${SOURCE_DIR}/sherpa-onnx-wasm-main-speech.wasm" "${DEST_DIR}/"
 
 echo "Synced generated sherpa speech module JS into ${DEST_DIR}"
-echo "Remember to publish the matching .wasm to the registry manifest path."
+echo "Synced generated sherpa speech WASM into ${DEST_DIR}"

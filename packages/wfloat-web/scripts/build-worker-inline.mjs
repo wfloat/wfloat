@@ -20,6 +20,9 @@ async function run() {
     sourcemap: false,
     minify: true,
     treeShaking: true,
+    define: {
+      WFLOAT_WEB_USE_LOCAL_WASM: "false",
+    },
   });
 
   const bundledCode = await readFile(outfile, "utf8");

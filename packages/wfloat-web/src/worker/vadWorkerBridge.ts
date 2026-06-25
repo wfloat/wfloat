@@ -1,8 +1,7 @@
 import type { LoadModelProgressEvent } from "../tts/types.js";
 import type { VadDetectionResult, VadSegment, VadSpeechStartEvent } from "../vad/types.js";
 import type { WorkerRequest, WorkerResponse } from "./workerTypes.js";
-// @ts-ignore
-import workerCode from "./worker-inline.js";
+import { createWfloatWorker } from "./createWorker.js";
 
 type PendingRequest = {
   resolve: (value: WorkerResponse) => void;
@@ -10,11 +9,9 @@ type PendingRequest = {
   onLoadProgress?: (message: Extract<WorkerResponse, { type: "vad-load-model-progress" }>) => void;
 };
 
-const blob = new Blob([workerCode], { type: "text/javascript" });
-
 export class VadWorkerBridge {
   private static id = 1;
-  private static worker = new Worker(URL.createObjectURL(blob), { type: "module" });
+  private static worker = createWfloatWorker();
   private static initialized = false;
   private static pending = new Map<number, PendingRequest>();
 

@@ -24,7 +24,9 @@
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc && node scripts/build-worker-inline.mjs && bash scripts/copy-runtime-assets.sh",
+    "build:dev": "node scripts/clean-dist.mjs && tsc && node scripts/build-worker-module.mjs && bash scripts/copy-runtime-assets.sh --include-wasm",
     "package:browser-smoke": "npm run build && node scripts/package-browser-smoke.mjs",
+    "build:wasm": "npm run build:sherpa-wasm && npm run build:llama-wasm",
     "build:sherpa-wasm": "bash scripts/build-sherpa-speech-wasm.sh",
     "build:llama-wasm": "bash scripts/build-llama-wasm.sh"
   },
