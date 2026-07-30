@@ -4,7 +4,8 @@
   "description": "",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wfloat/wfloat-web.git"
+    "url": "git+https://github.com/wfloat/wfloat.git",
+    "directory": "packages/wfloat-web"
   },
   "type": "module",
   "module": "./dist/index.js",

@@ -69,20 +69,19 @@ let LLAMA_RUNTIME_URLS: { wasm_binary: string; wasm_data?: string } | null = nul
 type ModuleWithFs = Pick<SherpaModule, "FS">;
 
 declare const WFLOAT_WEB_USE_LOCAL_WASM: boolean;
+declare const WFLOAT_WEB_SHERPA_WASM_URL: string;
+declare const WFLOAT_WEB_LLAMA_WASM_URL: string;
 
-const REGISTRY_BASE_URL = REGISTRY_ORIGIN;
-const SHERPA_ONNX_VERSION = "1.13.1";
 const WFLOAT_TTS_MODEL_ID = "wfloat/wfloat-tts";
 const SILERO_VAD_MODEL_ID = "snakers4/silero-vad";
 const SMOLLM2_360M_INSTRUCT_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
-const LLAMA_CPP_WASM_CHECKSUM = "991d000b2f551badac60c9c73a9cfcdb711a584771450c295afb165a9cf4b129";
 
 function getSherpaSpeechWasmUrl(): string {
   if (WFLOAT_WEB_USE_LOCAL_WASM) {
     return new URL("../wasm/sherpa-onnx-wasm-main-speech.wasm", import.meta.url).toString();
   }
 
-  return `${REGISTRY_BASE_URL}/sherpa-onnx-wasm-main-speech/sherpa-onnx-wasm-main-speech-${SHERPA_ONNX_VERSION}.wasm`;
+  return WFLOAT_WEB_SHERPA_WASM_URL;
 }
 
 function getLlamaWasmUrl(): string {
@@ -90,7 +89,7 @@ function getLlamaWasmUrl(): string {
     return new URL("../wasm/wfloat-llama-wasm.wasm", import.meta.url).toString();
   }
 
-  return `${REGISTRY_BASE_URL}/llama.cpp-wasm/wfloat-llama-wasm.wasm?checksum=${LLAMA_CPP_WASM_CHECKSUM}`;
+  return WFLOAT_WEB_LLAMA_WASM_URL;
 }
 
 const SHERPA_SPEECH_WASM_URL = getSherpaSpeechWasmUrl();

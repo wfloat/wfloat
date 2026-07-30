@@ -22,6 +22,8 @@ async function run() {
     treeShaking: true,
     define: {
       WFLOAT_WEB_USE_LOCAL_WASM: "true",
+      WFLOAT_WEB_SHERPA_WASM_URL: JSON.stringify(""),
+      WFLOAT_WEB_LLAMA_WASM_URL: JSON.stringify(""),
     },
   });
 

@@ -9,7 +9,24 @@ const entry = resolve(__dirname, "../src/worker/worker.ts");
 const outfile = resolve(__dirname, "../dist/worker/worker-bundled.js");
 const finalOutfile = resolve(__dirname, "../dist/worker/worker-inline.js");
 
+function requiredWasmUrl(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required for a release worker build`);
+  }
+
+  const url = new URL(value);
+  if (url.protocol !== "https:") {
+    throw new Error(`${name} must be an HTTPS URL`);
+  }
+
+  return url.toString();
+}
+
 async function run() {
+  const sherpaWasmUrl = requiredWasmUrl("WFLOAT_WEB_SHERPA_WASM_URL");
+  const llamaWasmUrl = requiredWasmUrl("WFLOAT_WEB_LLAMA_WASM_URL");
+
   await build({
     entryPoints: [entry],
     outfile,
@@ -22,6 +39,8 @@ async function run() {
     treeShaking: true,
     define: {
       WFLOAT_WEB_USE_LOCAL_WASM: "false",
+      WFLOAT_WEB_SHERPA_WASM_URL: JSON.stringify(sherpaWasmUrl),
+      WFLOAT_WEB_LLAMA_WASM_URL: JSON.stringify(llamaWasmUrl),
     },
   });
 
