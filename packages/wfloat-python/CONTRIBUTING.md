@@ -72,8 +72,8 @@ CI:
 
 ## Release
 
-Publish Python with the `wfloat-v*` tag. The publish workflow builds and tests
-all supported platform wheels before uploading `wfloat` to PyPI.
+Publish Python with the `wfloat-python-v*` tag. The publish workflow builds and
+tests all supported platform wheels before uploading `wfloat` to PyPI.
 
 ## Notes for changes
 

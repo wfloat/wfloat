@@ -1,6 +1,6 @@
 {
   "name": "@wfloat/react-native-wfloat",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "Wfloat package for react native",
   "source": "./src/index.tsx",
   "main": "./lib/commonjs/index.js",

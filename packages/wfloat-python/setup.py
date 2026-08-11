@@ -215,7 +215,7 @@ if bdist_wheel is not None:
 setuptools.setup(
     name="wfloat",
     version=read_package_version(),
-    description="High-level Python wrapper for Wfloat TTS",
+    description="Wfloat Python SDK for running models locally",
     long_description=read_long_description(),
     long_description_content_type="text/markdown",
     author="wfloat",

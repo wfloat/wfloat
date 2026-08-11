@@ -10,7 +10,7 @@ on:
         default: false
   push:
     tags:
-      - "wfloat-v*"
+      - "wfloat-python-v*"
 
 permissions:
   contents: read
@@ -39,10 +39,10 @@ jobs:
             exit 0
           fi
 
-          tag_version="${GITHUB_REF_NAME#wfloat-v}"
-          if [[ "${GITHUB_REF_NAME}" != "wfloat-v${tag_version}" || "${tag_version}" == "${GITHUB_REF_NAME}" ]]; then
+          tag_version="${GITHUB_REF_NAME#wfloat-python-v}"
+          if [[ "${GITHUB_REF_NAME}" != "wfloat-python-v${tag_version}" || "${tag_version}" == "${GITHUB_REF_NAME}" ]]; then
             echo "Unexpected tag name: ${GITHUB_REF_NAME}" >&2
-            echo "Expected format: wfloat-v<version>" >&2
+            echo "Expected format: wfloat-python-v<version>" >&2
             exit 1
           fi
 
