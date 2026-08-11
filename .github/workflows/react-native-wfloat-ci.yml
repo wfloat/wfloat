@@ -364,7 +364,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t tarballs < <(find package-artifact -type f -name '*.tgz' -print)
+          mapfile -t tarballs < <(find "${GITHUB_WORKSPACE}/package-artifact" -type f -name '*.tgz' -print)
           test "${#tarballs[@]}" -eq 1
 
           npm publish "${tarballs[0]}" --access public --provenance
