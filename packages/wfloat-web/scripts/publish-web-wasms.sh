@@ -38,7 +38,8 @@ verify_public_asset() {
     "${url}"
 
   echo "${expected_sha256}  ${output}" | sha256sum --check --status
-  grep -Eiq '^access-control-allow-origin: (\*|https://consumer\.example)\r?$' "${headers}"
+  tr -d '\r' < "${headers}" |
+    grep -Eiq '^access-control-allow-origin: (\*|https://consumer\.example)$'
   rm -f "${output}" "${headers}"
 }
 
