@@ -256,7 +256,7 @@ chunks into the worker manually.
 
 For a quick browser smoke test from this repo:
 
-1. Build the package output so `dist/index.js`, `dist/worker/worker-inline.js`, and `dist/wasm/sherpa-onnx-wasm-main-speech.js` are current.
+1. Run `npm run build:wasm && npm run build:dev` so the package, module worker, and local WASMs in `dist` are current.
 2. From `packages/wfloat-web`, start a static server such as `python3 -m http.server 4173`.
 3. Open `http://localhost:4173`.
 
