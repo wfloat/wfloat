@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "react-native-wfloat-v*"
     paths:
       - "CMakeLists.txt"
       - "native/wfloat-core/**"
@@ -29,8 +31,46 @@ defaults:
     shell: bash
 
 jobs:
+  validate_version:
+    name: Validate version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Check tag version
+        run: |
+          set -euo pipefail
+
+          package_version=$(node --print "require('./packages/react-native-wfloat/package.json').version")
+
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Package version: ${package_version}"
+            exit 0
+          fi
+
+          tag_prefix="react-native-wfloat-v"
+          tag_version="${GITHUB_REF_NAME#${tag_prefix}}"
+
+          if [[ "${GITHUB_REF_NAME}" != "${tag_prefix}${tag_version}" || -z "${tag_version}" ]]; then
+            echo "Unexpected tag name: ${GITHUB_REF_NAME}" >&2
+            echo "Expected format: ${tag_prefix}<version>" >&2
+            exit 1
+          fi
+
+          if [[ "${package_version}" != "${tag_version}" ]]; then
+            echo "Tag version ${tag_version} does not match package version ${package_version}." >&2
+            exit 1
+          fi
+
   android_natives:
     name: Android natives (${{ matrix.abi }})
+    needs:
+      - validate_version
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -96,6 +136,8 @@ jobs:
 
   ios_natives:
     name: iOS natives
+    needs:
+      - validate_version
     runs-on: macos-14
 
     steps:
@@ -290,3 +332,39 @@ jobs:
           tarball="$(find "${GITHUB_WORKSPACE}/package-artifact" -type f -name '*.tgz' -print -quit)"
           test -n "${tarball}"
           node scripts/consumer-build-smoke.mjs --ios --tarball "${tarball}"
+
+  publish_npm:
+    name: Publish to npm
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs:
+      - package
+      - android_consumer
+      - ios_consumer
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/@wfloat/react-native-wfloat
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: react-native-wfloat-package
+          path: package-artifact
+
+      - name: Publish tested package
+        run: |
+          set -euo pipefail
+
+          mapfile -t tarballs < <(find package-artifact -type f -name '*.tgz' -print)
+          test "${#tarballs[@]}" -eq 1
+
+          npm publish "${tarballs[0]}" --access public --provenance

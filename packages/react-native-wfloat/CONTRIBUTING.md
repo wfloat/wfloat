@@ -96,6 +96,13 @@ Confirm the dry-run output includes:
 - `android/generated/**`
 - `lib/**`
 
+## Release
+
+Set the package version, then push a matching
+`react-native-wfloat-v<version>` tag. The React Native workflow builds the
+native artifacts, creates one package tarball, tests that tarball in the
+Android and iOS consumer apps, and publishes the same tarball to npm.
+
 ### iOS native changes
 
 Typical commands:
