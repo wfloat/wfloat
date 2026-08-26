@@ -22,9 +22,10 @@ except Exception:  # pragma: no cover
 ROOT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = ROOT_DIR.parents[1]
 PACKAGE_NATIVE_DIR = Path("wfloat") / "native"
+MACOS_DEPLOYMENT_TARGET = "14.0"
 
 if sys.platform == "darwin":
-    os.environ["MACOSX_DEPLOYMENT_TARGET"] = "12.0"
+    os.environ["MACOSX_DEPLOYMENT_TARGET"] = MACOS_DEPLOYMENT_TARGET
 
 
 def read_long_description() -> str:
@@ -129,7 +130,10 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
         configure.append("-DCMAKE_BUILD_TYPE=Release")
 
     if sys.platform == "darwin":
-        configure.append("-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0")
+        configure.append(
+            f"-DCMAKE_OSX_DEPLOYMENT_TARGET={MACOS_DEPLOYMENT_TARGET}"
+        )
+        configure.append("-DGGML_ACCELERATE_NEW_LAPACK=OFF")
 
     configure.extend(_split_cmake_args(os.environ.get("WFLOAT_CORE_CMAKE_ARGS", "")))
 

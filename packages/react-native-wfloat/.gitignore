@@ -58,6 +58,8 @@ test-apps/*/package-lock.json
 
 # Ruby
 example/vendor/
+test-apps/*/.bundle/
+test-apps/*/vendor/
 
 # node.js
 #

@@ -321,6 +321,12 @@ jobs:
         with:
           node-version: "24"
 
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3.6"
+          bundler-cache: true
+          working-directory: packages/react-native-wfloat/test-apps/consumer
+
       - uses: actions/download-artifact@v8
         with:
           name: react-native-wfloat-package

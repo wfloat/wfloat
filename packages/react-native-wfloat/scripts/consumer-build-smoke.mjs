@@ -1,21 +1,26 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync } from 'node:child_process';
 import {
-  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fixtureDir = path.join(packageDir, "test-apps", "consumer");
-const tmpDir = mkdtempSync(path.join(tmpdir(), "react-native-wfloat-consumer-"));
+const packageDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..'
+);
+const fixtureDir = path.join(packageDir, 'test-apps', 'consumer');
+const tmpDir = mkdtempSync(
+  path.join(tmpdir(), 'react-native-wfloat-consumer-')
+);
 
 function parseArgs(argv) {
   const parsed = {
@@ -26,18 +31,18 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--android") {
+    if (arg === '--android') {
       parsed.buildAndroid = true;
       continue;
     }
-    if (arg === "--ios") {
+    if (arg === '--ios') {
       parsed.buildIos = true;
       continue;
     }
-    if (arg === "--tarball") {
+    if (arg === '--tarball') {
       const value = argv[i + 1];
-      if (!value || value.startsWith("--")) {
-        throw new Error("--tarball requires a path.");
+      if (!value || value.startsWith('--')) {
+        throw new Error('--tarball requires a path.');
       }
       parsed.tarball = path.resolve(process.cwd(), value);
       i += 1;
@@ -54,14 +59,14 @@ const buildAndroid = args.buildAndroid;
 const buildIos = args.buildIos;
 
 if (!buildAndroid && !buildIos) {
-  throw new Error("Pass --android, --ios, or both.");
+  throw new Error('Pass --android, --ios, or both.');
 }
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
     cwd: options.cwd ?? packageDir,
-    encoding: "utf8",
-    stdio: options.stdio ?? ["ignore", "pipe", "inherit"],
+    encoding: 'utf8',
+    stdio: options.stdio ?? ['ignore', 'pipe', 'inherit'],
     env: {
       ...process.env,
       ...options.env,
@@ -80,78 +85,87 @@ function copyFixture(consumerDir) {
 
       const parts = relative.split(path.sep);
       return ![
-        "node_modules",
-        "Pods",
-        ".gradle",
-        ".cxx",
-        "build",
-        "DerivedData",
+        'node_modules',
+        'Pods',
+        '.bundle',
+        'vendor',
+        '.gradle',
+        '.cxx',
+        'build',
+        'DerivedData',
       ].some((excluded) => parts.includes(excluded));
     },
   });
 }
 
 function patchPackageJson(consumerDir, tarball) {
-  const packageJsonPath = path.join(consumerDir, "package.json");
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const packageJsonPath = path.join(consumerDir, 'package.json');
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    "@wfloat/react-native-wfloat": `file:${tarball}`,
+    '@wfloat/react-native-wfloat': `file:${tarball}`,
   };
-  writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
+  writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
 }
 
 function installConsumerDependencies(consumerDir) {
-  run("npm", ["install", "--legacy-peer-deps", "--no-audit", "--no-fund"], {
+  run('npm', ['install', '--legacy-peer-deps', '--no-audit', '--no-fund'], {
     cwd: consumerDir,
-    stdio: "inherit",
+    stdio: 'inherit',
   });
 }
 
 function packPackageTarball() {
-  const packOutput = run("npm", [
-    "pack",
-    "--ignore-scripts",
-    "--json",
-    "--pack-destination",
-    tmpDir,
-  ]);
-  const pack = JSON.parse(packOutput)[0];
-  return path.join(tmpDir, pack.filename);
+  run('npm', ['pack', '--ignore-scripts', '--pack-destination', tmpDir], {
+    stdio: 'inherit',
+  });
+
+  const tarballs = readdirSync(tmpDir).filter((name) => name.endsWith('.tgz'));
+  if (tarballs.length !== 1) {
+    throw new Error(`Expected one package tarball, found ${tarballs.length}.`);
+  }
+
+  return path.join(tmpDir, tarballs[0]);
 }
 
 function buildAndroidConsumer(consumerDir) {
-  const gradlew = path.join(consumerDir, "android", "gradlew");
-  chmodSync(gradlew, 0o755);
-  run(
-    "./gradlew",
-    [
-      ":app:assembleDebug",
-      "--no-daemon",
-      "--console=plain",
-      "-PreactNativeArchitectures=arm64-v8a",
-    ],
-    {
-      cwd: path.join(consumerDir, "android"),
-      stdio: "inherit",
-    },
-  );
+  run('npm', ['run', 'build:android'], {
+    cwd: consumerDir,
+    stdio: 'inherit',
+  });
 }
 
 function buildIosConsumer(consumerDir) {
-  const iosDir = path.join(consumerDir, "ios");
-  if (!existsSync(path.join(iosDir, "Podfile"))) {
-    throw new Error("The copied consumer is missing ios/Podfile.");
+  const iosDir = path.join(consumerDir, 'ios');
+  const bundlePath = path.join(fixtureDir, 'vendor', 'bundle');
+  const bundleEnv = {
+    BUNDLE_FROZEN: 'true',
+    BUNDLE_PATH: bundlePath,
+  };
+  const iosBuildEnv = {
+    ...bundleEnv,
+    RCT_NEW_ARCH_ENABLED: '1',
+  };
+
+  if (!existsSync(path.join(iosDir, 'Podfile'))) {
+    throw new Error('The copied consumer is missing ios/Podfile.');
   }
 
-  run("pod", ["install"], { cwd: iosDir, stdio: "inherit" });
+  run('bundle', ['install'], {
+    cwd: fixtureDir,
+    stdio: 'inherit',
+    env: bundleEnv,
+  });
+  run('bundle', ['exec', 'pod', 'install'], {
+    cwd: iosDir,
+    stdio: 'inherit',
+    env: iosBuildEnv,
+  });
 
-  run("npm", ["run", "build:ios"], {
+  run('npm', ['run', 'build:ios'], {
     cwd: consumerDir,
-    stdio: "inherit",
-    env: {
-      RCT_NEW_ARCH_ENABLED: "1",
-    },
+    stdio: 'inherit',
+    env: iosBuildEnv,
   });
 }
 
@@ -161,7 +175,7 @@ try {
     throw new Error(`Package tarball does not exist: ${tarball}`);
   }
 
-  const consumerDir = path.join(tmpDir, "consumer");
+  const consumerDir = path.join(tmpDir, 'consumer');
 
   mkdirSync(consumerDir, { recursive: true });
   copyFixture(consumerDir);

@@ -39,7 +39,10 @@ public class OfflineSpeakerDiarizationDemo {
     WaveReader reader = new WaveReader(waveFilename);
 
     OfflineSpeakerSegmentationPyannoteModelConfig pyannote =
-        OfflineSpeakerSegmentationPyannoteModelConfig.builder().setModel(segmentationModel).build();
+        OfflineSpeakerSegmentationPyannoteModelConfig.builder()
+            .setModel(segmentationModel)
+            .setWindowShiftRatio(0.1f)
+            .build();
 
     OfflineSpeakerSegmentationModelConfig segmentation =
         OfflineSpeakerSegmentationModelConfig.builder()
@@ -73,6 +76,7 @@ public class OfflineSpeakerDiarizationDemo {
     if (sd.getSampleRate() != reader.getSampleRate()) {
       System.out.printf(
           "Expected sample rate: %d, given: %d\n", sd.getSampleRate(), reader.getSampleRate());
+      sd.release();
       return;
     }
 

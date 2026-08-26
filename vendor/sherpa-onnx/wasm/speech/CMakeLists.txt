@@ -20,9 +20,7 @@ set(exported_functions
   SherpaOnnxCreateOfflineTts
   SherpaOnnxDestroyOfflineTts
   SherpaOnnxDestroyOfflineTtsGeneratedAudio
-  SherpaOnnxOfflineTtsGenerate
-  SherpaOnnxOfflineTtsGenerateWithCallback
-  SherpaOnnxOfflineTtsGenerateWithProgressCallback
+  SherpaOnnxOfflineTtsGenerateWithConfig
   SherpaOnnxOfflineTtsWfloatPrepareText
   SherpaOnnxOfflineTtsWfloatFreePreparedText
   SherpaOnnxOfflineTtsNumSpeakers

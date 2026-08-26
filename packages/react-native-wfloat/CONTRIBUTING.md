@@ -64,6 +64,13 @@ ios/onnxruntime.xcframework/
 There should not be a `macos-arm64_x86_64` slice or duplicate
 `onnxruntime.a` files in the staged package directory.
 
+Keep the published iOS artifacts as library-based XCFrameworks. Upstream
+sherpa-onnx and ONNX Runtime may provide nested `SherpaOnnxC.framework` or
+`onnxruntime.framework` bundles; normalize those inputs to the existing Wfloat
+layout during dependency upgrades. Treat changing the published layout as a
+separate package migration that updates the podspec, staging logic, and iOS
+consumer test together.
+
 Use platform arguments when you only need one side:
 
 ```sh

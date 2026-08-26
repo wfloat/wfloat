@@ -387,6 +387,12 @@ class OfflineTtsWfloatImpl : public OfflineTtsImpl {
     return ans;
   }
 
+  GeneratedAudio Generate(
+      const std::string &text, const GenerationConfig &config,
+      GeneratedAudioCallback callback = nullptr) const override {
+    return Generate(text, config.sid, config.speed, std::move(callback));
+  }
+
  private:
   struct ParsedEmotionText {
     std::string text_without_emotion_groupings;

@@ -55,6 +55,7 @@ build_slice() {
     -DLLAMA_BUILD_APP=OFF \
     -DLLAMA_BUILD_UI=OFF \
     -DLLAMA_OPENSSL=OFF \
+    -DGGML_ACCELERATE_NEW_LAPACK=OFF \
     -DGGML_BLAS=ON \
     -DGGML_BLAS_VENDOR=Apple \
     -DGGML_METAL=OFF \
@@ -75,6 +76,17 @@ require_library() {
 
   if [[ ! -f "${path}" ]]; then
     echo "Missing expected static library: ${path}" >&2
+    exit 1
+  fi
+}
+
+reject_new_accelerate_lapack() {
+  local library="$1"
+  local undefined_symbols
+
+  undefined_symbols="$(nm -u "${library}")"
+  if grep -Fq '$NEWLAPACK' <<<"${undefined_symbols}"; then
+    echo "${library} requires the iOS 16.4 Accelerate LAPACK ABI." >&2
     exit 1
   fi
 }
@@ -111,6 +123,7 @@ fi
 require_command cmake
 require_command libtool
 require_command lipo
+require_command nm
 require_command xcodebuild
 
 build_slice "iOS device arm64" "${DEVICE_BUILD_DIR}" iphoneos arm64
@@ -133,5 +146,8 @@ xcodebuild -create-xcframework \
   -library "${DEVICE_OUT_DIR}/libwfloat-core-llm.a" -headers "${HEADERS_DIR}" \
   -library "${SIM_UNIVERSAL_OUT_DIR}/libwfloat-core-llm.a" -headers "${HEADERS_DIR}" \
   -output "${XCFRAMEWORK_DIR}"
+
+reject_new_accelerate_lapack "${DEVICE_OUT_DIR}/libwfloat-core-llm.a"
+reject_new_accelerate_lapack "${SIM_UNIVERSAL_OUT_DIR}/libwfloat-core-llm.a"
 
 echo "Built ${XCFRAMEWORK_DIR}"

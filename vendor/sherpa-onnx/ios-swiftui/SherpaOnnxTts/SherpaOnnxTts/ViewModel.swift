@@ -5,6 +5,13 @@
 //  Created by fangjun on 2023/11/23.
 //
 
+#if canImport(SherpaOnnx)
+import SherpaOnnx
+#elseif canImport(SherpaOnnxShared)
+import SherpaOnnxShared
+#else
+#error("SherpaOnnx module not found. Please check your SPM dependency configuration.")
+#endif
 import Foundation
 
 // used to get the path to espeak-ng-data
@@ -199,21 +206,49 @@ func getTtsFor_kokoro_multi_lang_v1_0() -> SherpaOnnxOfflineTtsWrapper {
     model: model, voices: voices, tokens: tokens, dataDir: dataDir,
     lexicon: lexicon)
   let modelConfig = sherpaOnnxOfflineTtsModelConfig(kokoro: kokoro)
-  var config = sherpaOnnxOfflineTtsConfig(model: modelConfig)
+  var config = sherpaOnnxOfflineTtsConfig(model: modelConfig, ruleFsts: ruleFsts)
 
+  return SherpaOnnxOfflineTtsWrapper(config: &config)
+}
+
+func getTtsForSupertonic() -> SherpaOnnxOfflineTtsWrapper {
+  // please see https://k2-fsa.github.io/sherpa/onnx/tts/supertonic.html
+  // Download: https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2
+
+  let durationPredictor = getResource("duration_predictor", "int8.onnx")
+  let textEncoder = getResource("text_encoder", "int8.onnx")
+  let vectorEstimator = getResource("vector_estimator", "int8.onnx")
+  let vocoder = getResource("vocoder", "int8.onnx")
+  let ttsJson = getResource("tts", "json")
+  let unicodeIndexer = getResource("unicode_indexer", "bin")
+  let voiceStyle = getResource("voice", "bin")
+
+  let supertonic = sherpaOnnxOfflineTtsSupertonicModelConfig(
+    durationPredictor: durationPredictor,
+    textEncoder: textEncoder,
+    vectorEstimator: vectorEstimator,
+    vocoder: vocoder,
+    ttsJson: ttsJson,
+    unicodeIndexer: unicodeIndexer,
+    voiceStyle: voiceStyle
+  )
+  let modelConfig = sherpaOnnxOfflineTtsModelConfig(numThreads: 2, supertonic: supertonic)
+  var config = sherpaOnnxOfflineTtsConfig(model: modelConfig)
   return SherpaOnnxOfflineTtsWrapper(config: &config)
 }
 
 func createOfflineTts() -> SherpaOnnxOfflineTtsWrapper {
   // Please enable only one of them
 
-  return getTtsFor_kokoro_multi_lang_v1_0()
+  // return getTtsForSupertonic()
+
+  // return getTtsFor_kokoro_multi_lang_v1_0()
 
   // return getTtsFor_kokoro_en_v0_19()
 
   // return getTtsFor_matcha_icefall_zh_baker()
 
-  // return getTtsFor_en_US_amy_low()
+  return getTtsFor_en_US_amy_low()
 
   // return getTtsForVCTK()
 

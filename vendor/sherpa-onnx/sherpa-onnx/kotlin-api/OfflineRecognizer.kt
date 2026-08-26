@@ -18,6 +18,7 @@ data class OfflineTransducerModelConfig(
     var encoder: String = "",
     var decoder: String = "",
     var joiner: String = "",
+    var qnnConfig: QnnConfig = QnnConfig(),
 )
 
 data class OfflineParaformerModelConfig(
@@ -50,6 +51,10 @@ data class OfflineMedAsrCtcModelConfig(
     var model: String = "",
 )
 
+data class OfflineFireRedAsrCtcModelConfig(
+    var model: String = "",
+)
+
 data class OfflineFunAsrNanoModelConfig(
     var encoderAdaptor: String = "",
     var llm: String = "",
@@ -66,12 +71,27 @@ data class OfflineFunAsrNanoModelConfig(
     var hotwords: String = "",
 )
 
+data class OfflineQwen3AsrModelConfig(
+    var convFrontend: String = "",
+    var encoder: String = "",
+    var decoder: String = "",
+    var tokenizer: String = "",
+    var maxTotalLen: Int = 512,
+    var maxNewTokens: Int = 128,
+    var temperature: Float = 1e-6f,
+    var topP: Float = 0.8f,
+    var seed: Int = 42,
+    var hotwords: String = "",
+)
+
 data class OfflineWhisperModelConfig(
     var encoder: String = "",
     var decoder: String = "",
     var language: String = "en", // Used with multilingual model
     var task: String = "transcribe", // transcribe or translate
     var tailPaddings: Int = 1000, // Padding added at the end of the samples
+    var enableTokenTimestamps: Boolean = false,
+    var enableSegmentTimestamps: Boolean = false,
 )
 
 data class OfflineCanaryModelConfig(
@@ -82,16 +102,29 @@ data class OfflineCanaryModelConfig(
     var usePnc: Boolean = true,
 )
 
+data class OfflineCohereTranscribeModelConfig(
+    var encoder: String = "",
+    var decoder: String = "",
+    var language: String = "",
+    var usePunct: Boolean = true,
+    var useItn: Boolean = true,
+)
+
 data class OfflineFireRedAsrModelConfig(
     var encoder: String = "",
     var decoder: String = "",
 )
 
+// For moonshine v1, you need four models.
+// For moonshine v2, you need two models.
+// - v1: preprocessor, encoder, uncachedDecoder, cachedDecoder
+// - v2: encoder, mergedDecoder
 data class OfflineMoonshineModelConfig(
     var preprocessor: String = "",
     var encoder: String = "",
     var uncachedDecoder: String = "",
     var cachedDecoder: String = "",
+    var mergedDecoder: String = "",
 )
 
 data class OfflineSenseVoiceModelConfig(
@@ -115,7 +148,11 @@ data class OfflineModelConfig(
     var omnilingual: OfflineOmnilingualAsrCtcModelConfig = OfflineOmnilingualAsrCtcModelConfig(),
     var medasr: OfflineMedAsrCtcModelConfig = OfflineMedAsrCtcModelConfig(),
     var funasrNano: OfflineFunAsrNanoModelConfig = OfflineFunAsrNanoModelConfig(),
+    var qwen3Asr: OfflineQwen3AsrModelConfig = OfflineQwen3AsrModelConfig(),
+    var fireRedAsrCtc: OfflineFireRedAsrCtcModelConfig = OfflineFireRedAsrCtcModelConfig(),
     var canary: OfflineCanaryModelConfig = OfflineCanaryModelConfig(),
+    var cohereTranscribe: OfflineCohereTranscribeModelConfig =
+        OfflineCohereTranscribeModelConfig(),
     var teleSpeech: String = "",
     var numThreads: Int = 1,
     var debug: Boolean = false,
@@ -152,6 +189,9 @@ class OfflineRecognizer(
         } else {
             newFromFile(config)
         }
+        require(ptr != 0L) {
+            "Invalid OfflineRecognizerConfig: failed to create native OfflineRecognizer"
+        }
     }
 
     protected fun finalize() {
@@ -168,6 +208,11 @@ class OfflineRecognizer(
         return OfflineStream(p)
     }
 
+    fun createStream(hotwords: String): OfflineStream {
+        val p = createStreamWithHotwords(ptr, hotwords)
+        return OfflineStream(p)
+    }
+
     fun getResult(stream: OfflineStream): OfflineRecognizerResult {
         return getResult(stream.ptr)
     }
@@ -179,6 +224,8 @@ class OfflineRecognizer(
     private external fun delete(ptr: Long)
 
     private external fun createStream(ptr: Long): Long
+
+    private external fun createStreamWithHotwords(ptr: Long, hotwords: String): Long
 
     private external fun setConfig(ptr: Long, config: OfflineRecognizerConfig)
 
@@ -779,6 +826,7 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
                     tokenizer = "$modelDir/Qwen3-0.6B",
                 ),
                 tokens = "",
+                numThreads=3,
             )
         }
 
@@ -799,6 +847,166 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
                     model = "$modelDir/model.onnx",
                 ),
                 tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        49 -> {
+            val modelDir = "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
+            return OfflineModelConfig(
+                transducer = OfflineTransducerModelConfig(
+                    encoder = "$modelDir/encoder.int8.onnx",
+                    decoder = "$modelDir/decoder.onnx",
+                    joiner = "$modelDir/joiner.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "transducer",
+            )
+        }
+
+        50 -> {
+            val modelDir = "sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25"
+            return OfflineModelConfig(
+                fireRedAsrCtc = OfflineFireRedAsrCtcModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        51 -> {
+            val modelDir = "sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        52 -> {
+            val modelDir = "sherpa-onnx-moonshine-tiny-ja-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        53 -> {
+            val modelDir = "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        54 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-zh-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        55 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-vi-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        56 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-uk-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        57 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-ja-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        58 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-es-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        59 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        60 -> {
+            val modelDir = "sherpa-onnx-moonshine-base-ar-quantized-2026-02-27"
+            return OfflineModelConfig(
+                moonshine = OfflineMoonshineModelConfig(
+                    encoder = "$modelDir/encoder_model.ort",
+                    mergedDecoder = "$modelDir/decoder_model_merged.ort",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        61 -> {
+            val modelDir = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+            return OfflineModelConfig(
+                qwen3Asr = OfflineQwen3AsrModelConfig(
+                    convFrontend = "$modelDir/conv_frontend.onnx",
+                    encoder = "$modelDir/encoder.int8.onnx",
+                    decoder = "$modelDir/decoder.int8.onnx",
+                    tokenizer = "$modelDir/tokenizer",
+                ),
+                tokens = "",
+                numThreads=3,
+            )
+        }
+
+        62 -> {
+            val modelDir = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming"
+            return OfflineModelConfig(
+                transducer = OfflineTransducerModelConfig(
+                    encoder = "$modelDir/encoder.int8.onnx",
+                    decoder = "$modelDir/decoder.int8.onnx",
+                    joiner = "$modelDir/joiner.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "nemo_transducer",
             )
         }
 
@@ -1256,6 +1464,46 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
                     ),
                 ),
                 tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9026 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-reazonspeech-zipformer-transducer-ja-5s-2024-08-01-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                transducer = OfflineTransducerModelConfig(
+                    encoder = "$modelDir/libencoder.so",
+                    decoder = "$modelDir/libdecoder.so",
+                    joiner = "$modelDir/libjoiner.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/encoder.bin,$modelDir/decoder.bin,$modelDir/joiner.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "transducer",
+                debug = true,
+            )
+        }
+
+        9027 -> {
+            // for Xiaomi 17 Pro
+            val modelDir =
+                "sherpa-onnx-qnn-SM8850-binary-reazonspeech-zipformer-transducer-ja-5s-2024-08-01"
+            return OfflineModelConfig(
+                provider = "qnn",
+                transducer = OfflineTransducerModelConfig(
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/encoder.bin,$modelDir/decoder.bin,$modelDir/joiner.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "transducer",
                 debug = true,
             )
         }

@@ -26,6 +26,7 @@
 #include "sherpa-onnx/csrc/online-transducer-modified-beam-search-decoder.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
 #include "sherpa-onnx/csrc/symbol-table.h"
+#include "sherpa-onnx/csrc/text-utils.h"
 #include "sherpa-onnx/csrc/utils.h"
 #include "ssentencepiece/csrc/ssentencepiece.h"
 
@@ -64,6 +65,8 @@ OnlineRecognizerResult Convert(const OnlineTransducerDecoderResult &src,
   if (sym_table.IsByteBpe()) {
     text = sym_table.DecodeByteBpe(text);
   }
+
+  text = RemoveSpaceBetweenCjk(text);
 
   r.text = std::move(text);
 
@@ -132,7 +135,7 @@ class OnlineRecognizerTransducerImpl : public OnlineRecognizerImpl {
     } else {
       SHERPA_ONNX_LOGE("Unsupported decoding method: %s",
                        config.decoding_method.c_str());
-      exit(-1);
+      SHERPA_ONNX_EXIT(-1);
     }
 
     if (model_->UseWhisperFeature()) {
@@ -168,7 +171,9 @@ class OnlineRecognizerTransducerImpl : public OnlineRecognizerImpl {
         bpe_encoder_ = std::make_unique<ssentencepiece::Ssentencepiece>(iss);
       }
 
-      if (!config_.hotwords_file.empty()) {
+      if (!config_.hotwords_buf.empty()) {
+        InitHotwordsFromBufStr();
+      } else if (!config_.hotwords_file.empty()) {
         InitHotwords(mgr);
       }
 
@@ -185,7 +190,7 @@ class OnlineRecognizerTransducerImpl : public OnlineRecognizerImpl {
     } else {
       SHERPA_ONNX_LOGE("Unsupported decoding method: %s",
                        config.decoding_method.c_str());
-      exit(-1);
+      SHERPA_ONNX_EXIT(-1);
     }
 
     if (model_->UseWhisperFeature()) {
@@ -252,8 +257,7 @@ class OnlineRecognizerTransducerImpl : public OnlineRecognizerImpl {
       return;
     }
     int32_t chunk_size = model_->ChunkSize();
-    int32_t chunk_shift = model_->ChunkShift();
-    int32_t feature_dim = 80;
+    int32_t feature_dim = config_.feat_config.feature_dim;
     std::vector<OnlineTransducerDecoderResult> results(max_batch_size);
     std::vector<float> features_vec(max_batch_size * chunk_size * feature_dim);
     std::vector<std::vector<Ort::Value>> states_vec(max_batch_size);
@@ -438,11 +442,11 @@ class OnlineRecognizerTransducerImpl : public OnlineRecognizerImpl {
   void InitHotwords() {
     // each line in hotwords_file contains space-separated words
 
-    std::ifstream is(config_.hotwords_file);
+    auto is = OpenInputFile(config_.hotwords_file);
     if (!is) {
       SHERPA_ONNX_LOGE("Open hotwords file failed: %s",
                        config_.hotwords_file.c_str());
-      exit(-1);
+      SHERPA_ONNX_EXIT(-1);
     }
 
     if (!EncodeHotwords(is, config_.model_config.modeling_unit, sym_,
@@ -466,7 +470,7 @@ class OnlineRecognizerTransducerImpl : public OnlineRecognizerImpl {
     if (!is) {
       SHERPA_ONNX_LOGE("Open hotwords file failed: %s",
                        config_.hotwords_file.c_str());
-      exit(-1);
+      SHERPA_ONNX_EXIT(-1);
     }
 
     if (!EncodeHotwords(is, config_.model_config.modeling_unit, sym_,

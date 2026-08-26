@@ -1,230 +1,128 @@
-# User Guide
+# sherpa-onnx JVM API
 
-*Applicable to Windows / macOS / Linux (using Windows as an example for dynamic library loading)*
+This is the JVM (Java) API for [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
 
-## 1. Prerequisites
+## Prerequisites
 
-* Java 1.8+ environment
-* Download and prepare the following:
+- JDK 8 or above
+- Maven 3.x (or use the included wrapper if available)
 
-  * Sherpa-ONNX Java API (Maven dependency)
-  * Kokoro TTS model files (including `model.onnx`, etc.)
+## Project Structure
 
----
+```
+sherpa-onnx/java-api/
+├── pom.xml                    # Maven build configuration
+└── src/main/java/com/k2fsa/sherpa/onnx/
+    ├── LibraryLoader.java
+    ├── VersionInfo.java
+    ├── OnlineRecognizer.java
+    ├── OfflineRecognizer.java
+    └── ... (all Java source files)
+```
 
-## 2. Add Maven Dependency
+## Build
 
-In your `pom.xml`, add:
+```bash
+cd sherpa-onnx/java-api
+
+# Clean and build
+mvn clean package
+
+# Build without clean
+mvn package
+
+# Install to local Maven repository (~/.m2)
+mvn install
+```
+
+The generated jar will be in `target/sherpa-onnx-jvm-<version>.jar`.
+
+## Clean
+
+```bash
+mvn clean
+```
+
+## Output
+
+After building, you will find:
+
+| File | Description |
+|---|---|
+| `target/sherpa-onnx-jvm-1.13.6.jar` | JVM API jar (classes only) |
+
+## Usage
+
+### In a Maven Project
+
+Add to your `pom.xml`:
 
 ```xml
 <dependency>
-  <groupId>com.litongjava</groupId>
-  <artifactId>sherpa-onnx-java-api</artifactId>
-  <version>1.0.1</version>
+    <groupId>com.github.k2-fsa.sherpa-onnx</groupId>
+    <artifactId>sherpa-onnx-jvm</artifactId>
+    <version>1.13.6</version>
 </dependency>
 ```
 
----
+### In a Gradle Project
 
-## 3. Obtain and Configure Native Dynamic Libraries (JNI)
+Add to your `build.gradle`:
 
-### 3.1 Install ONNX Runtime
-
-#### Windows 10
-
-Starting from Windows 10 v1809 and all versions of Windows 11, the system comes with built-in ONNX Runtime as part of Windows ML (WinRT API), exposed through Windows.AI.MachineLearning.dll. You can directly use WinML to load and run ONNX models without additional downloads or installations.
-[run-onnx-models](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/run-onnx-models)
-
-#### Linux
-
-Sherpa-ONNX does **not** bundle ONNX Runtime. To install it manually:
-
-1. Download the Linux x64 binary from Microsoft’s GitHub Releases:
-
-   ```bash
-   wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-x64-1.17.1.tgz
-   tar -xzf onnxruntime-linux-x64-1.17.1.tgz
-   ```
-
-2. Copy and symlink the library into a system directory:
-
-   ```bash
-   sudo cp onnxruntime-linux-x64-1.17.1/lib/libonnxruntime.so* /usr/local/lib/
-   sudo ln -sf /usr/local/lib/libonnxruntime.so.1.17.1 /usr/local/lib/libonnxruntime.so
-   ```
-
-3. Update the shared-library cache and verify:
-
-   ```bash
-   sudo ldconfig
-   ldconfig -p | grep onnxruntime
-   ```
-
-#### macOS
-
-Sherpa-ONNX also requires you to install ONNX Runtime on macOS:
-
-1. Download the macOS ARM64 binary:
-
-   ```bash
-   wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-arm64-1.17.1.tgz
-   tar -xzf onnxruntime-osx-arm64-1.17.1.tgz
-   ```
-
-2. Copy the dylib into `/usr/local/lib`:
-
-   ```bash
-   sudo cp onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.1.17.1.dylib /usr/local/lib/
-   ```
-
-3. Add `/usr/local/lib` to `dyld`’s search path:
-
-   ```bash
-   export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
-   ```
-
-4. Verify with `otool`:
-
-   ```bash
-   otool -L /Users/ping/lib/darwin_arm64/libsherpa-onnx-jni.dylib
-   ```
-
----
-
-### 3.2 Common Errors & Troubleshooting
-
-**Error Example:**
-
-```text
-Exception in thread "main" java.lang.UnsatisfiedLinkError: no sherpa-onnx-jni in java.library.path: ...
+```groovy
+implementation 'com.github.k2-fsa.sherpa-onnx:sherpa-onnx-jvm:1.13.6'
 ```
 
-This means the JVM couldn’t locate the native library in `java.library.path`.
+### In a Gradle Kotlin DSL Project
 
-**Troubleshooting steps:**
+Add to your `build.gradle.kts`:
 
-1. Ensure you downloaded the build matching your OS and architecture (e.g. win-x64 vs. arm64).
-
-2. Test with an absolute path:
-
-   ```bash
-   java -Djava.library.path=C:\full\path\to\jni -jar your-app.jar
-   ```
-
-3. Print or inspect `java.library.path` at runtime (e.g. `System.out.println(System.getProperty("java.library.path"));`).
-
-4. **Do not** hack the internal `sys_paths` via reflection (it may throw `NoSuchFieldException`). Use `-Djava.library.path` instead.
-
----
-
-## 4. Download & Prepare the Kokoro Model
-
-Fetch the model package from the official release (example: Kokoro v0.19 English):
-
+```kotlin
+implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx-jvm:1.13.6")
 ```
-https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html
-```
+
+### From Command Line
 
 ```bash
-# Download (manually or via script)
-wget https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
+# Compile your code against the jar
+javac -cp sherpa-onnx/java-api/target/sherpa-onnx-jvm-1.13.6.jar YourApp.java
 
-# Extract
-tar -xjf kokoro-en-v0_19.tar.bz2
-
-# Inspect
-ls -lh kokoro-en-v0_19/
+# Run your code (with JNI library path)
+java -Djava.library.path=/path/to/jni/libs -cp sherpa-onnx/java-api/target/sherpa-onnx-jvm-1.13.6.jar YourApp
 ```
 
-You should see:
+## Native Libraries
+
+This jar only contains the JVM API classes. You also need platform-specific native libraries
+to run the application. See the [main README](../../README.md) for details on how to obtain
+native libraries for your platform.
+
+### Native Library Artifacts (from JitPack)
+
+| Platform | Artifact |
+|---|---|
+| macOS ARM64 | `com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-osx-aarch64` |
+| macOS x64 | `com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-osx-x64` |
+| Linux x64 | `com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-linux-x64` |
+| Linux ARM64 | `com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-linux-aarch64` |
+| Windows x64 | `com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-win-x64` |
+
+## Adding New Java Files
+
+With Maven, you don't need to edit any build configuration when adding new Java files.
+Simply place your new `.java` file in:
 
 ```
-LICENSE
-README.md
-espeak-ng-data/    # speech data directory
-model.onnx         # TTS model
-tokens.txt         # token mapping
-voices.bin         # voice embeddings
+src/main/java/com/k2fsa/sherpa/onnx/YourNewClass.java
 ```
 
-Make sure your Java code points to these files (using either relative or absolute paths).
+Maven will automatically discover and compile it.
 
----
+## Version
 
-## 5. Test Code (Java Example)
+The current version is `1.13.6` (defined in `pom.xml`).
 
-```java
-package com.litongjava.linux.tts;
+To update the version:
 
-import com.k2fsa.sherpa.onnx.GeneratedAudio;
-import com.k2fsa.sherpa.onnx.OfflineTts;
-import com.k2fsa.sherpa.onnx.OfflineTtsConfig;
-import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig;
-import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig;
-
-public class NonStreamingTtsKokoroEn {
-  public static void main(String[] args) {
-    String model   = "./kokoro-en-v0_19/model.onnx";
-    String voices  = "./kokoro-en-v0_19/voices.bin";
-    String tokens  = "./kokoro-en-v0_19/tokens.txt";
-    String dataDir = "./kokoro-en-v0_19/espeak-ng-data";
-    String text    = "Today as always, men fall into two groups: slaves and free men. Whoever does not have"
-                   + " two-thirds of his day for himself, is a slave, whatever he may be: a statesman, a"
-                   + " businessman, an official, or a scholar.";
-
-    OfflineTtsKokoroModelConfig kokoroConfig = OfflineTtsKokoroModelConfig.builder()
-        .setModel(model)
-        .setVoices(voices)
-        .setTokens(tokens)
-        .setDataDir(dataDir)
-        .build();
-
-    OfflineTtsModelConfig modelConfig = OfflineTtsModelConfig.builder()
-        .setKokoro(kokoroConfig)
-        .setNumThreads(2)
-        .setDebug(true)
-        .build();
-
-    OfflineTtsConfig config = OfflineTtsConfig.builder()
-        .setModel(modelConfig)
-        .build();
-
-    OfflineTts tts = new OfflineTts(config);
-
-    int sid   = 0;
-    float speed = 1.0f;
-    long start = System.currentTimeMillis();
-    GeneratedAudio audio = tts.generate(text, sid, speed);
-    long stop  = System.currentTimeMillis();
-
-    float elapsed   = (stop - start) / 1000.0f;
-    float duration  = audio.getSamples().length / (float) audio.getSampleRate();
-    float rtf       = elapsed / duration;
-
-    String outFile = "tts-kokoro-en.wav";
-    audio.save(outFile);
-
-    System.out.printf("-- elapsed           : %.3f seconds%n", elapsed);
-    System.out.printf("-- audio duration    : %.3f seconds%n", duration);
-    System.out.printf("-- real-time factor  : %.3f%n", rtf);
-    System.out.printf("-- text              : %s%n", text);
-    System.out.printf("-- Saved to          : %s%n", outFile);
-
-    tts.release();
-  }
-}
-```
-
-### Output Explanation
-
-After successful execution, you should see something like:
-
-```
--- elapsed           : 6.739 seconds
--- audio duration    : 6.739 seconds
--- real-time factor  : 0.563
--- text              : ...
--- Saved to          : tts-kokoro-en.wav
-```
-
-A file named `tts-kokoro-en.wav` will appear in the current directory—play it with any audio player to verify.
+1. Edit `pom.xml` and change the `<version>` tag
+2. Rebuild with `mvn clean package`

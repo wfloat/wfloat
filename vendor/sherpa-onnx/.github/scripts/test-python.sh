@@ -8,6 +8,80 @@ log() {
   echo -e "$(date '+%Y-%m-%d %H:%M:%S') (${fname}:${BASH_LINENO[0]}:${FUNCNAME[1]}) $*"
 }
 
+log "test version"
+python3 ./python-api-examples/version-test.py
+
+log "test Cohere Transcribe"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01.tar.bz2
+tar xvf sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01.tar.bz2
+rm sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01.tar.bz2
+python3 ./python-api-examples/offline-cohere-transcribe-decode-files.py
+rm -rf sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01
+
+log "test Qwen3 ASR"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2
+tar xvf sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2
+rm sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2
+
+python3 ./python-api-examples/offline-qwen3-asr-decode-files.py \
+  --conv-frontend=./sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/conv_frontend.onnx \
+  --encoder=./sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/encoder.int8.onnx \
+  --decoder=./sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/decoder.int8.onnx \
+  --tokenizer=./sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/tokenizer \
+  --max-new-tokens=128 \
+  --num-threads=2 \
+  ./sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/raokouling.wav
+
+rm -rf sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25
+
+log "test Supertonic TTS"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2
+tar xvf sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2
+rm sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2
+
+python3 python-api-examples/supertonic-tts.py
+
+rm -rf sherpa-onnx-supertonic-3-tts-int8-2026-05-11
+
+mkdir -p tts
+cp supertonic-en.wav tts/
+ls -lh tts
+
+log "test Moonshine v2"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2
+tar xvf sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2
+rm sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2
+
+ls -lh sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27
+
+python3 ./python-api-examples/offline-moonshine-decode-files-v2.py
+
+rm -rf  sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27
+
+log "test FireRedASR CTC"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25.tar.bz2
+tar xvf sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25.tar.bz2
+rm sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25.tar.bz2
+
+python3 ./python-api-examples/offline-fire-red-asr-ctc-decode-files.py
+
+rm -rf sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25
+
+log "test FireRedASR AED"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-fire-red-asr-large-zh_en-2025-02-16.tar.bz2
+tar xvf sherpa-onnx-fire-red-asr-large-zh_en-2025-02-16.tar.bz2
+rm sherpa-onnx-fire-red-asr-large-zh_en-2025-02-16.tar.bz2
+
+python3 ./python-api-examples/offline-fire-red-asr-decode-files.py
+
+rm -rf sherpa-onnx-fire-red-asr-large-zh_en-2025-02-16
+
 log "test PocketTTS"
 
 curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
@@ -17,6 +91,21 @@ rm sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
 python3 ./python-api-examples/pocket-tts.py
 
 rm -rf sherpa-onnx-pocket-tts-int8-2026-01-26
+
+log "test ZipVoice TTS"
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2
+tar xvf sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2
+rm sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2
+
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx
+
+python3 ./python-api-examples/zipvoice-tts.py
+
+cp generated-zipvoice-zh-en-python.wav tts/
+
+rm -rf sherpa-onnx-zipvoice-distill-int8-zh-en-emilia
+rm -f vocos_24khz.onnx
 
 log "test Google MedASR"
 curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-medasr-ctc-en-int8-2025-12-25.tar.bz2
@@ -94,8 +183,12 @@ rm -rf sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02
 log "test offline speech enhancement (GTCRN)"
 
 curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet_baseline.onnx
 curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/speech_with_noise.wav
 python3 ./python-api-examples/offline-speech-enhancement-gtcrn.py
+python3 ./python-api-examples/offline-speech-enhancement-dpdfnet.py
+python3 ./python-api-examples/online-speech-enhancement-gtcrn.py
+python3 ./python-api-examples/online-speech-enhancement-dpdfnet.py
 ls -lh *.wav
 
 log "test offline zipformer (byte-level bpe, Chinese+English)"
@@ -139,7 +232,11 @@ curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-reco
 
 curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/0-four-speakers-zh.wav
 
-python3 ./python-api-examples/offline-speaker-diarization.py
+if python3 -c "import librosa" 2>/dev/null; then
+  python3 ./python-api-examples/offline-speaker-diarization.py
+else
+  log "Skipping offline-speaker-diarization.py (librosa not installed)"
+fi
 
 rm -rf *.wav *.onnx ./sherpa-onnx-pyannote-segmentation-3-0
 
@@ -159,7 +256,7 @@ rm -rf /tmp/test-cluster
 export GIT_CLONE_PROTECTION_ACTIVE=false
 
 log "test offline SenseVoice CTC"
-url=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
+url=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
 name=$(basename $url)
 repo=$(basename -s .tar.bz2 $name)
 
@@ -181,7 +278,7 @@ python3 ./python-api-examples/offline-sense-voice-ctc-decode-files-with-hr.py
 
 rm -rf dict replace.fst test-hr.wav lexicon.txt
 
-if [[ $(uname) == Linux ]]; then
+if command -v ffmpeg &> /dev/null; then
   # It needs ffmpeg
   log  "generate subtitles (Chinese)"
   curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
@@ -189,7 +286,7 @@ if [[ $(uname) == Linux ]]; then
 
   python3 ./python-api-examples/generate-subtitles.py \
     --silero-vad-model=./silero_vad.onnx \
-    --sense-voice=$repo/model.onnx \
+    --sense-voice=$repo/model.int8.onnx \
     --tokens=$repo/tokens.txt \
     --num-threads=2 \
     ./lei-jun-test.wav
@@ -203,7 +300,7 @@ if [[ $(uname) == Linux ]]; then
 
   python3 ./python-api-examples/generate-subtitles.py \
     --silero-vad-model=./silero_vad.onnx \
-    --sense-voice=$repo/model.onnx \
+    --sense-voice=$repo/model.int8.onnx \
     --tokens=$repo/tokens.txt \
     --num-threads=2 \
     ./Obama.wav
@@ -250,6 +347,16 @@ ls -lh $repo
 python3 ./python-api-examples/add-punctuation.py
 
 rm -rf $repo
+
+log "test offline diacritization"
+
+curl -SL -O https://github.com/abjadai/catt/releases/download/v2/eo_model_onnx.zip
+unzip eo_model_onnx.zip -d catt_eo_model_onnx
+rm eo_model_onnx.zip
+
+python3 ./python-api-examples/add-diacritics.py
+
+rm -rf catt_eo_model_onnx
 
 log "test online punctuation"
 
@@ -367,7 +474,7 @@ done
 
 log "Offline TTS test"
 # test waves are saved in ./tts
-mkdir ./tts
+mkdir -p ./tts
 
 log "test kitten tts"
 

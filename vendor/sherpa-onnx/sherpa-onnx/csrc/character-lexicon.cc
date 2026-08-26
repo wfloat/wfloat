@@ -10,7 +10,6 @@
 #include <regex>  // NOLINT
 #include <sstream>
 #include <string>
-#include <strstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -36,28 +35,29 @@ namespace sherpa_onnx {
 
 class CharacterLexicon::Impl {
  public:
-  Impl(const std::string &lexicon, const std::string &tokens, bool debug)
-      : debug_(debug) {
+  Impl(const std::string &lexicon, const std::string &tokens, bool debug,
+       bool use_g2pw)
+      : debug_(debug), use_g2pw_(use_g2pw) {
     if (lexicon.empty()) {
       SHERPA_ONNX_LOGE("Please provide lexicon.txt for this model");
       SHERPA_ONNX_EXIT(-1);
     }
 
     {
-      std::ifstream is(tokens);
+      auto is = OpenInputFile(tokens);
       InitTokens(is);
     }
 
     {
-      std::ifstream is(lexicon);
+      auto is = OpenInputFile(lexicon);
       InitLexicon(is);
     }
   }
 
   template <typename Manager>
   Impl(Manager *mgr, const std::string &lexicon, const std::string &tokens,
-       bool debug)
-      : debug_(debug) {
+       bool debug, bool use_g2pw)
+      : debug_(debug), use_g2pw_(use_g2pw) {
     if (lexicon.empty()) {
       SHERPA_ONNX_LOGE("Please provide lexicon.txt for this model");
       SHERPA_ONNX_EXIT(-1);
@@ -65,14 +65,14 @@ class CharacterLexicon::Impl {
 
     {
       auto buf = ReadFile(mgr, tokens);
-      std::istrstream is(buf.data(), buf.size());
+      std::istringstream is(std::string(buf.data(), buf.size()));
 
       InitTokens(is);
     }
 
     {
       auto buf = ReadFile(mgr, lexicon);
-      std::istrstream is(buf.data(), buf.size());
+      std::istringstream is(std::string(buf.data(), buf.size()));
       InitLexicon(is);
     }
   }
@@ -162,6 +162,14 @@ class CharacterLexicon::Impl {
     std::vector<TokenIDs> ans;
     std::vector<int64_t> this_sentence;
 
+    if (use_g2pw_) {
+      // please see
+      // https://github.com/OHF-Voice/piper1-gpl/blob/main/src/piper/phonemize_chinese.py#L296
+      // it adds bos at the beginning of each sentence and adds eos at the end
+      // of each sentence
+      this_sentence.push_back(bos_id_);
+    }
+
     PhraseMatcher matcher(&all_words_, words, debug_);
 
     for (const std::string &w : matcher) {
@@ -178,12 +186,22 @@ class CharacterLexicon::Impl {
       this_sentence.insert(this_sentence.end(), ids.begin(), ids.end());
 
       if (IsPunct(w)) {
+        if (use_g2pw_) {
+          this_sentence.push_back(eos_id_);
+        }
         ans.emplace_back(std::move(this_sentence));
-        this_sentence = {};
+        if (use_g2pw_) {
+          this_sentence = {bos_id_};
+        } else {
+          this_sentence.clear();
+        }
       }
     }  // for (const std::string &w : matcher)
 
     if (!this_sentence.empty()) {
+      if (use_g2pw_) {
+        this_sentence.push_back(eos_id_);
+      }
       ans.emplace_back(std::move(this_sentence));
     }
 
@@ -254,6 +272,12 @@ class CharacterLexicon::Impl {
       for (const auto &p : token2id_) {
         id2token_[p.second] = p.first;
       }
+    }
+
+    if (use_g2pw_) {
+      pad_id_ = token2id_.at("_");
+      bos_id_ = token2id_.at("^");
+      eos_id_ = token2id_.at("$");
     }
   }
 
@@ -326,18 +350,25 @@ class CharacterLexicon::Impl {
   std::unordered_map<int32_t, std::string> id2token_;
 
   bool debug_ = false;
+  bool use_g2pw_ = false;
+
+  int32_t bos_id_ = 0;
+  int32_t eos_id_ = 0;
+  int32_t pad_id_ = 0;
 };
 
 CharacterLexicon::~CharacterLexicon() = default;
 
 CharacterLexicon::CharacterLexicon(const std::string &lexicon,
-                                   const std::string &tokens, bool debug)
-    : impl_(std::make_unique<Impl>(lexicon, tokens, debug)) {}
+                                   const std::string &tokens, bool debug,
+                                   bool use_g2pw /*= false*/)
+    : impl_(std::make_unique<Impl>(lexicon, tokens, debug, use_g2pw)) {}
 
 template <typename Manager>
 CharacterLexicon::CharacterLexicon(Manager *mgr, const std::string &lexicon,
-                                   const std::string &tokens, bool debug)
-    : impl_(std::make_unique<Impl>(mgr, lexicon, tokens, debug)) {}
+                                   const std::string &tokens, bool debug,
+                                   bool use_g2pw /*= false*/)
+    : impl_(std::make_unique<Impl>(mgr, lexicon, tokens, debug, use_g2pw)) {}
 
 std::vector<TokenIDs> CharacterLexicon::ConvertTextToTokenIds(
     const std::string &text, const std::string & /*unused_voice = ""*/) const {
@@ -348,14 +379,16 @@ std::vector<TokenIDs> CharacterLexicon::ConvertTextToTokenIds(
 template CharacterLexicon::CharacterLexicon(AAssetManager *mgr,
                                             const std::string &lexicon,
                                             const std::string &tokens,
-                                            bool debug);
+                                            bool debug, bool use_g2pw);
+
 #endif
 
 #if __OHOS__
 template CharacterLexicon::CharacterLexicon(NativeResourceManager *mgr,
                                             const std::string &lexicon,
                                             const std::string &tokens,
-                                            bool debug);
+                                            bool debug, bool use_g2pw);
+
 #endif
 
 }  // namespace sherpa_onnx

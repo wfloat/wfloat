@@ -174,8 +174,9 @@ bool TokenToPiece(const llama_vocab *vocab, llama_token token,
   return true;
 }
 
-llama_sampler *BuildSampler(float temperature, float top_p, int32_t top_k,
-                            float repeat_penalty, int32_t seed) {
+llama_sampler *BuildSampler(const llama_vocab *vocab, float temperature,
+                            float top_p, int32_t top_k, float repeat_penalty,
+                            int32_t seed) {
   llama_sampler_chain_params params = llama_sampler_chain_default_params();
   params.no_perf = true;
 
@@ -189,8 +190,9 @@ llama_sampler *BuildSampler(float temperature, float top_p, int32_t top_k,
   if (normalized_repeat_penalty != 1.0f) {
     llama_sampler_chain_add(
         sampler,
-        llama_sampler_init_penalties(64, normalized_repeat_penalty, 0.0f,
-                                     0.0f));
+        llama_sampler_init_penalties(
+            llama_vocab_n_tokens(vocab), 64, normalized_repeat_penalty, 0.0f,
+            0.0f));
   }
 
   if (temperature <= 0.0f) {
@@ -412,8 +414,8 @@ char *wfloat_llama_model_generate_json(WfloatLlamaModel *handle,
       return nullptr;
     }
 
-    llama_sampler *sampler =
-        BuildSampler(temperature, top_p, top_k, repeat_penalty, seed);
+    llama_sampler *sampler = BuildSampler(handle->vocab, temperature, top_p,
+                                          top_k, repeat_penalty, seed);
     if (!sampler) {
       SetError("Failed to initialize sampler.");
       return nullptr;

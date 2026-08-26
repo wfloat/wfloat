@@ -4,10 +4,10 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
-import './init.dart';
+import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 
 void main(List<String> arguments) async {
-  await initSherpaOnnx();
+  await sherpa_onnx.initBindingsAsync();
 
   final parser = ArgParser()
     ..addOption('acoustic-model', help: 'Path to the acoustic model')
@@ -54,7 +54,6 @@ void main(List<String> arguments) async {
     vocoder: vocoder,
     lexicon: lexicon,
     tokens: tokens,
-    lengthScale: 1 / speed,
   );
 
   final modelConfig = sherpa_onnx.OfflineTtsModelConfig(
@@ -70,7 +69,12 @@ void main(List<String> arguments) async {
   );
 
   final tts = sherpa_onnx.OfflineTts(config);
-  final audio = tts.generate(text: text, sid: sid, speed: speed);
+  final genConfig = sherpa_onnx.OfflineTtsGenerationConfig(
+    sid: sid,
+    speed: speed,
+    silenceScale: config.silenceScale,
+  );
+  final audio = tts.generateWithConfig(text: text, config: genConfig);
   tts.free();
 
   sherpa_onnx.writeWave(

@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 
 data class OfflineSpeakerSegmentationPyannoteModelConfig(
     var model: String = "",
+    var windowShiftRatio: Float = 0.1f,
 )
 
 data class OfflineSpeakerSegmentationModelConfig(
@@ -43,6 +44,9 @@ class OfflineSpeakerDiarization(
             newFromAsset(assetManager, config)
         } else {
             newFromFile(config)
+        }
+        require(ptr != 0L) {
+            "Invalid OfflineSpeakerDiarizationConfig: failed to create native OfflineSpeakerDiarization"
         }
     }
 

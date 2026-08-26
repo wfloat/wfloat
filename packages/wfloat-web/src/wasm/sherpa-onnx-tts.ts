@@ -31,25 +31,12 @@ export interface SherpaModule extends EmscriptenModule {
   ): number;
   _SherpaOnnxOfflineTtsWfloatFreePreparedText(ptr: number): void;
 
-  _SherpaOnnxOfflineTtsGenerate(
+  _SherpaOnnxOfflineTtsGenerateWithConfig(
     handle: number,
     textPtr: number,
-    sid: number,
-    speed: number,
-  ): number;
-  _SherpaOnnxOfflineTtsGenerateWithCallback(
-    handle: number,
-    textPtr: number,
-    sid: number,
-    speed: number,
+    configPtr: number,
     callbackPtr: number,
-  ): number;
-  _SherpaOnnxOfflineTtsGenerateWithProgressCallback(
-    handle: number,
-    textPtr: number,
-    sid: number,
-    speed: number,
-    callbackPtr: number,
+    callbackArg: number,
   ): number;
 
   _SherpaOnnxDestroyOfflineTtsGeneratedAudio(h: number): void;
@@ -141,6 +128,17 @@ export interface OfflineTtsPocketModelConfig {
   textConditioner?: string;
   vocabJson?: string;
   tokenScoresJson?: string;
+  voiceEmbeddingCacheCapacity?: number;
+}
+
+export interface OfflineTtsSupertonicModelConfig {
+  durationPredictor?: string;
+  textEncoder?: string;
+  vectorEstimator?: string;
+  vocoder?: string;
+  ttsJson?: string;
+  unicodeIndexer?: string;
+  voiceStyle?: string;
 }
 
 export interface OfflineTtsModelConfig {
@@ -151,6 +149,7 @@ export interface OfflineTtsModelConfig {
   offlineTtsKittenModelConfig?: OfflineTtsKittenModelConfig;
   offlineTtsZipVoiceModelConfig?: OfflineTtsZipVoiceModelConfig;
   offlineTtsPocketModelConfig?: OfflineTtsPocketModelConfig;
+  offlineTtsSupertonicModelConfig?: OfflineTtsSupertonicModelConfig;
 
   numThreads?: number;
   debug?: number;
@@ -195,7 +194,9 @@ export interface GeneratedAudio {
   sampleRate: number;
 }
 
-export type OfflineTtsCallback = (samples: Float32Array) => number | boolean | void;
+export type OfflineTtsCallback = (
+  samples: Float32Array,
+) => number | boolean | void;
 
 export type OfflineTtsProgressCallback = (
   samples: Float32Array,
@@ -212,6 +213,7 @@ type AllocatedConfig = {
   kitten?: AllocatedConfig;
   zipvoice?: AllocatedConfig;
   pocket?: AllocatedConfig;
+  supertonic?: AllocatedConfig;
   wfloat?: AllocatedConfig;
 };
 
@@ -242,6 +244,10 @@ function freeConfig(config: AllocatedConfig, Module: SherpaModule): void {
 
   if ("pocket" in config && config.pocket) {
     freeConfig(config.pocket, Module);
+  }
+
+  if ("supertonic" in config && config.supertonic) {
+    freeConfig(config.supertonic, Module);
   }
 
   if ("wfloat" in config && config.wfloat) {
@@ -303,8 +309,12 @@ export function prepareWfloatText(
 
     return {
       text: Array.isArray(parsed.text) ? (parsed.text as string[]) : [],
-      textClean: Array.isArray(parsed.text_clean) ? (parsed.text_clean as string[]) : [],
-      textPhonemes: Array.isArray(parsed.text_phonemes) ? (parsed.text_phonemes as string[]) : [],
+      textClean: Array.isArray(parsed.text_clean)
+        ? (parsed.text_clean as string[])
+        : [],
+      textPhonemes: Array.isArray(parsed.text_phonemes)
+        ? (parsed.text_phonemes as string[])
+        : [],
     };
   } finally {
     if (resultPtr) {
@@ -396,7 +406,13 @@ function initSherpaOnnxOfflineTtsMatchaModelConfig(
   const dataDirLen = Module.lengthBytesUTF8(dataDirStr) + 1;
   const dictDirLen = Module.lengthBytesUTF8(dictDir) + 1;
 
-  const n = acousticModelLen + vocoderLen + lexiconLen + tokensLen + dataDirLen + dictDirLen;
+  const n =
+    acousticModelLen +
+    vocoderLen +
+    lexiconLen +
+    tokensLen +
+    dataDirLen +
+    dictDirLen;
 
   const buffer = Module._malloc(n);
 
@@ -466,7 +482,14 @@ function initSherpaOnnxOfflineTtsKokoroModelConfig(
   const lexiconLen = Module.lengthBytesUTF8(lexiconStr) + 1;
   const langLen = Module.lengthBytesUTF8(langStr) + 1;
 
-  const n = modelLen + voicesLen + tokensLen + dataDirLen + dictDirLen + lexiconLen + langLen;
+  const n =
+    modelLen +
+    voicesLen +
+    tokensLen +
+    dataDirLen +
+    dictDirLen +
+    lexiconLen +
+    langLen;
 
   const buffer = Module._malloc(n);
 
@@ -592,7 +615,8 @@ function initSherpaOnnxOfflineTtsZipVoiceModelConfig(
   const dataDirLen = Module.lengthBytesUTF8(dataDirStr) + 1;
   const lexiconLen = Module.lengthBytesUTF8(lexiconStr) + 1;
 
-  const n = tokensLen + encoderLen + decoderLen + vocoderLen + dataDirLen + lexiconLen;
+  const n =
+    tokensLen + encoderLen + decoderLen + vocoderLen + dataDirLen + lexiconLen;
 
   const buffer = Module._malloc(n);
 
@@ -676,7 +700,7 @@ function initSherpaOnnxOfflineTtsPocketModelConfig(
 
   const buffer = Module._malloc(n);
 
-  const len = 7 * 4;
+  const len = 8 * 4;
   const ptr = Module._malloc(len);
 
   let offset = 0;
@@ -722,6 +746,38 @@ function initSherpaOnnxOfflineTtsPocketModelConfig(
 
   Module.setValue(ptr + 24, buffer + offset, "i8*");
   offset += tokenScoresJsonLen;
+
+  Module.setValue(ptr + 28, config.voiceEmbeddingCacheCapacity ?? 50, "i32");
+
+  return { buffer, ptr, len };
+}
+
+function initSherpaOnnxOfflineTtsSupertonicModelConfig(
+  config: OfflineTtsSupertonicModelConfig,
+  Module: SherpaModule,
+): AllocatedConfig {
+  const values = [
+    config.durationPredictor ?? "",
+    config.textEncoder ?? "",
+    config.vectorEstimator ?? "",
+    config.vocoder ?? "",
+    config.ttsJson ?? "",
+    config.unicodeIndexer ?? "",
+    config.voiceStyle ?? "",
+  ];
+  const lengths = values.map((value) => Module.lengthBytesUTF8(value) + 1);
+  const buffer = Module._malloc(
+    lengths.reduce((sum, length) => sum + length, 0),
+  );
+  const len = values.length * 4;
+  const ptr = Module._malloc(len);
+
+  let offset = 0;
+  for (let i = 0; i < values.length; i++) {
+    Module.stringToUTF8(values[i]!, buffer + offset, lengths[i]!);
+    Module.setValue(ptr + i * 4, buffer + offset, "i8*");
+    offset += lengths[i]!;
+  }
 
   return { buffer, ptr, len };
 }
@@ -811,6 +867,19 @@ function initSherpaOnnxOfflineTtsModelConfig(
       textConditioner: "",
       vocabJson: "",
       tokenScoresJson: "",
+      voiceEmbeddingCacheCapacity: 50,
+    };
+  }
+
+  if (!("offlineTtsSupertonicModelConfig" in config)) {
+    config.offlineTtsSupertonicModelConfig = {
+      durationPredictor: "",
+      textEncoder: "",
+      vectorEstimator: "",
+      vocoder: "",
+      ttsJson: "",
+      unicodeIndexer: "",
+      voiceStyle: "",
     };
   }
 
@@ -849,6 +918,11 @@ function initSherpaOnnxOfflineTtsModelConfig(
     Module,
   );
 
+  const supertonicModelConfig = initSherpaOnnxOfflineTtsSupertonicModelConfig(
+    config.offlineTtsSupertonicModelConfig!,
+    Module,
+  );
+
   const len =
     (vitsModelConfig.len ?? 0) +
     (matchaModelConfig.len ?? 0) +
@@ -856,6 +930,7 @@ function initSherpaOnnxOfflineTtsModelConfig(
     (kittenModelConfig.len ?? 0) +
     (zipVoiceModelConfig.len ?? 0) +
     (pocketModelConfig.len ?? 0) +
+    (supertonicModelConfig.len ?? 0) +
     (wfloatModelConfig.len ?? 0) +
     3 * 4;
 
@@ -878,22 +953,53 @@ function initSherpaOnnxOfflineTtsModelConfig(
   Module.setValue(ptr + offset, providerBuf, "i8*");
   offset += 4;
 
-  Module._CopyHeap(matchaModelConfig.ptr, matchaModelConfig.len ?? 0, ptr + offset);
+  Module._CopyHeap(
+    matchaModelConfig.ptr,
+    matchaModelConfig.len ?? 0,
+    ptr + offset,
+  );
   offset += matchaModelConfig.len ?? 0;
 
-  Module._CopyHeap(kokoroModelConfig.ptr, kokoroModelConfig.len ?? 0, ptr + offset);
+  Module._CopyHeap(
+    kokoroModelConfig.ptr,
+    kokoroModelConfig.len ?? 0,
+    ptr + offset,
+  );
   offset += kokoroModelConfig.len ?? 0;
 
-  Module._CopyHeap(kittenModelConfig.ptr, kittenModelConfig.len ?? 0, ptr + offset);
+  Module._CopyHeap(
+    kittenModelConfig.ptr,
+    kittenModelConfig.len ?? 0,
+    ptr + offset,
+  );
   offset += kittenModelConfig.len ?? 0;
 
-  Module._CopyHeap(zipVoiceModelConfig.ptr, zipVoiceModelConfig.len ?? 0, ptr + offset);
+  Module._CopyHeap(
+    zipVoiceModelConfig.ptr,
+    zipVoiceModelConfig.len ?? 0,
+    ptr + offset,
+  );
   offset += zipVoiceModelConfig.len ?? 0;
 
-  Module._CopyHeap(pocketModelConfig.ptr, pocketModelConfig.len ?? 0, ptr + offset);
+  Module._CopyHeap(
+    pocketModelConfig.ptr,
+    pocketModelConfig.len ?? 0,
+    ptr + offset,
+  );
   offset += pocketModelConfig.len ?? 0;
 
-  Module._CopyHeap(wfloatModelConfig.ptr, wfloatModelConfig.len ?? 0, ptr + offset);
+  Module._CopyHeap(
+    supertonicModelConfig.ptr,
+    supertonicModelConfig.len ?? 0,
+    ptr + offset,
+  );
+  offset += supertonicModelConfig.len ?? 0;
+
+  Module._CopyHeap(
+    wfloatModelConfig.ptr,
+    wfloatModelConfig.len ?? 0,
+    ptr + offset,
+  );
   offset += wfloatModelConfig.len ?? 0;
 
   return {
@@ -906,6 +1012,7 @@ function initSherpaOnnxOfflineTtsModelConfig(
     kitten: kittenModelConfig,
     zipvoice: zipVoiceModelConfig,
     pocket: pocketModelConfig,
+    supertonic: supertonicModelConfig,
     wfloat: wfloatModelConfig,
   };
 }
@@ -917,7 +1024,10 @@ function initSherpaOnnxOfflineTtsConfig(
   const cfg: OfflineTtsConfig = config ?? {};
   cfg.offlineTtsModelConfig = cfg.offlineTtsModelConfig ?? {};
 
-  const modelConfig = initSherpaOnnxOfflineTtsModelConfig(cfg.offlineTtsModelConfig, Module);
+  const modelConfig = initSherpaOnnxOfflineTtsModelConfig(
+    cfg.offlineTtsModelConfig,
+    Module,
+  );
 
   const len = (modelConfig.len ?? 0) + 4 * 4;
   const ptr = Module._malloc(len);
@@ -956,6 +1066,19 @@ function initSherpaOnnxOfflineTtsConfig(
   };
 }
 
+function initSherpaOnnxGenerationConfig(
+  config: OfflineTtsGenerateConfig,
+  Module: SherpaModule,
+): number {
+  const len = 9 * 4;
+  const ptr = Module._malloc(len);
+  Module.HEAP8.fill(0, ptr, ptr + len);
+  Module.setValue(ptr, 0.2, "float");
+  Module.setValue(ptr + 4, config.speed ?? 1, "float");
+  Module.setValue(ptr + 8, config.sid ?? 0, "i32");
+  return ptr;
+}
+
 export class OfflineTts {
   public handle: number;
   public sampleRate: number;
@@ -986,12 +1109,16 @@ export class OfflineTts {
     }
 
     const start = samplesPtr / 4;
-    return new Float32Array(this.Module.HEAPF32.subarray(start, start + numSamples));
+    return new Float32Array(
+      this.Module.HEAPF32.subarray(start, start + numSamples),
+    );
   }
 
   private decodeGeneratedAudio(handle: number): GeneratedAudio {
     if (!handle) {
-      throw new Error("Failed to generate audio: Sherpa returned a null pointer.");
+      throw new Error(
+        "Failed to generate audio: Sherpa returned a null pointer.",
+      );
     }
 
     const samplesPtr = this.Module.HEAP32[handle / 4];
@@ -1006,20 +1133,27 @@ export class OfflineTts {
 
   private generateInternal(
     config: OfflineTtsGenerateConfig,
-    generateFn: (textPtr: number) => number,
+    generateFn: (textPtr: number, generationConfigPtr: number) => number,
   ): GeneratedAudio {
     const textLen = this.Module.lengthBytesUTF8(config.text) + 1;
     const textPtr = this.Module._malloc(textLen);
+    const generationConfigPtr = initSherpaOnnxGenerationConfig(
+      config,
+      this.Module,
+    );
     this.Module.stringToUTF8(config.text, textPtr, textLen);
 
     let generatedAudioHandle = 0;
     try {
-      generatedAudioHandle = generateFn(textPtr);
+      generatedAudioHandle = generateFn(textPtr, generationConfigPtr);
       return this.decodeGeneratedAudio(generatedAudioHandle);
     } finally {
       if (generatedAudioHandle) {
-        this.Module._SherpaOnnxDestroyOfflineTtsGeneratedAudio(generatedAudioHandle);
+        this.Module._SherpaOnnxDestroyOfflineTtsGeneratedAudio(
+          generatedAudioHandle,
+        );
       }
+      this.Module._free(generationConfigPtr);
       this.Module._free(textPtr);
     }
   }
@@ -1046,8 +1180,16 @@ export class OfflineTts {
   //   speed: 1.0
   // }
   generate(config: OfflineTtsGenerateConfig): GeneratedAudio {
-    return this.generateInternal(config, (textPtr: number) =>
-      this.Module._SherpaOnnxOfflineTtsGenerate(this.handle, textPtr, config.sid, config.speed),
+    return this.generateInternal(
+      config,
+      (textPtr: number, generationConfigPtr: number) =>
+        this.Module._SherpaOnnxOfflineTtsGenerateWithConfig(
+          this.handle,
+          textPtr,
+          generationConfigPtr,
+          0,
+          0,
+        ),
     );
   }
 
@@ -1070,17 +1212,19 @@ export class OfflineTts {
         callbackError = error;
         return 0;
       }
-    }, "iii");
+    }, "iiifi");
 
     try {
-      const audio = this.generateInternal(config, (textPtr: number) =>
-        this.Module._SherpaOnnxOfflineTtsGenerateWithCallback(
-          this.handle,
-          textPtr,
-          config.sid,
-          config.speed,
-          callbackPtr,
-        ),
+      const audio = this.generateInternal(
+        config,
+        (textPtr: number, generationConfigPtr: number) =>
+          this.Module._SherpaOnnxOfflineTtsGenerateWithConfig(
+            this.handle,
+            textPtr,
+            generationConfigPtr,
+            callbackPtr,
+            0,
+          ),
       );
 
       if (callbackError !== null) {
@@ -1104,30 +1248,35 @@ export class OfflineTts {
   ): GeneratedAudio {
     const { addFunction, removeFunction } = this.getFunctionPointerBridge();
     let callbackError: unknown = null;
-    const callbackPtr = addFunction((samplesPtr: number, n: number, progress: number): number => {
-      if (callbackError !== null) {
-        return 0;
-      }
+    const callbackPtr = addFunction(
+      (samplesPtr: number, n: number, progress: number): number => {
+        if (callbackError !== null) {
+          return 0;
+        }
 
-      try {
-        const samples = this.readSamples(samplesPtr, n);
-        const shouldContinue = callback(samples, progress);
-        return shouldContinue === false || shouldContinue === 0 ? 0 : 1;
-      } catch (error) {
-        callbackError = error;
-        return 0;
-      }
-    }, "iiif");
+        try {
+          const samples = this.readSamples(samplesPtr, n);
+          const shouldContinue = callback(samples, progress);
+          return shouldContinue === false || shouldContinue === 0 ? 0 : 1;
+        } catch (error) {
+          callbackError = error;
+          return 0;
+        }
+      },
+      "iiifi",
+    );
 
     try {
-      const audio = this.generateInternal(config, (textPtr: number) =>
-        this.Module._SherpaOnnxOfflineTtsGenerateWithProgressCallback(
-          this.handle,
-          textPtr,
-          config.sid,
-          config.speed,
-          callbackPtr,
-        ),
+      const audio = this.generateInternal(
+        config,
+        (textPtr: number, generationConfigPtr: number) =>
+          this.Module._SherpaOnnxOfflineTtsGenerateWithConfig(
+            this.handle,
+            textPtr,
+            generationConfigPtr,
+            callbackPtr,
+            0,
+          ),
       );
 
       if (callbackError !== null) {
@@ -1165,7 +1314,10 @@ export class OfflineTts {
   }
 }
 
-export function createOfflineTts(Module: SherpaModule, myConfig?: OfflineTtsConfig): OfflineTts {
+export function createOfflineTts(
+  Module: SherpaModule,
+  myConfig?: OfflineTtsConfig,
+): OfflineTts {
   const vits: OfflineTtsVitsModelConfig = {
     model: "",
     lexicon: "",
@@ -1214,6 +1366,19 @@ export function createOfflineTts(Module: SherpaModule, myConfig?: OfflineTtsConf
     lengthScale: 1.0,
   };
 
+  const offlineTtsZipVoiceModelConfig: OfflineTtsZipVoiceModelConfig = {
+    tokens: "",
+    encoder: "",
+    decoder: "",
+    vocoder: "",
+    dataDir: "",
+    lexicon: "",
+    featScale: 0.1,
+    tShift: 0.5,
+    targetRMS: 0.1,
+    guidanceScale: 1.0,
+  };
+
   const offlineTtsPocketModelConfig: OfflineTtsPocketModelConfig = {
     lmFlow: "",
     lmMain: "",
@@ -1222,6 +1387,17 @@ export function createOfflineTts(Module: SherpaModule, myConfig?: OfflineTtsConf
     textConditioner: "",
     vocabJson: "",
     tokenScoresJson: "",
+    voiceEmbeddingCacheCapacity: 50,
+  };
+
+  const offlineTtsSupertonicModelConfig: OfflineTtsSupertonicModelConfig = {
+    durationPredictor: "",
+    textEncoder: "",
+    vectorEstimator: "",
+    vocoder: "",
+    ttsJson: "",
+    unicodeIndexer: "",
+    voiceStyle: "",
   };
 
   let ruleFsts = "";
@@ -1269,7 +1445,9 @@ export function createOfflineTts(Module: SherpaModule, myConfig?: OfflineTtsConf
     offlineTtsMatchaModelConfig: matcha,
     offlineTtsKokoroModelConfig,
     offlineTtsKittenModelConfig,
+    offlineTtsZipVoiceModelConfig,
     offlineTtsPocketModelConfig,
+    offlineTtsSupertonicModelConfig,
     numThreads: 1,
     debug: 1,
     provider: "cpu",

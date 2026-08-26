@@ -13,6 +13,7 @@
 #include "sherpa-onnx/python/csrc/homophone-replacer.h"
 #include "sherpa-onnx/python/csrc/keyword-spotter.h"
 #include "sherpa-onnx/python/csrc/offline-ctc-fst-decoder-config.h"
+#include "sherpa-onnx/python/csrc/offline-diacritization.h"
 #include "sherpa-onnx/python/csrc/offline-lm-config.h"
 #include "sherpa-onnx/python/csrc/offline-model-config.h"
 #include "sherpa-onnx/python/csrc/offline-punctuation.h"
@@ -25,6 +26,7 @@
 #include "sherpa-onnx/python/csrc/online-model-config.h"
 #include "sherpa-onnx/python/csrc/online-punctuation.h"
 #include "sherpa-onnx/python/csrc/online-recognizer.h"
+#include "sherpa-onnx/python/csrc/online-speech-denoiser.h"
 #include "sherpa-onnx/python/csrc/online-stream.h"
 #include "sherpa-onnx/python/csrc/speaker-embedding-extractor.h"
 #include "sherpa-onnx/python/csrc/speaker-embedding-manager.h"
@@ -53,6 +55,7 @@ PYBIND11_MODULE(_sherpa_onnx, m) {
 
   PybindWaveWriter(&m);
   PybindAudioTagging(&m);
+  PybindOfflineDiacritization(&m);
   PybindOfflinePunctuation(&m);
   PybindOnlinePunctuation(&m);
   PybindHomophoneReplacer(&m);
@@ -89,13 +92,10 @@ PYBIND11_MODULE(_sherpa_onnx, m) {
   m.attr("OfflineTtsMatchaModelConfig") = py::none();
   m.attr("OfflineTtsModelConfig") = py::none();
   m.attr("OfflineTtsVitsModelConfig") = py::none();
-  m.attr("OfflineTtsWfloatModelConfig") = py::none();
   m.attr("OfflineTtsZipvoiceModelConfig") = py::none();
   m.attr("GeneratedAudio") = py::none();
-  m.attr("WfloatPreparedText") = py::none();
   m.attr("OfflineTtsConfig") = py::none();
   m.attr("OfflineTts") = py::none();
-  m.attr("prepare_wfloat_text") = py::none();
   m.attr("SentencePieceTokenizer") = py::none();
 #endif
 
@@ -121,6 +121,7 @@ PYBIND11_MODULE(_sherpa_onnx, m) {
 
   PybindAlsa(&m);
   PybindOfflineSpeechDenoiser(&m);
+  PybindOnlineSpeechDenoiser(&m);
   PybindOfflineSourceSeparation(&m);
   PybindVersion(&m);
 }

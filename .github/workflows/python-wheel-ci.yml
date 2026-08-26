@@ -65,14 +65,8 @@ jobs:
           CIBW_BUILD_VERBOSITY: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux2014
-          MACOSX_DEPLOYMENT_TARGET: "12.0"
-          CIBW_TEST_COMMAND: >-
-            python -c "import wfloat; from wfloat import _core;
-            assert callable(wfloat.load);
-            assert callable(wfloat.load_stt_model);
-            assert callable(wfloat.load_vad_model);
-            assert callable(wfloat.load_llm_model);
-            print(_core._load_core_library())"
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
+          CIBW_TEST_COMMAND: "python {package}/tests/wheel_smoke.py"
           CIBW_ENVIRONMENT: >-
             WFLOAT_CORE_BUILD_PARALLEL="2"
         with:

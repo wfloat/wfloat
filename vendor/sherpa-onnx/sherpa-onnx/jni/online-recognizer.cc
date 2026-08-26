@@ -31,6 +31,20 @@ OnlineModelConfig GetOnlineModelConfig(JNIEnv *env, jclass model_config_cls,
   SHERPA_ONNX_JNI_READ_STRING(ans.transducer.joiner, joiner,
                               transducer_config_cls, transducer_config);
 
+  fid = env->GetFieldID(transducer_config_cls, "qnnConfig",
+                        "Lcom/k2fsa/sherpa/onnx/QnnConfig;");
+  jobject qnn_config = env->GetObjectField(transducer_config, fid);
+  jclass qnn_config_cls = env->GetObjectClass(qnn_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.transducer.qnn_config.backend_lib, backendLib,
+                              qnn_config_cls, qnn_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.transducer.qnn_config.context_binary,
+                              contextBinary, qnn_config_cls, qnn_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.transducer.qnn_config.system_lib, systemLib,
+                              qnn_config_cls, qnn_config);
+
   fid = env->GetFieldID(model_config_cls, "paraformer",
                         "Lcom/k2fsa/sherpa/onnx/OnlineParaformerModelConfig;");
   jobject paraformer_config = env->GetObjectField(model_config, fid);
@@ -248,9 +262,15 @@ Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_newFromAsset(JNIEnv *env,
     return 0;
   }
 
-  auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
-  for (const auto &s : str_vec) {
-    SHERPA_ONNX_LOGE("%s", s.c_str());
+  if (config.model_config.debug) {
+#if __ANDROID_API__
+    auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
+    for (const auto &s : str_vec) {
+      SHERPA_ONNX_LOGE("%s", s.c_str());
+    }
+#else
+    SHERPA_ONNX_LOGE("%s", config.ToString().c_str());
+#endif
   }
 
   auto recognizer = new sherpa_onnx::OnlineRecognizer(
@@ -273,9 +293,15 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_newFromFile(
     return 0;
   }
 
-  auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
-  for (const auto &s : str_vec) {
-    SHERPA_ONNX_LOGE("%s", s.c_str());
+  if (config.model_config.debug) {
+#if __ANDROID_API__
+    auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
+    for (const auto &s : str_vec) {
+      SHERPA_ONNX_LOGE("%s", s.c_str());
+    }
+#else
+    SHERPA_ONNX_LOGE("%s", config.ToString().c_str());
+#endif
   }
 
   if (!config.Validate()) {
@@ -286,6 +312,16 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_newFromFile(
   auto recognizer = new sherpa_onnx::OnlineRecognizer(config);
 
   return (jlong)recognizer;
+}
+
+SHERPA_ONNX_EXTERN_C
+JNIEXPORT void JNICALL
+Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_prependAdspLibraryPath(
+    JNIEnv *env, jclass /*cls*/, jstring new_path) {
+  const char *p = env->GetStringUTFChars(new_path, nullptr);
+  sherpa_onnx::PrependAdspLibraryPath(p);
+
+  env->ReleaseStringUTFChars(new_path, p);
 }
 
 SHERPA_ONNX_EXTERN_C
@@ -303,7 +339,7 @@ JNIEXPORT void JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_reset(
 }
 
 SHERPA_ONNX_EXTERN_C
-JNIEXPORT bool JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_isReady(
+JNIEXPORT jboolean JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_isReady(
     JNIEnv * /*env*/, jobject /*obj*/, jlong ptr, jlong stream_ptr) {
   auto recognizer = reinterpret_cast<sherpa_onnx::OnlineRecognizer *>(ptr);
   auto stream = reinterpret_cast<sherpa_onnx::OnlineStream *>(stream_ptr);
@@ -312,8 +348,11 @@ JNIEXPORT bool JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_isReady(
 }
 
 SHERPA_ONNX_EXTERN_C
-JNIEXPORT bool JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_isEndpoint(
-    JNIEnv * /*env*/, jobject /*obj*/, jlong ptr, jlong stream_ptr) {
+JNIEXPORT jboolean JNICALL
+Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_isEndpoint(JNIEnv * /*env*/,
+                                                       jobject /*obj*/,
+                                                       jlong ptr,
+                                                       jlong stream_ptr) {
   auto recognizer = reinterpret_cast<sherpa_onnx::OnlineRecognizer *>(ptr);
   auto stream = reinterpret_cast<sherpa_onnx::OnlineStream *>(stream_ptr);
 
@@ -382,19 +421,25 @@ JNIEXPORT jobject JNICALL Java_com_k2fsa_sherpa_onnx_OnlineRecognizer_getResult(
 
   // Find the OnlineRecognizerResult class
   jclass cls = env->FindClass("com/k2fsa/sherpa/onnx/OnlineRecognizerResult");
+  if (cls == nullptr) {
+    SHERPA_ONNX_LOGE("Failed to find class OnlineRecognizerResult");
+    return nullptr;
+  }
 
   // Find the constructor: (String, String[], float[], float[])V
   jmethodID ctor = env->GetMethodID(
       cls, "<init>", "(Ljava/lang/String;[Ljava/lang/String;[F[F)V");
 
   // text
-  jstring text = env->NewStringUTF(result.text.c_str());
+  jstring text = SafeNewStringUTF(env, result.text);
 
   // tokens
-  jobjectArray tokens = env->NewObjectArray(
-      result.tokens.size(), env->FindClass("java/lang/String"), nullptr);
+  jclass string_cls = env->FindClass("java/lang/String");
+  jobjectArray tokens =
+      env->NewObjectArray(result.tokens.size(), string_cls, nullptr);
+  env->DeleteLocalRef(string_cls);
   for (size_t i = 0; i < result.tokens.size(); ++i) {
-    jstring token_str = env->NewStringUTF(result.tokens[i].c_str());
+    jstring token_str = SafeNewStringUTF(env, result.tokens[i]);
     env->SetObjectArrayElement(tokens, i, token_str);
     env->DeleteLocalRef(token_str);
   }

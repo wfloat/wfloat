@@ -91,6 +91,23 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
   SHERPA_ONNX_JNI_READ_STRING(ans.model_config.transducer.joiner_filename,
                               joiner, transducer_config_cls, transducer_config);
 
+  fid = env->GetFieldID(transducer_config_cls, "qnnConfig",
+                        "Lcom/k2fsa/sherpa/onnx/QnnConfig;");
+  jobject transducer_qnn_config = env->GetObjectField(transducer_config, fid);
+  jclass transducer_qnn_config_cls = env->GetObjectClass(transducer_qnn_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(
+      ans.model_config.transducer.qnn_config.backend_lib, backendLib,
+      transducer_qnn_config_cls, transducer_qnn_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(
+      ans.model_config.transducer.qnn_config.context_binary, contextBinary,
+      transducer_qnn_config_cls, transducer_qnn_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(
+      ans.model_config.transducer.qnn_config.system_lib, systemLib,
+      transducer_qnn_config_cls, transducer_qnn_config);
+
   fid = env->GetFieldID(model_config_cls, "paraformer",
                         "Lcom/k2fsa/sherpa/onnx/OfflineParaformerModelConfig;");
   jobject paraformer_config = env->GetObjectField(model_config, fid);
@@ -135,6 +152,14 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
   SHERPA_ONNX_JNI_READ_INT(ans.model_config.whisper.tail_paddings, tailPaddings,
                            whisper_config_cls, whisper_config);
 
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.whisper.enable_token_timestamps,
+                            enableTokenTimestamps, whisper_config_cls,
+                            whisper_config);
+
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.whisper.enable_segment_timestamps,
+                            enableSegmentTimestamps, whisper_config_cls,
+                            whisper_config);
+
   fid = env->GetFieldID(model_config_cls, "fireRedAsr",
                         "Lcom/k2fsa/sherpa/onnx/OfflineFireRedAsrModelConfig;");
   jobject fire_red_asr_config = env->GetObjectField(model_config, fid);
@@ -165,6 +190,10 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
 
   SHERPA_ONNX_JNI_READ_STRING(ans.model_config.moonshine.cached_decoder,
                               cachedDecoder, moonshine_config_cls,
+                              moonshine_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.moonshine.merged_decoder,
+                              mergedDecoder, moonshine_config_cls,
                               moonshine_config);
 
   fid = env->GetFieldID(model_config_cls, "senseVoice",
@@ -316,6 +345,48 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
 
   SHERPA_ONNX_JNI_READ_INT(ans.model_config.funasr_nano.seed, seed,
                            funasr_nano_config_cls, funasr_nano_config);
+
+  fid = env->GetFieldID(model_config_cls, "qwen3Asr",
+                        "Lcom/k2fsa/sherpa/onnx/OfflineQwen3AsrModelConfig;");
+  jobject qwen3_asr_config = env->GetObjectField(model_config, fid);
+  jclass qwen3_asr_config_cls = env->GetObjectClass(qwen3_asr_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.qwen3_asr.conv_frontend,
+                              convFrontend, qwen3_asr_config_cls,
+                              qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.qwen3_asr.encoder, encoder,
+                              qwen3_asr_config_cls, qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.qwen3_asr.decoder, decoder,
+                              qwen3_asr_config_cls, qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.qwen3_asr.tokenizer, tokenizer,
+                              qwen3_asr_config_cls, qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.qwen3_asr.hotwords, hotwords,
+                              qwen3_asr_config_cls, qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_INT(ans.model_config.qwen3_asr.max_total_len,
+                           maxTotalLen, qwen3_asr_config_cls, qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_INT(ans.model_config.qwen3_asr.max_new_tokens,
+                           maxNewTokens, qwen3_asr_config_cls,
+                           qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model_config.qwen3_asr.temperature,
+                             temperature, qwen3_asr_config_cls,
+                             qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model_config.qwen3_asr.top_p, topP,
+                             qwen3_asr_config_cls, qwen3_asr_config);
+  SHERPA_ONNX_JNI_READ_INT(ans.model_config.qwen3_asr.seed, seed,
+                           qwen3_asr_config_cls, qwen3_asr_config);
+
+  // fire red asr ctc
+  fid = env->GetFieldID(
+      model_config_cls, "fireRedAsrCtc",
+      "Lcom/k2fsa/sherpa/onnx/OfflineFireRedAsrCtcModelConfig;");
+  jobject fire_red_asr_ctc_config = env->GetObjectField(model_config, fid);
+  jclass fire_red_asr_ctc_config_cls =
+      env->GetObjectClass(fire_red_asr_ctc_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.fire_red_asr_ctc.model, model,
+                              fire_red_asr_ctc_config_cls,
+                              fire_red_asr_ctc_config);
+
   // canary
   fid = env->GetFieldID(model_config_cls, "canary",
                         "Lcom/k2fsa/sherpa/onnx/OfflineCanaryModelConfig;");
@@ -336,6 +407,33 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
 
   SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.canary.use_pnc, usePnc,
                             canary_config_cls, canary_config);
+
+  fid = env->GetFieldID(
+      model_config_cls, "cohereTranscribe",
+      "Lcom/k2fsa/sherpa/onnx/OfflineCohereTranscribeModelConfig;");
+  jobject cohere_transcribe_config = env->GetObjectField(model_config, fid);
+  jclass cohere_transcribe_config_cls =
+      env->GetObjectClass(cohere_transcribe_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.cohere_transcribe.encoder,
+                              encoder, cohere_transcribe_config_cls,
+                              cohere_transcribe_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.cohere_transcribe.decoder,
+                              decoder, cohere_transcribe_config_cls,
+                              cohere_transcribe_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.cohere_transcribe.language,
+                              language, cohere_transcribe_config_cls,
+                              cohere_transcribe_config);
+
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.cohere_transcribe.use_punct,
+                            usePunct, cohere_transcribe_config_cls,
+                            cohere_transcribe_config);
+
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.cohere_transcribe.use_itn, useItn,
+                            cohere_transcribe_config_cls,
+                            cohere_transcribe_config);
 
   fid = env->GetFieldID(model_config_cls, "dolphin",
                         "Lcom/k2fsa/sherpa/onnx/OfflineDolphinModelConfig;");
@@ -388,11 +486,15 @@ Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_newFromAsset(JNIEnv *env,
   }
 
   if (config.model_config.debug) {
+#if __ANDROID_API__
     // logcat truncates long strings, so we split the string into chunks
     auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
     for (const auto &s : str_vec) {
       SHERPA_ONNX_LOGE("%s", s.c_str());
     }
+#else
+    SHERPA_ONNX_LOGE("%s", config.ToString().c_str());
+#endif
   }
 
   auto model = new sherpa_onnx::OfflineRecognizer(
@@ -418,10 +520,14 @@ Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_newFromFile(JNIEnv *env,
   }
 
   if (config.model_config.debug) {
+#if __ANDROID_API__
     auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
     for (const auto &s : str_vec) {
       SHERPA_ONNX_LOGE("%s", s.c_str());
     }
+#else
+    SHERPA_ONNX_LOGE("%s", config.ToString().c_str());
+#endif
   }
 
   if (!config.Validate()) {
@@ -476,6 +582,30 @@ Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_createStream(JNIEnv * /*env*/,
 }
 
 SHERPA_ONNX_EXTERN_C
+JNIEXPORT jlong JNICALL
+Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_createStreamWithHotwords(
+    JNIEnv *env, jobject /*obj*/, jlong ptr, jstring j_hotwords) {
+  auto recognizer = reinterpret_cast<sherpa_onnx::OfflineRecognizer *>(ptr);
+  if (!j_hotwords) {
+    std::unique_ptr<sherpa_onnx::OfflineStream> s = recognizer->CreateStream();
+    sherpa_onnx::OfflineStream *p = s.release();
+    return (jlong)p;
+  }
+  const char *utf = env->GetStringUTFChars(j_hotwords, nullptr);
+  if (!utf) {
+    std::unique_ptr<sherpa_onnx::OfflineStream> s = recognizer->CreateStream();
+    sherpa_onnx::OfflineStream *p = s.release();
+    return (jlong)p;
+  }
+  std::string hotwords(utf);
+  env->ReleaseStringUTFChars(j_hotwords, utf);
+  std::unique_ptr<sherpa_onnx::OfflineStream> s =
+      recognizer->CreateStream(hotwords);
+  sherpa_onnx::OfflineStream *p = s.release();
+  return (jlong)p;
+}
+
+SHERPA_ONNX_EXTERN_C
 JNIEXPORT void JNICALL Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_decode(
     JNIEnv *env, jobject /*obj*/, jlong ptr, jlong stream_ptr) {
   SafeJNI(env, "OfflineRecognizer_decode", [&] {
@@ -524,17 +654,23 @@ Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_getResult(JNIEnv *env,
 
   // 2. Find the Java class and constructor
   jclass cls = env->FindClass("com/k2fsa/sherpa/onnx/OfflineRecognizerResult");
+  if (cls == nullptr) {
+    SHERPA_ONNX_LOGE("Failed to find class OfflineRecognizerResult");
+    return nullptr;
+  }
   jmethodID ctor =
       env->GetMethodID(cls, "<init>",
                        "(Ljava/lang/String;[Ljava/lang/String;[FLjava/lang/"
                        "String;Ljava/lang/String;Ljava/lang/String;[F)V");
-  jstring jtext = env->NewStringUTF(result.text.c_str());
+  jstring jtext = SafeNewStringUTF(env, result.text);
 
-  jobjectArray jtokens = env->NewObjectArray(
-      result.tokens.size(), env->FindClass("java/lang/String"), nullptr);
+  jclass string_cls = env->FindClass("java/lang/String");
+  jobjectArray jtokens =
+      env->NewObjectArray(result.tokens.size(), string_cls, nullptr);
+  env->DeleteLocalRef(string_cls);
 
   for (size_t i = 0; i < result.tokens.size(); ++i) {
-    jstring token_str = env->NewStringUTF(result.tokens[i].c_str());
+    jstring token_str = SafeNewStringUTF(env, result.tokens[i]);
     env->SetObjectArrayElement(jtokens, i, token_str);
     env->DeleteLocalRef(token_str);
   }
@@ -543,9 +679,9 @@ Java_com_k2fsa_sherpa_onnx_OfflineRecognizer_getResult(JNIEnv *env,
   env->SetFloatArrayRegion(jtimestamps, 0, result.timestamps.size(),
                            result.timestamps.data());
 
-  jstring jlang = env->NewStringUTF(result.lang.c_str());
-  jstring jemotion = env->NewStringUTF(result.emotion.c_str());
-  jstring jevent = env->NewStringUTF(result.event.c_str());
+  jstring jlang = SafeNewStringUTF(env, result.lang);
+  jstring jemotion = SafeNewStringUTF(env, result.emotion);
+  jstring jevent = SafeNewStringUTF(env, result.event);
 
   jfloatArray jdurations = env->NewFloatArray(result.durations.size());
   env->SetFloatArrayRegion(jdurations, 0, result.durations.size(),

@@ -60,10 +60,10 @@ The STT draft now includes both:
 - offline `transcribe(...)`
 - session-style STT ABI for streaming-capable model families
 
-The LLM draft now reserves the shared `llama.cpp`-style model/load/generate
-surface. It validates the ABI shape but currently returns
-`WFLOAT_STATUS_NOT_SUPPORTED` for model creation until a real `llama.cpp`
-checkout is imported and wired into the native build.
+The LLM surface is backed by the vendored `llama.cpp` runtime. Model creation
+loads a GGUF model and initializes a llama context, while generation supports
+token callbacks through the shared Wfloat ABI. Builds configured with
+`WFLOAT_ENABLE_LLAMA_CPP=OFF` return `WFLOAT_STATUS_NOT_SUPPORTED`.
 
 Current STT implementation state:
 

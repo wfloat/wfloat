@@ -9,7 +9,7 @@
 #include <memory>
 #include <regex>  // NOLINT
 #include <string>
-#include <strstream>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -239,7 +239,7 @@ class KeywordSpotterTransducerRknnImpl : public KeywordSpotterImpl {
     InitKeywords(is);
 #else
     // each line in keywords_file contains space-separated words
-    std::ifstream is(config_.keywords_file);
+    auto is = OpenInputFile(config_.keywords_file);
     if (!is) {
 #if __OHOS__
       SHERPA_ONNX_LOGE("Open keywords file failed: %{public}s",
@@ -260,7 +260,7 @@ class KeywordSpotterTransducerRknnImpl : public KeywordSpotterImpl {
 
     auto buf = ReadFile(mgr, config_.keywords_file);
 
-    std::istrstream is(buf.data(), buf.size());
+    std::istringstream is(std::string(buf.data(), buf.size()));
 
     if (!is) {
 #if __OHOS__

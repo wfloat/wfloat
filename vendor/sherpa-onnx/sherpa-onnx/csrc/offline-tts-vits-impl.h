@@ -5,8 +5,8 @@
 #define SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_IMPL_H_
 
 #include <memory>
+#include <sstream>
 #include <string>
-#include <strstream>
 #include <utility>
 #include <vector>
 
@@ -15,6 +15,7 @@
 #include "kaldifst/csrc/text-normalizer.h"
 #include "sherpa-onnx/csrc/character-lexicon.h"
 #include "sherpa-onnx/csrc/file-utils.h"
+#include "sherpa-onnx/csrc/fst-utils.h"
 #include "sherpa-onnx/csrc/lexicon.h"
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/melo-tts-lexicon.h"
@@ -103,7 +104,7 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
 #endif
         }
         auto buf = ReadFile(mgr, f);
-        std::istrstream is(buf.data(), buf.size());
+        std::istringstream is(std::string(buf.data(), buf.size()));
         tn_list_.push_back(std::make_unique<kaldifst::TextNormalizer>(is));
       }
     }
@@ -124,21 +125,13 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
 
         auto buf = ReadFile(mgr, f);
 
-        std::unique_ptr<std::istream> s(
-            new std::istrstream(buf.data(), buf.size()));
-
-        std::unique_ptr<fst::FarReader<fst::StdArc>> reader(
-            fst::FarReader<fst::StdArc>::Open(std::move(s)));
-
-        for (; !reader->Done(); reader->Next()) {
-          std::unique_ptr<fst::StdConstFst> r(
-              fst::CastOrConvertToConstFst(reader->GetFst()->Copy()));
-
+        auto fsts = ReadFstsFromFar(buf);
+        for (auto &r : fsts) {
           tn_list_.push_back(
               std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
-        }  // for (; !reader->Done(); reader->Next())
-      }    // for (const auto &f : files)
-    }      // if (!config.rule_fars.empty())
+        }
+      }  // for (const auto &f : files)
+    }  // if (!config.rule_fars.empty())
   }
 
   int32_t SampleRate() const override {
@@ -149,9 +142,30 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     return model_->GetMetaData().num_speakers;
   }
 
+  // Supported options in GenerationConfig:
+  //   - sid: Speaker ID for multi-speaker models
+  //   - speed: Speech speed factor (default: 1.0)
+  //   - silence_scale: Scale applied to pauses in the generated audio
+  //
+  // Supported extra options in config.extra:
+  //   - emotion_id: Emotion index for multi-emotion models (default: 0).
+  //     Only used if the model exposes num_emotions > 0 metadata and
+  //     an "emotion_id" input tensor.
   GeneratedAudio Generate(
-      const std::string &_text, int64_t sid = 0, float speed = 1.0,
+      const std::string &_text, const GenerationConfig &gen_config,
       GeneratedAudioCallback callback = nullptr) const override {
+    if (config_.model.debug) {
+      SHERPA_ONNX_LOGE("%s", gen_config.ToString().c_str());
+    }
+
+    int64_t sid = gen_config.sid;
+    int64_t emotion_id = gen_config.GetExtraInt("emotion_id", 0);
+    float speed = gen_config.speed;
+    if (speed <= 0) {
+      SHERPA_ONNX_LOGE("Speed must be > 0. Given: %f", speed);
+      return {};
+    }
+
     const auto &meta_data = model_->GetMetaData();
     int32_t num_speakers = meta_data.num_speakers;
 
@@ -182,6 +196,42 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
           num_speakers, 0, num_speakers - 1, static_cast<int32_t>(sid));
 #endif
       sid = 0;
+    }
+
+    int32_t num_emotions = meta_data.num_emotions;
+
+    if (num_emotions == 0 && emotion_id != 0) {
+#if __OHOS__
+      SHERPA_ONNX_LOGE(
+          "This model does not support emotion selection. Given emotion_id: "
+          "%{public}d. emotion_id is ignored",
+          static_cast<int32_t>(emotion_id));
+#else
+      SHERPA_ONNX_LOGE(
+          "This model does not support emotion selection. Given emotion_id: "
+          "%d. emotion_id is ignored",
+          static_cast<int32_t>(emotion_id));
+#endif
+      emotion_id = 0;
+    }
+
+    if (num_emotions != 0 &&
+        (emotion_id >= num_emotions || emotion_id < 0)) {
+#if __OHOS__
+      SHERPA_ONNX_LOGE(
+          "This model contains only %{public}d emotions. emotion_id should be "
+          "in the range [%{public}d, %{public}d]. Given: %{public}d. Use "
+          "emotion_id=0",
+          num_emotions, 0, num_emotions - 1,
+          static_cast<int32_t>(emotion_id));
+#else
+      SHERPA_ONNX_LOGE(
+          "This model contains only %d emotions. emotion_id should be in the "
+          "range [%d, %d]. Given: %d. Use emotion_id=0",
+          num_emotions, 0, num_emotions - 1,
+          static_cast<int32_t>(emotion_id));
+#endif
+      emotion_id = 0;
     }
 
     std::string text = _text;
@@ -246,7 +296,8 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     int32_t x_size = static_cast<int32_t>(x.size());
 
     if (config_.max_num_sentences <= 0 || x_size <= config_.max_num_sentences) {
-      auto ans = Process(x, tones, sid, speed);
+      auto ans = Process(x, tones, sid, speed, gen_config.silence_scale,
+                         emotion_id);
       if (callback) {
         callback(ans.samples.data(), ans.samples.size(), 1.0);
       }
@@ -294,7 +345,9 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
         }
       }
 
-      auto audio = Process(batch_x, batch_tones, sid, speed);
+      auto audio =
+          Process(batch_x, batch_tones, sid, speed, gen_config.silence_scale,
+                  emotion_id);
       ans.sample_rate = audio.sample_rate;
       ans.samples.insert(ans.samples.end(), audio.samples.begin(),
                          audio.samples.end());
@@ -319,7 +372,9 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     }
 
     if (!batch_x.empty()) {
-      auto audio = Process(batch_x, batch_tones, sid, speed);
+      auto audio =
+          Process(batch_x, batch_tones, sid, speed, gen_config.silence_scale,
+                  emotion_id);
       ans.sample_rate = audio.sample_rate;
       ans.samples.insert(ans.samples.end(), audio.samples.begin(),
                          audio.samples.end());
@@ -334,6 +389,17 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     return ans;
   }
 
+  [[deprecated("Use Generate(text, GenerationConfig, callback) instead")]]
+  GeneratedAudio Generate(
+      const std::string &text, int64_t sid = 0, float speed = 1.0,
+      GeneratedAudioCallback callback = nullptr) const override {
+    GenerationConfig gen_config;
+    gen_config.sid = sid;
+    gen_config.speed = speed;
+    gen_config.silence_scale = config_.silence_scale;
+    return Generate(text, gen_config, std::move(callback));
+  }
+
  private:
   template <typename Manager>
   void InitFrontend(Manager *mgr) {
@@ -346,16 +412,16 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       frontend_ = std::make_unique<MeloTtsLexicon>(
           mgr, config_.model.vits.lexicon, config_.model.vits.tokens,
           model_->GetMetaData(), config_.model.debug);
-    } else if (meta_data.jieba) {
+    } else if (meta_data.jieba || meta_data.use_g2pw) {
       frontend_ = std::make_unique<CharacterLexicon>(
           mgr, config_.model.vits.lexicon, config_.model.vits.tokens,
-          config_.model.debug);
+          config_.model.debug, meta_data.use_g2pw);
     } else if (meta_data.is_melo_tts && meta_data.language == "English") {
       frontend_ = std::make_unique<MeloTtsLexicon>(
           mgr, config_.model.vits.lexicon, config_.model.vits.tokens,
           model_->GetMetaData(), config_.model.debug);
     } else if ((meta_data.is_piper || meta_data.is_coqui ||
-                meta_data.is_icefall) &&
+                meta_data.is_icefall || meta_data.is_inflect) &&
                !config_.model.vits.data_dir.empty()) {
       frontend_ = std::make_unique<PiperPhonemizeLexicon>(
           mgr, config_.model.vits.tokens, config_.model.vits.data_dir,
@@ -388,12 +454,12 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       frontend_ = std::make_unique<MeloTtsLexicon>(
           config_.model.vits.lexicon, config_.model.vits.tokens,
           model_->GetMetaData(), config_.model.debug);
-    } else if (meta_data.jieba) {
-      frontend_ = std::make_unique<CharacterLexicon>(config_.model.vits.lexicon,
-                                                     config_.model.vits.tokens,
-                                                     config_.model.debug);
+    } else if (meta_data.jieba || meta_data.use_g2pw) {
+      frontend_ = std::make_unique<CharacterLexicon>(
+          config_.model.vits.lexicon, config_.model.vits.tokens,
+          config_.model.debug, meta_data.use_g2pw);
     } else if ((meta_data.is_piper || meta_data.is_coqui ||
-                meta_data.is_icefall) &&
+                meta_data.is_icefall || meta_data.is_inflect) &&
                !config_.model.vits.data_dir.empty()) {
       frontend_ = std::make_unique<PiperPhonemizeLexicon>(
           config_.model.vits.tokens, config_.model.vits.data_dir,
@@ -413,7 +479,8 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
 
   GeneratedAudio Process(const std::vector<std::vector<int64_t>> &tokens,
                          const std::vector<std::vector<int64_t>> &tones,
-                         int32_t sid, float speed) const {
+                         int32_t sid, float speed, float silence_scale,
+                         int64_t emotion_id = 0) const {
     int32_t num_tokens = 0;
     for (const auto &k : tokens) {
       num_tokens += k.size();
@@ -449,7 +516,7 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
 
     Ort::Value audio{nullptr};
     if (tones.empty()) {
-      audio = model_->Run(std::move(x_tensor), sid, speed);
+      audio = model_->Run(std::move(x_tensor), sid, speed, emotion_id);
     } else {
       audio =
           model_->Run(std::move(x_tensor), std::move(tones_tensor), sid, speed);
@@ -470,7 +537,6 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     ans.sample_rate = model_->GetMetaData().sample_rate;
     ans.samples = std::vector<float>(p, p + total);
 
-    float silence_scale = config_.silence_scale;
     if (silence_scale != 1) {
       ans = ans.ScaleSilence(silence_scale);
     }

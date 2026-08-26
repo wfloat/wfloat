@@ -8,6 +8,7 @@ SHERPA_DIR="${REPO_ROOT}/vendor/sherpa-onnx"
 ANDROID_LLM_JNI_DIR="${PACKAGE_DIR}/android/llm-jni"
 IOS_LLM_BUILD_SCRIPT="${SCRIPT_DIR}/build-ios-llm-xcframework.sh"
 ANDROID_ABIS=()
+BUILD_JOBS="${WFLOAT_BUILD_JOBS:-4}"
 
 normalize_android_abi() {
   case "$1" in
@@ -134,7 +135,7 @@ build_android_llm_jni() {
       -DCMAKE_TOOLCHAIN_FILE="${ndk_dir}/build/cmake/android.toolchain.cmake" \
       -DANDROID_ABI="${abi}" \
       -DANDROID_PLATFORM=android-23
-    cmake --build "${build_dir}" --config Release --parallel
+    cmake --build "${build_dir}" --config Release --parallel "${BUILD_JOBS}"
   done
 }
 

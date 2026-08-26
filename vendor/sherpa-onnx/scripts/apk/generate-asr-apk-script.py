@@ -499,6 +499,81 @@ def get_models():
             popd
             """,
         ),
+        Model(
+            model_name="sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09",
+            idx=29,
+            lang="bn",
+            short_name="bengali_vosk_2026_02_09",
+            cmd="""
+            pushd $model_name
+
+            rm -rf test_wavs
+
+            ls -lh
+
+            popd
+            """,
+        ),
+        Model(
+            model_name="sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
+            idx=30,
+            lang="en",
+            short_name="nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
+            cmd="""
+            pushd $model_name
+
+            rm -rf test_wavs
+
+            ls -lh
+
+            popd
+            """,
+        ),
+        Model(
+            model_name="sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
+            idx=31,
+            lang="en",
+            short_name="nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
+            cmd="""
+            pushd $model_name
+
+            rm -rf test_wavs
+
+            ls -lh
+
+            popd
+            """,
+        ),
+        Model(
+            model_name="sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
+            idx=32,
+            lang="en",
+            short_name="nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
+            cmd="""
+            pushd $model_name
+
+            rm -rf test_wavs
+
+            ls -lh
+
+            popd
+            """,
+        ),
+        Model(
+            model_name="sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
+            idx=33,
+            lang="en",
+            short_name="nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
+            cmd="""
+            pushd $model_name
+
+            rm -rf test_wavs
+
+            ls -lh
+
+            popd
+            """,
+        ),
     ]
 
     return models

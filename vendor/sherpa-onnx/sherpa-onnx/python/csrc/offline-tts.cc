@@ -26,22 +26,6 @@ static void PybindGeneratedAudio(py::module *m) {
       });
 }
 
-static void PybindWfloatPreparedText(py::module *m) {
-  using PyClass = WfloatPreparedText;
-  py::class_<PyClass>(*m, "WfloatPreparedText")
-      .def(py::init<>())
-      .def_readwrite("text", &PyClass::text)
-      .def_readwrite("text_clean", &PyClass::text_clean)
-      .def_readwrite("text_phonemes", &PyClass::text_phonemes)
-      .def("__str__", [](const PyClass &self) {
-        std::ostringstream os;
-        os << "WfloatPreparedText(num_text=" << self.text.size()
-           << ", num_text_clean=" << self.text_clean.size()
-           << ", num_text_phonemes=" << self.text_phonemes.size() << ")";
-        return os.str();
-      });
-}
-
 static void PybindGenerationConfig(py::module *m) {
   using PyClass = GenerationConfig;
 
@@ -78,26 +62,54 @@ static void PybindOfflineTtsConfig(py::module *m) {
       .def("__str__", &PyClass::ToString);
 }
 
+static constexpr const char *kOfflineTtsDoc = R"doc(
+Offline text-to-speech engine.
+
+Args:
+  config:
+    The configuration for the offline TTS model.
+)doc";
+
+static constexpr const char *kGenerateDoc = R"doc(
+Generate speech from text.
+
+Args:
+  text:
+    The text to generate speech for.
+  sid:
+    Speaker ID. Used for multi-speaker models.
+  speed:
+    The speaking speed. Larger values produce faster speech.
+  callback:
+    If not None, it is called during speech generation with
+    ``(samples: np.ndarray, progress: float) -> int``.
+    Return a non-zero value to stop generation early.
+
+Returns:
+  A ``GeneratedAudio`` object containing the audio samples and sample rate.
+)doc";
+
+static constexpr const char *kSampleRateDoc = R"doc(
+Return the sample rate of the generated audio.
+)doc";
+
+static constexpr const char *kNumSpeakersDoc = R"doc(
+Return the number of speakers supported by the model.
+)doc";
+
 void PybindOfflineTts(py::module *m) {
   PybindOfflineTtsConfig(m);
   PybindGeneratedAudio(m);
-  PybindWfloatPreparedText(m);
   PybindGenerationConfig(m);
 
-  m->def("prepare_wfloat_text", &PrepareWfloatText, py::arg("text"),
-         py::arg("emotion") = "", py::arg("intensity") = 0.0f);
-
   using PyClass = OfflineTts;
-  py::class_<PyClass>(*m, "OfflineTts")
+  py::class_<PyClass>(*m, "OfflineTts", kOfflineTtsDoc)
       .def(py::init<const OfflineTtsConfig &>(), py::arg("config"),
            py::call_guard<py::gil_scoped_release>())
-      .def_property_readonly("sample_rate", &PyClass::SampleRate)
-      .def_property_readonly("num_speakers", &PyClass::NumSpeakers)
-      .def("convert_text_to_phonemes", &PyClass::ConvertTextToPhonemes,
-           py::arg("text"))
-      .def("prepare_wfloat_text", &PyClass::PrepareWfloatText,
-           py::arg("text"), py::arg("emotion") = "",
-           py::arg("intensity") = 0.0f)
+      .def_property_readonly("sample_rate", &PyClass::SampleRate,
+                             kSampleRateDoc)
+      .def_property_readonly("num_speakers", &PyClass::NumSpeakers,
+                             kNumSpeakersDoc)
       .def(
           "generate",
           [](const PyClass &self, const std::string &text, int64_t sid,
@@ -105,7 +117,10 @@ void PybindOfflineTts(py::module *m) {
              std::function<int32_t(py::array_t<float>, float)> callback)
               -> GeneratedAudio {
             if (!callback) {
-              return self.Generate(text, sid, speed);
+              GenerationConfig config;
+              config.sid = sid;
+              config.speed = speed;
+              return self.Generate(text, config);
             }
 
             std::function<int32_t(const float *, int32_t, float)>
@@ -123,11 +138,14 @@ void PybindOfflineTts(py::module *m) {
                   return callback(array, progress);
                 };
 
-            return self.Generate(text, sid, speed, callback_wrapper);
+            GenerationConfig config;
+            config.sid = sid;
+            config.speed = speed;
+            return self.Generate(text, config, callback_wrapper);
           },
           py::arg("text"), py::arg("sid") = 0, py::arg("speed") = 1.0,
           py::arg("callback") = py::none(),
-          py::call_guard<py::gil_scoped_release>())
+          kGenerateDoc, py::call_guard<py::gil_scoped_release>())
       .def(
           "generate",
           [](const PyClass &self, const std::string &text,
@@ -163,9 +181,15 @@ void PybindOfflineTts(py::module *m) {
              float speed, int32_t num_steps,
              std::function<int32_t(py::array_t<float>, float)> callback)
               -> GeneratedAudio {
+            GenerationConfig config;
+            config.reference_audio = prompt_samples;
+            config.reference_sample_rate = sample_rate;
+            config.reference_text = prompt_text;
+            config.speed = speed;
+            config.num_steps = num_steps;
+
             if (!callback) {
-              return self.Generate(text, prompt_text, prompt_samples,
-                                   sample_rate, speed, num_steps);
+              return self.Generate(text, config);
             }
 
             std::function<int32_t(const float *, int32_t, float)>
@@ -183,8 +207,7 @@ void PybindOfflineTts(py::module *m) {
                   return callback(array, progress);
                 };
 
-            return self.Generate(text, prompt_text, prompt_samples, sample_rate,
-                                 speed, num_steps, callback_wrapper);
+            return self.Generate(text, config, callback_wrapper);
           },
           py::arg("text"), py::arg("prompt_text"), py::arg("prompt_samples"),
           py::arg("sample_rate"), py::arg("speed") = 1.0,

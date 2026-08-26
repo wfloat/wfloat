@@ -287,7 +287,8 @@ wfloat_status_t FormatChatPrompt(
   return WFLOAT_STATUS_BACKEND_ERROR;
 }
 
-llama_sampler *BuildSampler(const wfloat_llm_generate_options_t &options) {
+llama_sampler *BuildSampler(const llama_vocab *vocab,
+                            const wfloat_llm_generate_options_t &options) {
   llama_sampler_chain_params params = llama_sampler_chain_default_params();
   params.no_perf = true;
 
@@ -300,7 +301,9 @@ llama_sampler *BuildSampler(const wfloat_llm_generate_options_t &options) {
       DefaultPositive(options.repeat_penalty, 1.0f);
   if (repeat_penalty != 1.0f) {
     llama_sampler_chain_add(
-        sampler, llama_sampler_init_penalties(64, repeat_penalty, 0.0f, 0.0f));
+        sampler, llama_sampler_init_penalties(
+                     llama_vocab_n_tokens(vocab), 64, repeat_penalty, 0.0f,
+                     0.0f));
   }
 
   const float temperature = options.temperature;
@@ -463,7 +466,7 @@ wfloat_status_t wfloat_llm_model_generate(
       return WFLOAT_STATUS_INVALID_ARGUMENT;
     }
 
-    llama_sampler *sampler = BuildSampler(*options);
+    llama_sampler *sampler = BuildSampler(model->vocab, *options);
     if (!sampler) {
       return WFLOAT_STATUS_BACKEND_ERROR;
     }

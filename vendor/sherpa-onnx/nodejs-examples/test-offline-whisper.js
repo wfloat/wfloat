@@ -1,9 +1,6 @@
 // Copyright (c)  2023  Xiaomi Corporation (authors: Fangjun Kuang)
 //
 const sherpa_onnx = require('sherpa-onnx');
-console.log(`version : ${sherpa_onnx.version}`);
-console.log(`git sha1: ${sherpa_onnx.gitSha1}`);
-console.log(`git date: ${sherpa_onnx.gitDate}`);
 
 function createOfflineRecognizer() {
   let modelConfig = {
@@ -24,8 +21,8 @@ function createOfflineRecognizer() {
   return sherpa_onnx.createOfflineRecognizer(config);
 }
 
-recognizer = createOfflineRecognizer();
-stream = recognizer.createStream();
+const recognizer = createOfflineRecognizer();
+const stream = recognizer.createStream();
 
 const waveFilename = './sherpa-onnx-whisper-tiny.en/test_wavs/0.wav';
 const wave = sherpa_onnx.readWave(waveFilename);

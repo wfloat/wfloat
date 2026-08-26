@@ -1731,8 +1731,12 @@ RCT_EXPORT_MODULE()
     }
 
     NSString *textClean = textCleanChunks[index];
+    SherpaOnnxGenerationConfig generationConfig = {};
+    generationConfig.sid = sid;
+    generationConfig.speed = speed;
     const SherpaOnnxGeneratedAudio *generatedAudio =
-        SherpaOnnxOfflineTtsGenerate(self.tts, textClean.UTF8String, sid, speed);
+        SherpaOnnxOfflineTtsGenerateWithConfig(
+            self.tts, textClean.UTF8String, &generationConfig, nullptr, nullptr);
     if (!generatedAudio) {
       if (error) {
         *error = [NSError errorWithDomain:WfloatErrorDomain
@@ -1885,8 +1889,12 @@ RCT_EXPORT_MODULE()
       }
 
       NSString *textClean = segment.textCleanChunks[index];
+      SherpaOnnxGenerationConfig generationConfig = {};
+      generationConfig.sid = segment.sid;
+      generationConfig.speed = segment.speed;
       const SherpaOnnxGeneratedAudio *generatedAudio =
-          SherpaOnnxOfflineTtsGenerate(self.tts, textClean.UTF8String, segment.sid, segment.speed);
+          SherpaOnnxOfflineTtsGenerateWithConfig(
+              self.tts, textClean.UTF8String, &generationConfig, nullptr, nullptr);
       if (!generatedAudio) {
         if (error) {
           *error = [NSError errorWithDomain:WfloatErrorDomain

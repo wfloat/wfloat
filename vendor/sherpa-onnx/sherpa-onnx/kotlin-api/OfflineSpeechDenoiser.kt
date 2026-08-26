@@ -6,8 +6,14 @@ data class OfflineSpeechDenoiserGtcrnModelConfig(
     var model: String = "",
 )
 
+data class OfflineSpeechDenoiserDpdfNetModelConfig(
+    var model: String = "",
+    var attenuationLimitDb: Float = 0.0f,
+)
+
 data class OfflineSpeechDenoiserModelConfig(
     var gtcrn: OfflineSpeechDenoiserGtcrnModelConfig = OfflineSpeechDenoiserGtcrnModelConfig(),
+    var dpdfnet: OfflineSpeechDenoiserDpdfNetModelConfig = OfflineSpeechDenoiserDpdfNetModelConfig(),
     var numThreads: Int = 1,
     var debug: Boolean = false,
     var provider: String = "cpu",
@@ -16,20 +22,6 @@ data class OfflineSpeechDenoiserModelConfig(
 data class OfflineSpeechDenoiserConfig(
     var model: OfflineSpeechDenoiserModelConfig = OfflineSpeechDenoiserModelConfig(),
 )
-
-class DenoisedAudio(
-    val samples: FloatArray,
-    val sampleRate: Int,
-) {
-    fun save(filename: String) =
-        saveImpl(filename = filename, samples = samples, sampleRate = sampleRate)
-
-    private external fun saveImpl(
-        filename: String,
-        samples: FloatArray,
-        sampleRate: Int
-    ): Boolean
-}
 
 class OfflineSpeechDenoiser(
     assetManager: AssetManager? = null,
@@ -42,6 +34,9 @@ class OfflineSpeechDenoiser(
             newFromAsset(assetManager, config)
         } else {
             newFromFile(config)
+        }
+        require(ptr != 0L) {
+            "Invalid OfflineSpeechDenoiserConfig: failed to create native OfflineSpeechDenoiser"
         }
     }
 

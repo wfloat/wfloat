@@ -4,11 +4,36 @@ set -ex
 
 cd dart-api-examples
 
-pushd spoken-language-identification
-./run-whisper.sh
+echo '----------Version----------'
+pushd version
+./run.sh
 popd
 
 pushd non-streaming-asr
+
+echo '----------Moonshine v2----------'
+./run-moonshine-v2.sh
+rm -rf sherpa-onnx-*
+
+echo '----------Wenet CTC----------'
+./run-wenet-ctc.sh
+rm -rf sherpa-onnx-*
+
+echo '----------Zipformer CTC----------'
+./run-zipformer-ctc.sh
+rm -rf sherpa-onnx-*
+
+echo '----------Cohere Transcribe----------'
+./run-cohere-transcribe.sh
+rm -rf sherpa-onnx-*
+
+echo '----------Qwen3 ASR----------'
+./run-qwen3-asr.sh
+rm -rf sherpa-onnx-*
+
+echo '----------FireRedASR CTC----------'
+./run-fire-red-asr-ctc.sh
+rm -rf sherpa-onnx-*
 
 echo '----------FunASR Nano----------'
 ./run-funasr-nano.sh
@@ -20,14 +45,6 @@ rm -rf sherpa-onnx-*
 
 echo '----------Omnilingual ASR CTC----------'
 ./run-omnilingual-asr-ctc.sh
-rm -rf sherpa-onnx-*
-
-echo '----------Wenet CTC----------'
-./run-wenet-ctc.sh
-rm -rf sherpa-onnx-*
-
-echo '----------Zipformer CTC----------'
-./run-zipformer-ctc.sh
 rm -rf sherpa-onnx-*
 
 echo '----------SenseVoice----------'
@@ -80,6 +97,66 @@ rm -rf sherpa-onnx-*
 
 popd # non-streaming-asr
 
+pushd speech-enhancement-gtcrn
+echo "speech enhancement with gtcrn models"
+./run.sh
+ls -lh
+popd
+
+pushd speech-enhancement-dpdfnet
+echo "speech enhancement with dpdfnet models"
+./run.sh
+ls -lh
+popd
+
+pushd streaming-speech-enhancement-gtcrn
+echo "streaming speech enhancement with gtcrn models"
+./run.sh
+ls -lh
+popd
+
+pushd streaming-speech-enhancement-dpdfnet
+echo "streaming speech enhancement with dpdfnet models"
+./run.sh
+ls -lh
+popd
+
+pushd tts
+
+echo '----------tts----------'
+./run-pocket-en.sh
+./run-kitten-en.sh
+./run-supertonic-en.sh
+./run-kokoro-zh-en.sh
+./run-kokoro-en.sh
+./run-matcha-zh.sh
+./run-matcha-en.sh
+./run-zipvoice-zh-en.sh
+ls -lh *.wav
+rm -rf matcha-icefall-*
+rm -rf sherpa-onnx-zipvoice-*
+rm *.onnx
+
+echo '----------piper tts----------'
+./run-piper.sh
+rm -rf vits-piper-*
+
+echo '----------coqui tts----------'
+./run-coqui.sh
+rm -rf vits-coqui-*
+
+echo '----------zh tts----------'
+./run-vits-zh.sh
+rm -rf sherpa-onnx-*
+
+ls -lh *.wav
+
+popd # tts
+
+pushd spoken-language-identification
+./run-whisper.sh
+popd
+
 pushd streaming-asr
 
 echo '----------streaming T-one ctc----------'
@@ -110,44 +187,10 @@ rm -rf sherpa-onnx-*
 
 popd # streaming-asr
 
-pushd tts
-
-echo '----------matcha tts----------'
-./run-kitten-en.sh
-./run-kokoro-zh-en.sh
-./run-kokoro-en.sh
-./run-matcha-zh.sh
-./run-matcha-en.sh
-ls -lh *.wav
-rm -rf matcha-icefall-*
-rm *.onnx
-
-echo '----------piper tts----------'
-./run-piper.sh
-rm -rf vits-piper-*
-
-echo '----------coqui tts----------'
-./run-coqui.sh
-rm -rf vits-coqui-*
-
-echo '----------zh tts----------'
-./run-vits-zh.sh
-rm -rf sherpa-onnx-*
-
-ls -lh *.wav
-
-popd # tts
-
 pushd vad
 ./run-ten-vad.sh
 ./run.sh
 rm *.onnx
-popd
-
-pushd speech-enhancement-gtcrn
-echo "speech enhancement with gtcrn models"
-./run.sh
-ls -lh
 popd
 
 pushd speaker-diarization
@@ -163,6 +206,9 @@ popd
 pushd add-punctuations
 echo '----------CT Transformer----------'
 ./run-ct-transformer.sh
+echo '----------Online punctuation----------'
+./run-online.sh
+rm -rf sherpa-onnx-online-punct-en-2024-08-06
 popd
 
 pushd audio-tagging

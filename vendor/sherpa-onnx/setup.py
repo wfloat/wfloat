@@ -2,14 +2,9 @@
 
 import os
 import re
-import sys
 from pathlib import Path
 
 import setuptools
-
-ROOT_DIR = Path(__file__).resolve().parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
 
 from cmake.cmake_extension import (
     BuildExtension,
@@ -48,7 +43,7 @@ def get_package_version():
     return latest_version
 
 
-package_name = "wfloat-sherpa-onnx"
+package_name = "sherpa_onnx"
 
 with open("sherpa-onnx/python/sherpa_onnx/__init__.py", "a") as f:
     f.write(f"__version__ = '{get_package_version()}'\n")
@@ -78,10 +73,10 @@ def get_binaries_to_install():
 
 setuptools.setup(
     name=package_name,
-    python_requires=">=3.9",
+    python_requires=">=3.7",
     version=get_package_version(),
-    author="Wfloat development team",
-    author_email="mitch@wfloat.com",
+    author="The sherpa-onnx development team",
+    author_email="dpovey@gmail.com",
     package_dir={
         "sherpa_onnx": "sherpa-onnx/python/sherpa_onnx",
     },
@@ -114,7 +109,7 @@ setuptools.setup(
         ],
     },
     license="Apache licensed, as found in the LICENSE file",
-    install_requires=["sherpa-onnx-core==1.12.23"] if need_split_package() else None,
+    install_requires=["sherpa-onnx-core==1.13.6"] if need_split_package() else None,
 )
 
 with open("sherpa-onnx/python/sherpa_onnx/__init__.py", "r") as f:

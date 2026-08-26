@@ -532,9 +532,11 @@ wfloat_status_t SynthesizeWfloat(
         raw_cursor + static_cast<int32_t>(raw_chunk_text.size());
     raw_cursor = highlight_end;
 
-    sherpa_onnx::GeneratedAudio audio = model->tts->Generate(
-        prepared.text_clean[i], options->sid,
-        DefaultPositive(options->speed, kDefaultSpeed));
+    sherpa_onnx::GenerationConfig cfg;
+    cfg.sid = options->sid;
+    cfg.speed = DefaultPositive(options->speed, kDefaultSpeed);
+    sherpa_onnx::GeneratedAudio audio =
+        model->tts->Generate(prepared.text_clean[i], cfg);
 
     float chunk_progress = static_cast<float>(i + 1) /
                            static_cast<float>(prepared.text_clean.size());
@@ -658,8 +660,11 @@ wfloat_status_t SynthesizeDialogue(
             highlight_start + static_cast<int32_t>(raw_chunk_text.size());
         local_cursor += static_cast<int32_t>(raw_chunk_text.size());
 
-        sherpa_onnx::GeneratedAudio audio = model->tts->Generate(
-            plan.prepared.text_clean[chunk_index], plan.sid, plan.speed);
+        sherpa_onnx::GenerationConfig cfg;
+        cfg.sid = plan.sid;
+        cfg.speed = plan.speed;
+        sherpa_onnx::GeneratedAudio audio =
+            model->tts->Generate(plan.prepared.text_clean[chunk_index], cfg);
 
         progress->emitted_chunks += 1;
         float chunk_progress =

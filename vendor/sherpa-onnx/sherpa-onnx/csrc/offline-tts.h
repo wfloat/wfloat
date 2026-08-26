@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "sherpa-onnx/csrc/offline-tts-model-config.h"
+#include "sherpa-onnx/csrc/offline-tts-wfloat-text.h"
 #include "sherpa-onnx/csrc/parse-options.h"
 
 namespace sherpa_onnx {
@@ -63,16 +64,6 @@ struct GeneratedAudio {
   // If scale < 1, then it reduces the duration of a pause
   GeneratedAudio ScaleSilence(float scale) const;
 };
-
-struct WfloatPreparedText {
-  std::vector<std::string> text;
-  std::vector<std::string> text_clean;
-  std::vector<std::string> text_phonemes;
-};
-
-WfloatPreparedText PrepareWfloatText(const std::string &text,
-                                     const std::string &emotion = "",
-                                     float intensity = 0.0f);
 
 struct GenerationConfig {
   float silence_scale = 0.2;
@@ -128,6 +119,7 @@ class OfflineTts {
   //                 keep a reference to it. The caller can copy the data if
   //                 he/she wants to access the samples after the callback
   //                 returns. The callback is called in the current thread.
+  [[deprecated("Use Generate(text, GenerationConfig, callback) instead")]]
   GeneratedAudio Generate(const std::string &text, int64_t sid = 0,
                           float speed = 1.0,
                           GeneratedAudioCallback callback = nullptr) const;
@@ -145,6 +137,7 @@ class OfflineTts {
   //                 keep a reference to it. The caller can copy the data if
   //                 he/she wants to access the samples after the callback
   //                 returns. The callback is called in the current thread.
+  [[deprecated("Use Generate(text, GenerationConfig, callback) instead")]]
   GeneratedAudio Generate(const std::string &text,
                           const std::string &prompt_text,
                           const std::vector<float> &prompt_samples,
