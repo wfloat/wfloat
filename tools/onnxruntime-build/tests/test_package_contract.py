@@ -11,6 +11,7 @@ from unittest import mock
 from onnxruntime_builder.catalog import Catalog
 from onnxruntime_builder.validate import (
     ValidationError,
+    _android_readelf,
     _architecture_matches,
     _check_apple_minimum,
     _object_archive_members,
@@ -60,6 +61,18 @@ class PackageContractTest(unittest.TestCase):
             )
         self.assertEqual(len(messages), 3)
         self.assertTrue(messages[0].startswith("PASS"))
+
+    def test_android_readelf_is_discovered_inside_selected_ndk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            ndk = Path(temporary_name) / "ndk"
+            readelf = ndk / "toolchains/llvm/prebuilt/test-host/bin/llvm-readelf"
+            readelf.parent.mkdir(parents=True)
+            readelf.write_text("fixture\n", encoding="utf-8")
+            readelf.chmod(0o755)
+            with mock.patch.dict(
+                "os.environ", {"ANDROID_NDK_HOME": str(ndk)}, clear=True
+            ), mock.patch("onnxruntime_builder.validate.shutil.which", return_value=None):
+                self.assertEqual(_android_readelf("28.0.13004108"), str(readelf))
 
     def test_apple_minimum_validation_is_architecture_specific(self) -> None:
         reported = {"arm64": ["14.0"], "x86_64": ["13.0"]}

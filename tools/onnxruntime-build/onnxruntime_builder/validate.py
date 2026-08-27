@@ -253,10 +253,34 @@ def _check_glibc(binary: Path, maximum: str) -> str:
     return f"GLIBC_{found[0]}.{found[1]}"
 
 
-def _check_android_api(binary: Path, expected: int) -> None:
+def _android_readelf(ndk_version: str | None = None) -> str:
     readelf = shutil.which("readelf") or shutil.which("llvm-readelf")
-    if not readelf:
-        raise ValidationError("readelf or llvm-readelf is required for Android minimum-API validation")
+    if readelf:
+        return readelf
+
+    ndk_roots: list[Path] = []
+    for variable in ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK"):
+        value = os.environ.get(variable)
+        if value:
+            ndk_roots.append(Path(value))
+    sdk_root = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    if sdk_root and ndk_version:
+        ndk_roots.append(Path(sdk_root) / "ndk" / ndk_version)
+
+    for ndk_root in ndk_roots:
+        prebuilt = ndk_root / "toolchains" / "llvm" / "prebuilt"
+        for candidate in sorted(prebuilt.glob("*/bin/llvm-readelf")):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+
+    raise ValidationError(
+        "readelf or llvm-readelf is required for Android minimum-API validation; "
+        "set ANDROID_NDK_HOME to the selected Android NDK"
+    )
+
+
+def _check_android_api(binary: Path, expected: int, ndk_version: str | None = None) -> None:
+    readelf = _android_readelf(ndk_version)
     output = _tool_output([readelf, "--notes", str(binary)])
     match = re.search(r"Android ABI:\s*([0-9]+)", output)
     actual: int | None = int(match.group(1)) if match else None
@@ -637,7 +661,11 @@ def validate_archive(
                     description = _check_linkage(library, target)
                     if not _architecture_matches(abi, description):
                         raise ValidationError(f"Android {abi} library has wrong architecture: {description}")
-                    _check_android_api(library, target["toolchain"]["android_api"])
+                    _check_android_api(
+                        library,
+                        target["toolchain"]["android_api"],
+                        target["toolchain"].get("ndk"),
+                    )
         elif kind == "xcframework":
             libraries = _validate_xcframework(target, root, inspect_metadata=inspect_metadata)
         else:
