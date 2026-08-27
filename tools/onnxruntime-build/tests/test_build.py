@@ -11,6 +11,7 @@ from onnxruntime_builder.build import (
     BuildError,
     _android_sdk_paths,
     _apple_settings,
+    _base_build_command,
     build_target,
 )
 from onnxruntime_builder.catalog import Catalog
@@ -20,6 +21,15 @@ PINNED_COMMIT = "2e2543fbe9fae542f921d47a72d21d5a4ef0b710"
 
 
 class BuildTest(unittest.TestCase):
+    def test_microsoft_builds_accept_current_cmake_policy_handling(self) -> None:
+        compatibility = "--cmake_extra_defines=CMAKE_POLICY_VERSION_MINIMUM=3.5"
+        command = _base_build_command(Path("/source"), Path("/build"), jobs=2)
+        self.assertIn(compatibility, command)
+
+        target = Catalog.load().target("ios-static-xcframework")
+        base = _apple_settings(target, jobs=2, run_tests=False)["build_params"]["base"]
+        self.assertIn(compatibility, base)
+
     def test_apple_builds_disable_telemetry(self) -> None:
         target = Catalog.load().target("ios-static-xcframework")
         base = _apple_settings(target, jobs=2, run_tests=False)["build_params"]["base"]

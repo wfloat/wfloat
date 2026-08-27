@@ -12,6 +12,10 @@ handles native and cross-platform CMake generation. Wfloat's packaging layer
 then normalizes only the observable consumer contract: stable headers and
 libraries, one archive root, immutable identity, and retained notices.
 
+Build invocations set CMake's policy compatibility minimum to 3.5. This lets
+current CMake configure legacy third-party dependency declarations such as
+XNNPACK's psimd project without modifying those Microsoft-selected sources.
+
 The concise archive name remains unambiguous because each version maps to one
 exact Microsoft commit in the committed catalog. A source change is a builder
 change: updating that map creates a new Wfloat revision, so the builder segment

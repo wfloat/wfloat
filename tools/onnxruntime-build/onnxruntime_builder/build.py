@@ -192,6 +192,7 @@ def _base_build_command(source_dir: Path, build_dir: Path, jobs: int) -> list[st
         "--skip_submodule_sync",
         "--compile_no_warning_as_error",
         "--no_telemetry",
+        "--cmake_extra_defines=CMAKE_POLICY_VERSION_MINIMUM=3.5",
     ]
     if _host() != "windows" and shutil.which("ninja"):
         command.append("--cmake_generator=Ninja")
@@ -301,6 +302,7 @@ def _apple_settings(target: dict, jobs: int, run_tests: bool) -> dict:
         "--skip_submodule_sync",
         "--compile_no_warning_as_error",
         "--no_telemetry",
+        "--cmake_extra_defines=CMAKE_POLICY_VERSION_MINIMUM=3.5",
     ]
     if not run_tests:
         base.extend(["--skip_tests", "--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF"])
