@@ -51,6 +51,11 @@ class CliTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid choice", result.stderr)
 
+    def test_wasm_release_plan_explicitly_disables_archive_lto(self) -> None:
+        result = self.run_cli("build", "wasm-static_lib-simd", "--plan")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("-fno-lto"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

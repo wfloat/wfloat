@@ -8,7 +8,7 @@ import plistlib
 from pathlib import Path
 
 from onnxruntime_builder.catalog import Catalog
-from onnxruntime_builder.validate import ValidationError, validate_archive
+from onnxruntime_builder.validate import ValidationError, _architecture_matches, validate_archive
 
 
 BUILDER = "0123456789ab"
@@ -163,6 +163,10 @@ class PackageContractTest(unittest.TestCase):
                 validate_archive(
                     self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
                 )
+
+    def test_wasm_metadata_rejects_llvm_bitcode(self) -> None:
+        self.assertFalse(_architecture_matches("wasm32", "LLVM IR bitcode"))
+        self.assertTrue(_architecture_matches("wasm32", "WebAssembly (wasm) binary module"))
 
 
 if __name__ == "__main__":

@@ -12,6 +12,12 @@ handles native and cross-platform CMake generation. Wfloat's packaging layer
 then normalizes only the observable consumer contract: stable headers and
 libraries, one archive root, immutable identity, and retained notices.
 
+Microsoft's Release WebAssembly configuration normally adds `-flto` even when
+its general LTO option is off. Wfloat's WebAssembly adapter supplies a later
+Release `-fno-lto` compiler flag because Sherpa must perform the final
+Emscripten link. Package validation extracts an archive member and rejects LLVM
+bitcode in place of a WebAssembly object.
+
 The target catalog is deliberately broader than Wfloat's publication set. A
 target states build capability and validation expectations; it does not imply
 that a consumer needs the package or that Wfloat has approved publication.

@@ -479,6 +479,8 @@ def _build_wasm(
             "--disable_rtti",
             "--skip_tests",
             "--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF",
+            "--cmake_extra_defines=CMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -fno-lto",
+            "--cmake_extra_defines=CMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -fno-lto",
         ]
     )
     if target["features"]["simd"]:
