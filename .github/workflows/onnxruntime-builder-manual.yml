@@ -1,0 +1,175 @@
+name: ONNX Runtime builder manual target
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Declarative target identifier
+        required: true
+        type: choice
+        options:
+          - android
+          - android-arm64-v8a-static_lib
+          - android-armeabi-v7a-static_lib
+          - android-x86-static_lib
+          - android-x86_64-static_lib
+          - ios-static-xcframework
+          - ios-shared-xcframework
+          - macos-static-xcframework
+          - macos-shared-xcframework
+          - visionos-static-xcframework
+          - visionos-shared-xcframework
+          - osx-arm64
+          - osx-arm64-static_lib
+          - osx-x86_64
+          - osx-x86_64-static_lib
+          - osx-universal2
+          - osx-universal2-static_lib
+          - linux-arm
+          - linux-arm-static_lib
+          - linux-aarch64-glibc2_17
+          - linux-aarch64-glibc2_28
+          - linux-aarch64-static_lib-glibc2_17
+          - linux-aarch64-static_lib-glibc2_28
+          - linux-x64-glibc2_17
+          - linux-x64-glibc2_28
+          - linux-x64-static_lib-glibc2_17
+          - linux-x64-static_lib-glibc2_28
+          - linux-riscv64-glibc2_17
+          - linux-riscv64-static_lib
+          - linux-x64-gpu_cuda12
+          - linux-x64-gpu_cuda13
+          - linux-aarch64-gpu_cuda12
+          - linux-aarch64-gpu_cuda13
+          - linux-x64-rocm
+          - win-x86-md
+          - win-x86-mt
+          - win-x86-static_lib-md
+          - win-x86-static_lib-mt
+          - win-x64-md
+          - win-x64-mt
+          - win-x64-static_lib-md
+          - win-x64-static_lib-mt
+          - win-arm64-md
+          - win-arm64-mt
+          - win-arm64-static_lib-md
+          - win-arm64-static_lib-mt
+          - win-arm64x
+          - win-x64-gpu_cuda12
+          - win-x64-gpu_cuda13
+          - win-x64-directml
+          - wasm-static_lib
+          - wasm-static_lib-simd
+          - wasm-static_lib-threads
+          - wasm-static_lib-simd-threads
+          - ohos-arm64-v8a
+          - ohos-armeabi-v7a
+          - ohos-x86_64
+      version:
+        description: Exact ONNX Runtime version
+        required: true
+        default: "1.29.0"
+        type: string
+      source_ref:
+        description: Optional full Microsoft commit (empty uses the exact version tag)
+        required: false
+        type: string
+      jobs:
+        description: Bounded parallel build jobs
+        required: true
+        default: "4"
+        type: string
+      runner:
+        description: 'JSON runner label or labels, e.g. "macos-15" or ["self-hosted","linux","x64","cuda12"]'
+        required: true
+        default: '"ubuntu-24.04"'
+        type: string
+      skip_microsoft_tests:
+        description: Report and skip applicable Microsoft tests
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build_target:
+    name: Build ${{ inputs.target }}
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux CPU build tools
+        if: runner.os == 'Linux' && !contains(inputs.runner, 'self-hosted')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - uses: actions/setup-java@v5
+        if: startsWith(inputs.target, 'android')
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+        if: startsWith(inputs.target, 'android')
+
+      - name: Install cataloged Android NDK
+        if: startsWith(inputs.target, 'android')
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-35" "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/26.1.10909125" >> "${GITHUB_ENV}"
+
+      - name: Show resolved target
+        shell: bash
+        run: python tools/onnxruntime-build/ort-builder list targets --json | python -m json.tool > /dev/null
+
+      - name: Build and validate through the public command
+        shell: bash
+        env:
+          TARGET: ${{ inputs.target }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          JOBS: ${{ inputs.jobs }}
+          SKIP_TESTS: ${{ inputs.skip_microsoft_tests }}
+        run: |
+          args=(build "${TARGET}" --version "${VERSION}" --jobs "${JOBS}")
+          if [[ -n "${SOURCE_REF}" ]]; then
+            args+=(--source-ref "${SOURCE_REF}")
+          fi
+          if [[ "${SKIP_TESTS}" == "true" ]]; then
+            args+=(--skip-tests)
+          fi
+          python tools/onnxruntime-build/ort-builder "${args[@]}"
+
+      - name: Revalidate the workflow artifact
+        shell: bash
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          if [[ "${TARGET}" == wasm-* ]]; then
+            emsdk_env=$(find tools/onnxruntime-build/.cache/sources -name emsdk_env.sh -print -quit)
+            test -n "${emsdk_env}"
+            source "${emsdk_env}"
+          fi
+          archive=$(find tools/onnxruntime-build/.out -maxdepth 1 -name '*.zip' -print -quit)
+          test -n "${archive}"
+          python tools/onnxruntime-build/ort-builder validate "${TARGET}" "${archive}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: onnxruntime-${{ inputs.target }}-${{ github.run_id }}
+          path: tools/onnxruntime-build/.out/*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import stat
+import tempfile
+import unittest
+import zipfile
+import plistlib
+from pathlib import Path
+
+from onnxruntime_builder.catalog import Catalog
+from onnxruntime_builder.validate import ValidationError, validate_archive
+
+
+BUILDER = "0123456789ab"
+
+
+def _write_member(archive: zipfile.ZipFile, name: str, data: bytes = b"fixture\n") -> None:
+    archive.writestr(name, data)
+
+
+def _standard_fixture(path: Path, target: dict, *, notice: bool = True, extra_top: bool = False) -> None:
+    top = path.stem
+    with zipfile.ZipFile(path, "w") as archive:
+        _write_member(archive, f"{top}/LICENSE")
+        if notice:
+            _write_member(archive, f"{top}/ThirdPartyNotices.txt")
+        headers = target["package"]["headers_dir"]
+        _write_member(archive, f"{top}/{headers}/onnxruntime_c_api.h")
+        _write_member(archive, f"{top}/{headers}/onnxruntime_cxx_api.h")
+        for library in target["package"]["required_libraries"]:
+            _write_member(archive, f"{top}/{library}")
+        if extra_top:
+            _write_member(archive, "other/file")
+
+
+class PackageContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.catalog = Catalog.load()
+
+    def test_valid_standard_contract(self) -> None:
+        target = self.catalog.target("linux-x64-glibc2_17")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-linux-x64-glibc2_17-1.29.0-{BUILDER}.zip"
+            _standard_fixture(archive, target)
+            messages = validate_archive(
+                self.catalog,
+                target["id"],
+                archive,
+                run_smoke=False,
+                inspect_metadata=False,
+            )
+        self.assertEqual(len(messages), 3)
+        self.assertTrue(messages[0].startswith("PASS"))
+
+    def test_missing_notice_is_rejected(self) -> None:
+        target = self.catalog.target("wasm-static_lib-simd")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-wasm-static_lib-simd-1.29.0-{BUILDER}.zip"
+            _standard_fixture(archive, target, notice=False)
+            with self.assertRaisesRegex(ValidationError, "ThirdPartyNotices"):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+    def test_multiple_top_level_directories_are_rejected(self) -> None:
+        target = self.catalog.target("linux-x64-glibc2_28")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-linux-x64-glibc2_28-1.29.0-{BUILDER}.zip"
+            _standard_fixture(archive, target, extra_top=True)
+            with self.assertRaisesRegex(ValidationError, "exactly top-level"):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+    def test_path_traversal_is_rejected(self) -> None:
+        target = self.catalog.target("linux-x64-static_lib-glibc2_17")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-linux-x64-static_lib-glibc2_17-1.29.0-{BUILDER}.zip"
+            with zipfile.ZipFile(archive, "w") as output:
+                _write_member(output, f"{archive.stem}/../escape")
+            with self.assertRaisesRegex(ValidationError, "unsafe archive member"):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+    def test_escaping_symlink_is_rejected(self) -> None:
+        target = self.catalog.target("osx-arm64")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-osx-arm64-1.29.0-{BUILDER}.zip"
+            with zipfile.ZipFile(archive, "w") as output:
+                info = zipfile.ZipInfo(f"{archive.stem}/lib/libonnxruntime.dylib")
+                info.create_system = 3
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                output.writestr(info, "../../../escape")
+            with self.assertRaisesRegex(ValidationError, "symlink escapes"):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+    def test_android_requires_all_four_abis(self) -> None:
+        target = self.catalog.target("android")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-android-1.29.0-{BUILDER}.zip"
+            top = archive.stem
+            with zipfile.ZipFile(archive, "w") as output:
+                _write_member(output, f"{top}/LICENSE")
+                _write_member(output, f"{top}/ThirdPartyNotices.txt")
+                _write_member(output, f"{top}/headers/onnxruntime_c_api.h")
+                _write_member(output, f"{top}/headers/onnxruntime_cxx_api.h")
+                for abi in target["architectures"][:-1]:
+                    _write_member(output, f"{top}/jni/{abi}/libonnxruntime.so")
+            with self.assertRaisesRegex(ValidationError, target["architectures"][-1]):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+    def test_xcframework_slice_contract(self) -> None:
+        target = self.catalog.target("ios-static-xcframework")
+        entries = [
+            {
+                "LibraryIdentifier": "ios-arm64",
+                "LibraryPath": "onnxruntime.framework",
+                "SupportedArchitectures": ["arm64"],
+                "SupportedPlatform": "ios",
+            },
+            {
+                "LibraryIdentifier": "ios-arm64_x86_64-simulator",
+                "LibraryPath": "onnxruntime.framework",
+                "SupportedArchitectures": ["arm64", "x86_64"],
+                "SupportedPlatform": "ios",
+                "SupportedPlatformVariant": "simulator",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-ios-static-xcframework-1.29.0-{BUILDER}.zip"
+            top = archive.stem
+            bundle = f"{top}/onnxruntime.xcframework"
+            with zipfile.ZipFile(archive, "w") as output:
+                _write_member(output, f"{top}/LICENSE")
+                _write_member(output, f"{top}/ThirdPartyNotices.txt")
+                _write_member(output, f"{bundle}/Info.plist", plistlib.dumps({"AvailableLibraries": entries}))
+                for entry in entries:
+                    framework = f"{bundle}/{entry['LibraryIdentifier']}/onnxruntime.framework"
+                    _write_member(output, f"{framework}/onnxruntime")
+                    _write_member(output, f"{framework}/Headers/onnxruntime_c_api.h")
+                    _write_member(output, f"{framework}/Headers/onnxruntime_cxx_api.h")
+            messages = validate_archive(
+                self.catalog,
+                target["id"],
+                archive,
+                run_smoke=False,
+                inspect_metadata=False,
+            )
+        self.assertEqual(len(messages), 3)
+
+    def test_filename_builder_must_be_lowercase_twelve_hex(self) -> None:
+        target = self.catalog.target("wasm-static_lib")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "onnxruntime-wasm-static_lib-1.29.0-NOTACOMMIT12.zip"
+            _standard_fixture(archive, target)
+            with self.assertRaisesRegex(ValidationError, "12 lowercase hexadecimal"):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()

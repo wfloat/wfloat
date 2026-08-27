@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "default_onnxruntime_version": "1.29.0",
+  "source_repository": "https://github.com/microsoft/onnxruntime.git",
+  "profiles": {
+    "android_shared": {
+      "platform": "android",
+      "host": "linux",
+      "driver": "android",
+      "linkage": "shared",
+      "providers": ["cpu", "nnapi", "xnnpack"],
+      "minimum_platform": "android-21",
+      "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "26.1.10909125"},
+      "package": {"kind": "android", "headers_dir": "headers", "library": "libonnxruntime.so"},
+      "validation": {"format": "elf", "test_policy": "cross"}
+    },
+    "android_static": {
+      "platform": "android",
+      "host": "linux",
+      "driver": "android",
+      "linkage": "static",
+      "providers": ["cpu", "nnapi", "xnnpack"],
+      "minimum_platform": "android-21",
+      "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "26.1.10909125"},
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.a"]},
+      "validation": {"format": "elf-archive", "test_policy": "cross"}
+    },
+    "apple_xcframework_static": {
+      "platform": "apple",
+      "host": "macos",
+      "driver": "apple_xcframework",
+      "linkage": "static",
+      "providers": ["cpu", "coreml", "xnnpack"],
+      "package": {"kind": "xcframework", "bundle": "onnxruntime.xcframework"},
+      "validation": {"format": "mach-o-xcframework", "test_policy": "cross"}
+    },
+    "apple_xcframework_shared": {
+      "platform": "apple",
+      "host": "macos",
+      "driver": "apple_xcframework",
+      "linkage": "shared",
+      "providers": ["cpu", "coreml", "xnnpack"],
+      "package": {"kind": "xcframework", "bundle": "onnxruntime.xcframework"},
+      "validation": {"format": "mach-o-xcframework", "test_policy": "cross"}
+    },
+    "macos_shared": {
+      "platform": "macos",
+      "host": "macos",
+      "driver": "macos_traditional",
+      "linkage": "shared",
+      "providers": ["cpu", "coreml", "xnnpack"],
+      "minimum_platform": "11.0",
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.dylib"]},
+      "validation": {"format": "mach-o", "test_policy": "native"}
+    },
+    "macos_static": {
+      "platform": "macos",
+      "host": "macos",
+      "driver": "macos_traditional",
+      "linkage": "static",
+      "providers": ["cpu", "coreml", "xnnpack"],
+      "minimum_platform": "11.0",
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.a"]},
+      "validation": {"format": "mach-o-archive", "test_policy": "native"}
+    },
+    "linux_shared": {
+      "platform": "linux",
+      "host": "linux",
+      "driver": "linux",
+      "linkage": "shared",
+      "providers": ["cpu"],
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.so"]},
+      "validation": {"format": "elf", "test_policy": "native"}
+    },
+    "linux_static": {
+      "platform": "linux",
+      "host": "linux",
+      "driver": "linux",
+      "linkage": "static",
+      "providers": ["cpu"],
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.a"]},
+      "validation": {"format": "elf-archive", "test_policy": "native"}
+    },
+    "linux_cuda": {
+      "platform": "linux",
+      "host": "linux",
+      "driver": "linux",
+      "linkage": "shared",
+      "providers": ["cpu", "cuda"],
+      "package": {
+        "kind": "standard",
+        "headers_dir": "include",
+        "required_libraries": ["lib/libonnxruntime.so", "lib/libonnxruntime_providers_shared.so", "lib/libonnxruntime_providers_cuda.so"]
+      },
+      "validation": {"format": "elf", "test_policy": "gpu-compile"}
+    },
+    "linux_rocm": {
+      "platform": "linux",
+      "host": "linux",
+      "driver": "linux",
+      "linkage": "shared",
+      "providers": ["cpu", "rocm"],
+      "architecture": "x86_64",
+      "toolchain": {
+        "compatibility": "requires an ONNX Runtime revision exposing the ROCm execution provider and --use_rocm",
+        "required_env": ["ROCM_HOME"]
+      },
+      "package": {
+        "kind": "standard",
+        "headers_dir": "include",
+        "required_libraries": ["lib/libonnxruntime.so", "lib/libonnxruntime_providers_shared.so", "lib/libonnxruntime_providers_rocm.so"]
+      },
+      "validation": {"format": "elf", "test_policy": "gpu-compile"}
+    },
+    "windows_shared": {
+      "platform": "windows",
+      "host": "windows",
+      "driver": "windows",
+      "linkage": "shared",
+      "providers": ["cpu"],
+      "package": {"kind": "windows", "headers_dir": "include", "required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib"]},
+      "validation": {"format": "pe", "test_policy": "native"}
+    },
+    "windows_static": {
+      "platform": "windows",
+      "host": "windows",
+      "driver": "windows",
+      "linkage": "static",
+      "providers": ["cpu"],
+      "package": {
+        "kind": "windows-static",
+        "headers_dir": "include",
+        "required_libraries": ["lib/onnxruntime_session.lib", "lib/onnxruntime_common.lib", "lib/onnxruntime_graph.lib", "lib/onnxruntime_framework.lib", "lib/onnxruntime_providers.lib"]
+      },
+      "validation": {"format": "coff-archive", "test_policy": "native"}
+    },
+    "windows_arm64x": {
+      "platform": "windows",
+      "host": "windows",
+      "driver": "windows_arm64x",
+      "linkage": "shared",
+      "providers": ["cpu"],
+      "architectures": ["arm64", "arm64ec"],
+      "crt": "md",
+      "package": {"kind": "windows", "headers_dir": "include", "required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib"]},
+      "validation": {"format": "pe-arm64x", "test_policy": "cross"}
+    },
+    "wasm_static": {
+      "platform": "wasm",
+      "host": "linux",
+      "driver": "wasm",
+      "architecture": "wasm32",
+      "linkage": "static",
+      "providers": ["cpu"],
+      "toolchain": {"emsdk": "4.0.23", "lto": false},
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.a"]},
+      "validation": {"format": "wasm-archive", "test_policy": "cross"}
+    },
+    "ohos_shared": {
+      "platform": "ohos",
+      "host": "linux",
+      "driver": "ohos",
+      "linkage": "shared",
+      "providers": ["cpu"],
+      "minimum_platform": "ohos-12",
+      "toolchain": {"api": 12, "required_env": ["OHOS_NDK_HOME"]},
+      "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.so"]},
+      "validation": {"format": "elf", "test_policy": "cross"}
+    }
+  },
+  "targets": {
+    "android": {"profile": "android_shared", "architectures": ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]},
+    "android-arm64-v8a-static_lib": {"profile": "android_static", "architecture": "arm64-v8a"},
+    "android-armeabi-v7a-static_lib": {"profile": "android_static", "architecture": "armeabi-v7a"},
+    "android-x86-static_lib": {"profile": "android_static", "architecture": "x86"},
+    "android-x86_64-static_lib": {"profile": "android_static", "architecture": "x86_64"},
+
+    "ios-static-xcframework": {
+      "profile": "apple_xcframework_static",
+      "slices": {"iphoneos": ["arm64"], "iphonesimulator": ["arm64", "x86_64"]},
+      "minimum_platforms": {"iphoneos": "13.0", "iphonesimulator": "13.0"}
+    },
+    "ios-shared-xcframework": {
+      "profile": "apple_xcframework_shared",
+      "slices": {"iphoneos": ["arm64"], "iphonesimulator": ["arm64", "x86_64"]},
+      "minimum_platforms": {"iphoneos": "13.0", "iphonesimulator": "13.0"}
+    },
+    "macos-static-xcframework": {
+      "profile": "apple_xcframework_static",
+      "slices": {"macosx": ["arm64", "x86_64"]},
+      "minimum_platforms": {"macosx": "11.0"}
+    },
+    "macos-shared-xcframework": {
+      "profile": "apple_xcframework_shared",
+      "slices": {"macosx": ["arm64", "x86_64"]},
+      "minimum_platforms": {"macosx": "11.0"}
+    },
+    "visionos-static-xcframework": {
+      "profile": "apple_xcframework_static",
+      "slices": {"xros": ["arm64"], "xrsimulator": ["arm64"]},
+      "minimum_platforms": {"xros": "1.0", "xrsimulator": "1.0"}
+    },
+    "visionos-shared-xcframework": {
+      "profile": "apple_xcframework_shared",
+      "slices": {"xros": ["arm64"], "xrsimulator": ["arm64"]},
+      "minimum_platforms": {"xros": "1.0", "xrsimulator": "1.0"}
+    },
+    "osx-arm64": {"profile": "macos_shared", "architecture": "arm64"},
+    "osx-arm64-static_lib": {"profile": "macos_static", "architecture": "arm64"},
+    "osx-x86_64": {"profile": "macos_shared", "architecture": "x86_64"},
+    "osx-x86_64-static_lib": {"profile": "macos_static", "architecture": "x86_64"},
+    "osx-universal2": {"profile": "macos_shared", "architectures": ["arm64", "x86_64"]},
+    "osx-universal2-static_lib": {"profile": "macos_static", "architectures": ["arm64", "x86_64"]},
+
+    "linux-arm": {
+      "profile": "linux_shared",
+      "architecture": "arm",
+      "toolchain": {"required_env": ["CC", "CXX", "AR", "WFLOAT_LINUX_SYSROOT", "WFLOAT_PROTOC"]},
+      "validation": {"format": "elf", "test_policy": "cross"}
+    },
+    "linux-arm-static_lib": {
+      "profile": "linux_static",
+      "architecture": "arm",
+      "toolchain": {"required_env": ["CC", "CXX", "AR", "WFLOAT_LINUX_SYSROOT", "WFLOAT_PROTOC"]},
+      "validation": {"format": "elf-archive", "test_policy": "cross"}
+    },
+    "linux-aarch64-glibc2_17": {
+      "profile": "linux_shared", "architecture": "aarch64",
+      "toolchain": {"glibc": "2.17", "build_environment": "quay.io/pypa/manylinux2014_aarch64", "native_only": true}
+    },
+    "linux-aarch64-glibc2_28": {
+      "profile": "linux_shared", "architecture": "aarch64",
+      "toolchain": {"glibc": "2.28", "build_environment": "quay.io/pypa/manylinux_2_28_aarch64", "native_only": true}
+    },
+    "linux-aarch64-static_lib-glibc2_17": {
+      "profile": "linux_static", "architecture": "aarch64",
+      "toolchain": {"glibc": "2.17", "build_environment": "quay.io/pypa/manylinux2014_aarch64", "native_only": true}
+    },
+    "linux-aarch64-static_lib-glibc2_28": {
+      "profile": "linux_static", "architecture": "aarch64",
+      "toolchain": {"glibc": "2.28", "build_environment": "quay.io/pypa/manylinux_2_28_aarch64", "native_only": true}
+    },
+    "linux-x64-glibc2_17": {
+      "profile": "linux_shared", "architecture": "x86_64",
+      "toolchain": {"glibc": "2.17", "build_environment": "quay.io/pypa/manylinux2014_x86_64", "native_only": true}
+    },
+    "linux-x64-glibc2_28": {
+      "profile": "linux_shared", "architecture": "x86_64",
+      "toolchain": {"glibc": "2.28", "build_environment": "quay.io/pypa/manylinux_2_28_x86_64", "native_only": true}
+    },
+    "linux-x64-static_lib-glibc2_17": {
+      "profile": "linux_static", "architecture": "x86_64",
+      "toolchain": {"glibc": "2.17", "build_environment": "quay.io/pypa/manylinux2014_x86_64", "native_only": true}
+    },
+    "linux-x64-static_lib-glibc2_28": {
+      "profile": "linux_static", "architecture": "x86_64",
+      "toolchain": {"glibc": "2.28", "build_environment": "quay.io/pypa/manylinux_2_28_x86_64", "native_only": true}
+    },
+    "linux-riscv64-glibc2_17": {
+      "profile": "linux_shared", "architecture": "riscv64",
+      "toolchain": {"glibc": "2.17", "required_env": ["RISCV_TOOLCHAIN_ROOT", "WFLOAT_PROTOC"]},
+      "validation": {"format": "elf", "test_policy": "cross"}
+    },
+    "linux-riscv64-static_lib": {
+      "profile": "linux_static", "architecture": "riscv64",
+      "toolchain": {"required_env": ["RISCV_TOOLCHAIN_ROOT", "WFLOAT_PROTOC"]},
+      "validation": {"format": "elf-archive", "test_policy": "cross"}
+    },
+
+    "linux-x64-gpu_cuda12": {
+      "profile": "linux_cuda", "architecture": "x86_64",
+      "toolchain": {"cuda": "12.8", "cudnn": "9.10.2", "tensorrt": false, "required_env": ["CUDA_HOME", "CUDNN_HOME"]}
+    },
+    "linux-x64-gpu_cuda13": {
+      "profile": "linux_cuda", "architecture": "x86_64",
+      "toolchain": {"cuda": "13.0", "cudnn": "9.14.0", "tensorrt": false, "required_env": ["CUDA_HOME", "CUDNN_HOME"]}
+    },
+    "linux-aarch64-gpu_cuda12": {
+      "profile": "linux_cuda", "architecture": "aarch64",
+      "toolchain": {"cuda": "12.8", "cudnn": "9.10.2", "tensorrt": false, "native_only": true, "required_env": ["CUDA_HOME", "CUDNN_HOME"]}
+    },
+    "linux-aarch64-gpu_cuda13": {
+      "profile": "linux_cuda", "architecture": "aarch64",
+      "toolchain": {"cuda": "13.0", "cudnn": "9.14.0", "tensorrt": false, "native_only": true, "required_env": ["CUDA_HOME", "CUDNN_HOME"]}
+    },
+    "linux-x64-rocm": {"profile": "linux_rocm"},
+
+    "win-x86-md": {"profile": "windows_shared", "architecture": "x86", "crt": "md"},
+    "win-x86-mt": {"profile": "windows_shared", "architecture": "x86", "crt": "mt"},
+    "win-x86-static_lib-md": {"profile": "windows_static", "architecture": "x86", "crt": "md"},
+    "win-x86-static_lib-mt": {"profile": "windows_static", "architecture": "x86", "crt": "mt"},
+    "win-x64-md": {"profile": "windows_shared", "architecture": "x64", "crt": "md"},
+    "win-x64-mt": {"profile": "windows_shared", "architecture": "x64", "crt": "mt"},
+    "win-x64-static_lib-md": {"profile": "windows_static", "architecture": "x64", "crt": "md"},
+    "win-x64-static_lib-mt": {"profile": "windows_static", "architecture": "x64", "crt": "mt"},
+    "win-arm64-md": {"profile": "windows_shared", "architecture": "arm64", "crt": "md"},
+    "win-arm64-mt": {"profile": "windows_shared", "architecture": "arm64", "crt": "mt"},
+    "win-arm64-static_lib-md": {"profile": "windows_static", "architecture": "arm64", "crt": "md"},
+    "win-arm64-static_lib-mt": {"profile": "windows_static", "architecture": "arm64", "crt": "mt"},
+    "win-arm64x": {"profile": "windows_arm64x"},
+    "win-x64-gpu_cuda12": {
+      "profile": "windows_shared", "architecture": "x64", "crt": "md", "providers": ["cpu", "cuda"],
+      "toolchain": {"cuda": "12.8", "cudnn": "9.10.2", "tensorrt": false, "required_env": ["CUDA_HOME", "CUDNN_HOME"]},
+      "package": {"required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib", "lib/onnxruntime_providers_shared.dll", "lib/onnxruntime_providers_shared.lib", "lib/onnxruntime_providers_cuda.dll", "lib/onnxruntime_providers_cuda.lib"]},
+      "validation": {"format": "pe", "test_policy": "gpu-compile"}
+    },
+    "win-x64-gpu_cuda13": {
+      "profile": "windows_shared", "architecture": "x64", "crt": "md", "providers": ["cpu", "cuda"],
+      "toolchain": {"cuda": "13.0", "cudnn": "9.14.0", "tensorrt": false, "required_env": ["CUDA_HOME", "CUDNN_HOME"]},
+      "package": {"required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib", "lib/onnxruntime_providers_shared.dll", "lib/onnxruntime_providers_shared.lib", "lib/onnxruntime_providers_cuda.dll", "lib/onnxruntime_providers_cuda.lib"]},
+      "validation": {"format": "pe", "test_policy": "gpu-compile"}
+    },
+    "win-x64-directml": {
+      "profile": "windows_shared", "architecture": "x64", "crt": "md", "providers": ["cpu", "directml"],
+      "toolchain": {"directml": "source-pinned by the selected ONNX Runtime revision"},
+      "package": {"required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib", "lib/DirectML.dll"]},
+      "validation": {"format": "pe", "test_policy": "gpu-compile"}
+    },
+
+    "wasm-static_lib": {"profile": "wasm_static", "features": {"simd": false, "threads": false}},
+    "wasm-static_lib-simd": {"profile": "wasm_static", "features": {"simd": true, "threads": false}},
+    "wasm-static_lib-threads": {"profile": "wasm_static", "features": {"simd": false, "threads": true}},
+    "wasm-static_lib-simd-threads": {"profile": "wasm_static", "features": {"simd": true, "threads": true}},
+
+    "ohos-arm64-v8a": {"profile": "ohos_shared", "architecture": "arm64-v8a"},
+    "ohos-armeabi-v7a": {"profile": "ohos_shared", "architecture": "armeabi-v7a"},
+    "ohos-x86_64": {"profile": "ohos_shared", "architecture": "x86_64"}
+  }
+}

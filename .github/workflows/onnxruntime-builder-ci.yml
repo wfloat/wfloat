@@ -1,0 +1,91 @@
+name: ONNX Runtime builder CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/**"
+      - ".github/workflows/onnxruntime-builder-ci.yml"
+      - ".github/workflows/onnxruntime-builder-manual.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/**"
+      - ".github/workflows/onnxruntime-builder-ci.yml"
+      - ".github/workflows/onnxruntime-builder-manual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onnxruntime-builder-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package_contracts:
+    name: Command and package contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run command and validator tests
+        working-directory: tools/onnxruntime-build
+        run: python -m unittest discover -s tests -v
+
+      - name: Resolve every target
+        run: |
+          python tools/onnxruntime-build/ort-builder list targets --json > /tmp/onnxruntime-targets.json
+          python -m json.tool /tmp/onnxruntime-targets.json > /dev/null
+
+  wasm_smoke:
+    name: WebAssembly SIMD package smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Build through the public command
+        run: |
+          python tools/onnxruntime-build/ort-builder build \
+            wasm-static_lib-simd \
+            --version 1.29.0 \
+            --jobs 4
+
+      - name: Validate through the public command
+        run: |
+          emsdk_env=$(find tools/onnxruntime-build/.cache/sources -name emsdk_env.sh -print -quit)
+          test -n "${emsdk_env}"
+          source "${emsdk_env}"
+          archive=$(find tools/onnxruntime-build/.out -maxdepth 1 -name '*.zip' -print -quit)
+          test -n "${archive}"
+          python tools/onnxruntime-build/ort-builder validate wasm-static_lib-simd "${archive}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: onnxruntime-wasm-static-lib-simd-smoke
+          path: tools/onnxruntime-build/.out/*.zip
+          if-no-files-found: error
+          retention-days: 7
