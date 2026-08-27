@@ -25,10 +25,11 @@ derivative builder.
 
 ## Build identity
 
-By default the builder fetches the exact `v<version>` tag from
-`microsoft/onnxruntime`, including Microsoft's required submodules. A caller may
-instead supply a full 40-character Microsoft commit. The build prints the
-resolved Microsoft commit.
+The builder fetches the exact Microsoft commit mapped from `<version>` in
+`targets.json`, including Microsoft's required submodules. A caller cannot
+override that revision. An existing checkout is accepted only when its origin
+is Microsoft and its `HEAD` equals the committed catalog pin. The build prints
+the resolved Microsoft commit.
 
 The archive name contains the first 12 hexadecimal characters of the committed
 Wfloat revision containing the builder. A real build refuses dirty builder or

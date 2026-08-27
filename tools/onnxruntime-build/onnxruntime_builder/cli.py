@@ -25,7 +25,6 @@ def _parser(catalog: Catalog) -> argparse.ArgumentParser:
         prog="ort-builder",
         description="Build and validate Wfloat ONNX Runtime C/C++ artifacts.",
     )
-    parser.add_argument("--catalog", type=Path, help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command", required=True)
 
     list_parser = commands.add_parser("list", help="List declarative build inputs")
@@ -36,9 +35,16 @@ def _parser(catalog: Catalog) -> argparse.ArgumentParser:
 
     build_parser = commands.add_parser("build", help="Build and validate one exact ONNX Runtime target")
     build_parser.add_argument("target", choices=catalog.target_ids)
-    build_parser.add_argument("--version", default=catalog.default_version)
-    build_parser.add_argument("--source-ref", help="Explicit full Microsoft ONNX Runtime commit")
-    build_parser.add_argument("--source-dir", type=Path, help="Use an existing Microsoft ONNX Runtime checkout")
+    build_parser.add_argument(
+        "--version",
+        default=catalog.default_version,
+        help=f"Cataloged ONNX Runtime version (default: {catalog.default_version})",
+    )
+    build_parser.add_argument(
+        "--source-dir",
+        type=Path,
+        help="Use an existing Microsoft checkout at the cataloged commit",
+    )
     build_parser.add_argument("--jobs", type=_positive_integer, default=max(1, min(8, os.cpu_count() or 1)))
     build_parser.add_argument("--cache-dir", type=Path, default=BUILDER_ROOT / ".cache" / "sources")
     build_parser.add_argument("--work-dir", type=Path, default=BUILDER_ROOT / ".build")
@@ -52,7 +58,7 @@ def _parser(catalog: Catalog) -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--source-dir",
         type=Path,
-        help="Microsoft ONNX Runtime checkout used to locate cross-toolchain validators",
+        help="Pinned Microsoft checkout used to locate cross-toolchain validators",
     )
     validate_parser.add_argument("--skip-smoke", action="store_true", help="Skip the compile/link C API smoke test")
     return parser
@@ -84,11 +90,8 @@ def _list_targets(catalog: Catalog, platform: str | None, as_json: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    preliminary = argparse.ArgumentParser(add_help=False)
-    preliminary.add_argument("--catalog", type=Path)
-    known, _ = preliminary.parse_known_args(argv)
     try:
-        catalog = Catalog.load(known.catalog)
+        catalog = Catalog.load()
         args = _parser(catalog).parse_args(argv)
         if args.command == "list":
             return _list_targets(catalog, args.platform, args.json)
@@ -101,7 +104,6 @@ def main(argv: list[str] | None = None) -> int:
                 cache_dir=args.cache_dir,
                 work_dir=args.work_dir,
                 output_dir=args.output_dir,
-                source_ref=args.source_ref,
                 source_dir=args.source_dir,
                 skip_tests=args.skip_tests,
                 plan=args.plan,

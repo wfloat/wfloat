@@ -82,6 +82,23 @@ class CatalogTest(unittest.TestCase):
             self.catalog.source_repository,
             "https://github.com/microsoft/onnxruntime.git",
         )
+        self.assertEqual(
+            self.catalog.source_revision("1.29.0"),
+            "2e2543fbe9fae542f921d47a72d21d5a4ef0b710",
+        )
+
+    def test_visionos_provider_contract_matches_microsoft_framework_defaults(self) -> None:
+        for target_id in ["visionos-static-xcframework", "visionos-shared-xcframework"]:
+            with self.subTest(target=target_id):
+                self.assertEqual(self.catalog.target(target_id)["providers"], ["cpu", "coreml"])
+
+    def test_android_ndk_matches_microsoft_workflows(self) -> None:
+        for target_id in ["android", "android-arm64-v8a-static_lib"]:
+            with self.subTest(target=target_id):
+                self.assertEqual(
+                    self.catalog.target(target_id)["toolchain"]["ndk"],
+                    "28.0.13004108",
+                )
 
     def test_ios_consumer_compatibility_is_explicit(self) -> None:
         target = self.catalog.target("ios-static-xcframework")
@@ -135,6 +152,15 @@ class CatalogTest(unittest.TestCase):
             self.assertIn("permissions:\n  contents: read", workflow)
             self.assertNotIn("id-token: write", workflow)
             self.assertNotIn("publish", workflow.lower())
+
+    def test_manual_workflow_has_no_arbitrary_source_override(self) -> None:
+        repository = Path(__file__).resolve().parents[3]
+        workflow = (repository / ".github/workflows/onnxruntime-builder-manual.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("source_ref", workflow)
+        self.assertNotIn("--source-ref", workflow)
+        self.assertIn("ndk;28.0.13004108", workflow)
 
 
 if __name__ == "__main__":

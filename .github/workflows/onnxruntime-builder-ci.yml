@@ -76,12 +76,13 @@ jobs:
 
       - name: Validate through the public command
         run: |
-          emsdk_env=$(find tools/onnxruntime-build/.cache/sources -name emsdk_env.sh -print -quit)
-          test -n "${emsdk_env}"
-          source "${emsdk_env}"
+          source_dir=tools/onnxruntime-build/.cache/sources/onnxruntime-1.29.0
+          test -d "${source_dir}"
+          source "${source_dir}/cmake/external/emsdk/emsdk_env.sh"
           archive=$(find tools/onnxruntime-build/.out -maxdepth 1 -name '*.zip' -print -quit)
           test -n "${archive}"
-          python tools/onnxruntime-build/ort-builder validate wasm-static_lib-simd "${archive}"
+          python tools/onnxruntime-build/ort-builder validate \
+            wasm-static_lib-simd "${archive}" --source-dir "${source_dir}"
 
       - uses: actions/upload-artifact@v7
         with:

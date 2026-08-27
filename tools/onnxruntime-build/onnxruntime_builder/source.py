@@ -54,30 +54,31 @@ def verify_microsoft_source(source_dir: Path) -> str:
 def acquire_source(
     cache_dir: Path,
     version: str,
-    source_ref: str | None,
+    source_revision: str,
     jobs: int,
     source_dir: Path | None = None,
 ) -> tuple[Path, str]:
     if not VERSION_RE.fullmatch(version) or version != version.lower():
         raise SourceError(f"ONNX Runtime version must be an exact version such as 1.29.0; got {version!r}")
-    if source_ref is not None and not FULL_COMMIT_RE.fullmatch(source_ref):
-        raise SourceError("--source-ref must be a full 40-character hexadecimal commit")
+    if not FULL_COMMIT_RE.fullmatch(source_revision) or source_revision != source_revision.lower():
+        raise SourceError("cataloged source revision must be a lowercase 40-character commit")
 
-    desired_ref = source_ref.lower() if source_ref else f"refs/tags/v{version}"
+    desired_ref = source_revision
     if source_dir is not None:
         resolved_dir = source_dir.resolve()
         commit = verify_microsoft_source(resolved_dir)
+        if commit != source_revision:
+            raise SourceError(
+                f"source checkout is {commit}, not cataloged commit {source_revision} for {version}"
+            )
         _run(["git", "fetch", "--depth", "1", "origin", desired_ref], cwd=resolved_dir)
         requested_commit = _run(
             ["git", "rev-parse", "FETCH_HEAD^{commit}"], cwd=resolved_dir, capture=True
         ).lower()
-        if source_ref and requested_commit != source_ref.lower():
+        if requested_commit != source_revision:
             raise SourceError(
-                f"Microsoft origin resolved {source_ref.lower()} as unexpected commit {requested_commit}"
+                f"Microsoft origin resolved cataloged commit {source_revision} as {requested_commit}"
             )
-        if commit != requested_commit:
-            description = source_ref.lower() if source_ref else f"tag v{version} ({requested_commit})"
-            raise SourceError(f"source checkout is {commit}, not requested {description}")
         _run(
             ["git", "submodule", "update", "--init", "--recursive", "--depth", "1", "--jobs", str(jobs)],
             cwd=resolved_dir,
@@ -86,17 +87,16 @@ def acquire_source(
 
     cache_dir = cache_dir.resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_key = source_ref.lower() if source_ref else version
-    destination = cache_dir / f"onnxruntime-{cache_key}"
+    destination = cache_dir / f"onnxruntime-{version}"
     if destination.exists():
         commit = verify_microsoft_source(destination)
         _run(["git", "fetch", "--depth", "1", "origin", desired_ref], cwd=destination)
         requested_commit = _run(
             ["git", "rev-parse", "FETCH_HEAD^{commit}"], cwd=destination, capture=True
         ).lower()
-        if source_ref and requested_commit != source_ref.lower():
+        if requested_commit != source_revision:
             raise SourceError(
-                f"Microsoft origin resolved {source_ref.lower()} as unexpected commit {requested_commit}"
+                f"Microsoft origin resolved cataloged commit {source_revision} as {requested_commit}"
             )
         if commit != requested_commit:
             raise SourceError(
@@ -110,6 +110,10 @@ def acquire_source(
         try:
             _run(["git", "fetch", "--depth", "1", "origin", desired_ref], cwd=temporary)
             commit = _run(["git", "rev-parse", "FETCH_HEAD^{commit}"], cwd=temporary, capture=True).lower()
+            if commit != source_revision:
+                raise SourceError(
+                    f"Microsoft origin resolved cataloged commit {source_revision} as {commit}"
+                )
             _run(["git", "checkout", "--detach", commit], cwd=temporary)
             temporary.rename(destination)
         except Exception:

@@ -10,6 +10,8 @@ from typing import Any
 BUILDER_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CATALOG_PATH = BUILDER_ROOT / "targets.json"
 TARGET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?$")
+FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class CatalogError(ValueError):
@@ -52,6 +54,18 @@ class Catalog:
     def source_repository(self) -> str:
         return self.data["source_repository"]
 
+    def source_revision(self, version: str) -> str:
+        if not VERSION_RE.fullmatch(version) or version != version.lower():
+            raise CatalogError(
+                f"ONNX Runtime version must be an exact version such as 1.29.0; got {version!r}"
+            )
+        try:
+            return self.data["source_revisions"][version]
+        except KeyError as error:
+            raise CatalogError(
+                f"ONNX Runtime version {version!r} has no committed source revision in {self.path}"
+            ) from error
+
     @property
     def target_ids(self) -> list[str]:
         return list(self.data["targets"])
@@ -80,6 +94,7 @@ class Catalog:
             "schema_version",
             "default_onnxruntime_version",
             "source_repository",
+            "source_revisions",
             "profiles",
             "targets",
         }
@@ -90,6 +105,18 @@ class Catalog:
             raise CatalogError(f"unsupported target catalog schema {self.data['schema_version']!r}")
         if self.data["source_repository"] != "https://github.com/microsoft/onnxruntime.git":
             raise CatalogError("source_repository must be Microsoft's ONNX Runtime repository")
+        revisions = self.data["source_revisions"]
+        if not isinstance(revisions, dict) or not revisions:
+            raise CatalogError("source_revisions must be a non-empty version-to-commit map")
+        for version, commit in revisions.items():
+            if not VERSION_RE.fullmatch(version) or version != version.lower():
+                raise CatalogError(f"invalid source revision version: {version!r}")
+            if not isinstance(commit, str) or not FULL_COMMIT_RE.fullmatch(commit):
+                raise CatalogError(
+                    f"source revision for {version} must be a lowercase 40-character commit"
+                )
+        if self.data["default_onnxruntime_version"] not in revisions:
+            raise CatalogError("default_onnxruntime_version must have a committed source revision")
         if not isinstance(self.data["profiles"], dict) or not isinstance(self.data["targets"], dict):
             raise CatalogError("profiles and targets must be objects")
         if not self.data["targets"]:

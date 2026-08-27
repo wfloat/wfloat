@@ -5,6 +5,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from onnxruntime_builder.catalog import Catalog
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "ort-builder"
@@ -28,22 +30,17 @@ class CliTest(unittest.TestCase):
         self.assertEqual(len(targets), 4)
         self.assertTrue(all(target["platform"] == "wasm" for target in targets))
 
-    def test_plan_covers_each_build_driver(self) -> None:
-        representatives = [
-            "android-arm64-v8a-static_lib",
-            "ios-static-xcframework",
-            "osx-arm64",
-            "linux-x64-glibc2_17",
-            "win-x64-static_lib-mt",
-            "win-arm64x",
-            "wasm-static_lib-simd",
-            "ohos-arm64-v8a",
-        ]
-        for target in representatives:
+    def test_plan_covers_every_target(self) -> None:
+        catalog = Catalog.load()
+        for target in catalog.target_ids:
             with self.subTest(target=target):
                 result = self.run_cli("build", target, "--plan", "--jobs", "2")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f'"target": "{target}"', result.stdout)
+                self.assertIn(
+                    '"source_revision": "2e2543fbe9fae542f921d47a72d21d5a4ef0b710"',
+                    result.stdout,
+                )
                 self.assertRegex(result.stdout, r"tools/ci_build/(?:github/apple/)?build")
 
     def test_invalid_target_is_rejected(self) -> None:
@@ -55,6 +52,29 @@ class CliTest(unittest.TestCase):
         result = self.run_cli("build", "wasm-static_lib-simd", "--plan")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count("-fno-lto"), 2)
+
+    def test_unpinned_version_is_rejected_even_for_plan(self) -> None:
+        result = self.run_cli(
+            "build", "wasm-static_lib-simd", "--version", "1.30.0", "--plan"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no committed source revision", result.stderr)
+
+    def test_arbitrary_source_ref_option_is_not_accepted(self) -> None:
+        result = self.run_cli(
+            "build",
+            "wasm-static_lib-simd",
+            "--plan",
+            "--source-ref",
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrecognized arguments: --source-ref", result.stderr)
+
+    def test_arbitrary_catalog_option_is_not_accepted(self) -> None:
+        result = self.run_cli("--catalog", "/tmp/alternate-targets.json", "list", "targets")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr)
 
 
 if __name__ == "__main__":

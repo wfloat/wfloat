@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .catalog import Catalog
-from .source import VERSION_RE
+from .source import SourceError, VERSION_RE, verify_microsoft_source
 
 
 class ValidationError(RuntimeError):
@@ -47,7 +47,11 @@ def _safe_extract(archive: Path, destination: Path, expected_top: str) -> Path:
         if not infos:
             raise ValidationError("archive is empty")
         top_levels: set[str] = set()
+        member_names: set[str] = set()
         for info in infos:
+            if info.filename in member_names:
+                raise ValidationError(f"archive contains duplicate member name: {info.filename!r}")
+            member_names.add(info.filename)
             member = PurePosixPath(info.filename)
             if member.is_absolute() or ".." in member.parts or not member.parts:
                 raise ValidationError(f"unsafe archive member: {info.filename!r}")
@@ -554,7 +558,18 @@ def validate_archive(
     source_dir = source_dir.resolve() if source_dir else None
     if not archive.is_file():
         raise ValidationError(f"archive does not exist: {archive}")
-    _parse_archive_identity(target, archive)
+    version, _ = _parse_archive_identity(target, archive)
+    source_revision = catalog.source_revision(version)
+    if source_dir:
+        try:
+            validation_source_revision = verify_microsoft_source(source_dir)
+        except SourceError as error:
+            raise ValidationError(str(error)) from error
+        if validation_source_revision != source_revision:
+            raise ValidationError(
+                f"validation source checkout is {validation_source_revision}, not cataloged commit "
+                f"{source_revision} for {version}"
+            )
     messages: list[str] = []
     with tempfile.TemporaryDirectory(prefix="ort-package-validation-") as temporary_name:
         extraction = Path(temporary_name)

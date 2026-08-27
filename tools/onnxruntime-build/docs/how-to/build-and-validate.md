@@ -41,32 +41,28 @@ place them elsewhere.
 
 ## Build one target
 
-Build the default `v1.29.0` Microsoft tag with a bounded job count:
+Build the default cataloged ONNX Runtime revision with a bounded job count:
 
 ```sh
 ./tools/onnxruntime-build/ort-builder build wasm-static_lib-simd --jobs 4
 ```
 
-Build another exact tag:
+Every accepted version must have an exact Microsoft commit in the
+`source_revisions` map in `targets.json`. To build another version, add its
+reviewed version-to-commit mapping and commit that catalog change before
+running the build. Arbitrary source overrides are not accepted.
 
-```sh
-./tools/onnxruntime-build/ort-builder build linux-x64-glibc2_17 \
-  --version 1.30.0 \
-  --jobs 8
-```
-
-To build an explicitly reviewed Microsoft commit, provide the version used in
-the package identity and a full 40-character commit:
+Select a cataloged version with `--version`:
 
 ```sh
 ./tools/onnxruntime-build/ort-builder build wasm-static_lib-simd \
   --version 1.29.0 \
-  --source-ref 0123456789abcdef0123456789abcdef01234567
+  --jobs 8
 ```
 
 An existing checkout is accepted only when its `origin` is Microsoft's ONNX
-Runtime repository and its checked-out commit matches the requested tag or
-commit:
+Runtime repository and its checked-out commit matches the version's committed
+catalog pin:
 
 ```sh
 ./tools/onnxruntime-build/ort-builder build wasm-static_lib-simd \
@@ -80,17 +76,18 @@ not create a checksum or provenance sidecar.
 
 ## Supply platform toolchains
 
-The resolved target definition from `list targets --json` is authoritative for
-versions and required environment variables.
+The source-revision map in `targets.json` is authoritative for versions. The
+resolved target definition from `list targets --json` is authoritative for
+toolchain versions and required environment variables.
 
 ### Android
 
 Set the Android SDK and NDK roots. The default catalog uses NDK
-`26.1.10909125`, Android API 21, and NNAPI API 27:
+`28.0.13004108`, Android API 21, and NNAPI API 27:
 
 ```sh
 export ANDROID_HOME=/path/to/android-sdk
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"
 ./tools/onnxruntime-build/ort-builder build android --jobs 4
 ```
 
@@ -196,4 +193,5 @@ point validation at the Microsoft checkout that installed it:
 ```
 
 This lets validation use the matching `llvm-ar` and `em++` for object-format
-inspection and the final-link smoke test.
+inspection and the final-link smoke test. The checkout must be at the exact
+commit pinned for the archive version in `source_revisions`.

@@ -2,6 +2,9 @@
   "schema_version": 1,
   "default_onnxruntime_version": "1.29.0",
   "source_repository": "https://github.com/microsoft/onnxruntime.git",
+  "source_revisions": {
+    "1.29.0": "2e2543fbe9fae542f921d47a72d21d5a4ef0b710"
+  },
   "profiles": {
     "android_shared": {
       "platform": "android",
@@ -10,7 +13,7 @@
       "linkage": "shared",
       "providers": ["cpu", "nnapi", "xnnpack"],
       "minimum_platform": "android-21",
-      "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "26.1.10909125"},
+      "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "28.0.13004108"},
       "package": {"kind": "android", "headers_dir": "headers", "library": "libonnxruntime.so"},
       "validation": {"format": "elf", "test_policy": "cross"}
     },
@@ -21,7 +24,7 @@
       "linkage": "static",
       "providers": ["cpu", "nnapi", "xnnpack"],
       "minimum_platform": "android-21",
-      "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "26.1.10909125"},
+      "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "28.0.13004108"},
       "package": {"kind": "standard", "headers_dir": "include", "required_libraries": ["lib/libonnxruntime.a"]},
       "validation": {"format": "elf-archive", "test_policy": "cross"}
     },
@@ -197,11 +200,13 @@
     },
     "visionos-static-xcframework": {
       "profile": "apple_xcframework_static",
+      "providers": ["cpu", "coreml"],
       "slices": {"xros": ["arm64"], "xrsimulator": ["arm64"]},
       "minimum_platforms": {"xros": "1.0", "xrsimulator": "1.0"}
     },
     "visionos-shared-xcframework": {
       "profile": "apple_xcframework_shared",
+      "providers": ["cpu", "coreml"],
       "slices": {"xros": ["arm64"], "xrsimulator": ["arm64"]},
       "minimum_platforms": {"xros": "1.0", "xrsimulator": "1.0"}
     },

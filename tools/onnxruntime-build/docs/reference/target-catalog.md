@@ -9,8 +9,9 @@ and validation policy. Workflows and local commands resolve the same data.
 | Field | Meaning |
 | --- | --- |
 | `schema_version` | Catalog schema understood by this builder |
-| `default_onnxruntime_version` | Exact Microsoft tag version used when `--version` is omitted |
+| `default_onnxruntime_version` | Cataloged version used when `--version` is omitted |
 | `source_repository` | Required Microsoft ONNX Runtime Git origin |
+| `source_revisions` | Exact cataloged version-to-Microsoft-commit map |
 | `profiles` | Shared declarative defaults for related targets |
 | `targets` | All public target identifiers and their overrides |
 
@@ -35,6 +36,10 @@ fully resolved definitions.
 | `package` | Archive kind, header location, and required library paths |
 | `validation` | Binary format and Microsoft test policy |
 
+The visionOS targets resolve `providers` to `cpu` and `coreml`; they do not
+inherit XNNPACK from the shared Apple profiles. iOS and macOS targets retain
+their cataloged XNNPACK provider.
+
 ## Archive identity
 
 For family `<family>`, ONNX Runtime version `<version>`, and the first 12
@@ -49,6 +54,12 @@ Every archive is a Release package. `release` is not part of the family or
 filename. Non-native bundles use `include/` and `lib/`, except the combined
 Android target, which uses common `headers/` and `jni/<abi>/` directories.
 Apple XCFramework targets contain `onnxruntime.xcframework`.
+
+The version must resolve to exactly one commit in `source_revisions`. The CLI
+has no arbitrary source-revision override. Changing a version's source commit
+therefore requires a committed catalog change, which also changes `<builder>`
+in the archive identity. `--source-dir` accepts only a Microsoft checkout whose
+`HEAD` equals the cataloged commit.
 
 Every archive contains the exact Microsoft source revision's `LICENSE` and
 `ThirdPartyNotices.txt` at its top level. No checksum, JSON, registry metadata,

@@ -3,8 +3,8 @@
 This directory builds the ONNX Runtime C and C++ packages used by Wfloat and
 Sherpa. It is an independent Wfloat implementation that drives Microsoft ONNX
 Runtime's own source and build entry points. The default source version is
-`1.29.0`; every build resolves an exact Microsoft commit and an exact committed
-Wfloat builder revision.
+`1.29.0`; every cataloged version maps to one exact Microsoft commit, and every
+build records an exact committed Wfloat builder revision.
 
 Start with the task you need:
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .catalog import BUILDER_ROOT, Catalog
+from .catalog import BUILDER_ROOT, DEFAULT_CATALOG_PATH, Catalog
 from .package import package_target, sha256
 from .source import acquire_source
 
@@ -233,6 +233,20 @@ def _android_sdk_paths(target: dict) -> tuple[str, str]:
             ndk = str(candidate)
     if not sdk or not ndk:
         raise BuildError("Android builds require ANDROID_HOME (or ANDROID_SDK_ROOT) and ANDROID_NDK_HOME")
+    properties = Path(ndk) / "source.properties"
+    if not properties.is_file():
+        raise BuildError(f"Android NDK source.properties does not exist: {properties}")
+    match = re.search(
+        r"^Pkg\.Revision\s*=\s*([^\s]+)",
+        properties.read_text(encoding="utf-8", errors="replace"),
+        re.MULTILINE,
+    )
+    actual_ndk = match.group(1) if match else None
+    expected_ndk = target["toolchain"]["ndk"]
+    if actual_ndk != expected_ndk:
+        raise BuildError(
+            f"target requires Android NDK {expected_ndk}; {properties} reports {actual_ndk or 'unknown'}"
+        )
     return sdk, ndk
 
 
@@ -551,14 +565,16 @@ def build_target(
     cache_dir: Path,
     work_dir: Path,
     output_dir: Path,
-    source_ref: str | None = None,
     source_dir: Path | None = None,
     skip_tests: bool = False,
     plan: bool = False,
 ) -> BuildResult | None:
     if jobs < 1:
         raise BuildError("--jobs must be at least 1")
+    if not plan and catalog.path.resolve() != DEFAULT_CATALOG_PATH.resolve():
+        raise BuildError("real builds require the committed tools/onnxruntime-build/targets.json catalog")
     target = catalog.target(target_id)
+    source_revision = catalog.source_revision(version)
     _, builder_revision = _builder_revision(require_clean=not plan)
     build_root = work_dir.resolve() / target_id / version / builder_revision
 
@@ -570,6 +586,7 @@ def build_target(
         plan_output = {
             "target": target_id,
             "version": version,
+            "source_revision": source_revision,
             "outputs": {key: str(path) for key, path in outputs.items()},
             "commands": commands,
         }
@@ -579,7 +596,7 @@ def build_target(
     resolved_source, microsoft_commit = acquire_source(
         cache_dir=cache_dir,
         version=version,
-        source_ref=source_ref,
+        source_revision=source_revision,
         jobs=jobs,
         source_dir=source_dir,
     )
@@ -605,6 +622,8 @@ def build_target(
     from .validate import validate_archive  # Avoid an import cycle during CLI startup.
 
     validation = validate_archive(catalog, target_id, archive, run_smoke=True, source_dir=resolved_source)
+    for message in validation:
+        print(message)
     print(f"Archive: {archive}")
     print(f"SHA-256: {sha256(archive)}")
     return BuildResult(

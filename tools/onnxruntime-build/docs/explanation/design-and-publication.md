@@ -12,6 +12,11 @@ handles native and cross-platform CMake generation. Wfloat's packaging layer
 then normalizes only the observable consumer contract: stable headers and
 libraries, one archive root, immutable identity, and retained notices.
 
+The concise archive name remains unambiguous because each version maps to one
+exact Microsoft commit in the committed catalog. A source change is a builder
+change: updating that map creates a new Wfloat revision, so the builder segment
+of the archive name changes without embedding another hash in the filename.
+
 Microsoft's Release WebAssembly configuration normally adds `-flto` even when
 its general LTO option is off. Wfloat's WebAssembly adapter supplies a later
 Release `-fno-lto` compiler flag because Sherpa must perform the final

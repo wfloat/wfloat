@@ -91,6 +91,19 @@ class PackageContractTest(unittest.TestCase):
                     self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
                 )
 
+    def test_duplicate_zip_member_name_is_rejected(self) -> None:
+        target = self.catalog.target("wasm-static_lib-simd")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / f"onnxruntime-wasm-static_lib-simd-1.29.0-{BUILDER}.zip"
+            duplicate = f"{archive.stem}/LICENSE"
+            with self.assertWarns(UserWarning), zipfile.ZipFile(archive, "w") as output:
+                _write_member(output, duplicate, b"first")
+                _write_member(output, duplicate, b"second")
+            with self.assertRaisesRegex(ValidationError, "duplicate member name"):
+                validate_archive(
+                    self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
     def test_escaping_symlink_is_rejected(self) -> None:
         target = self.catalog.target("osx-arm64")
         with tempfile.TemporaryDirectory() as temporary:
@@ -169,6 +182,24 @@ class PackageContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ValidationError, "12 lowercase hexadecimal"):
                 validate_archive(
                     self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
+                )
+
+    def test_validation_source_checkout_must_match_archive_version_pin(self) -> None:
+        target = self.catalog.target("wasm-static_lib")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            archive = temporary / f"onnxruntime-wasm-static_lib-1.29.0-{BUILDER}.zip"
+            _standard_fixture(archive, target)
+            with mock.patch(
+                "onnxruntime_builder.validate.verify_microsoft_source", return_value="b" * 40
+            ), self.assertRaisesRegex(ValidationError, "not cataloged commit"):
+                validate_archive(
+                    self.catalog,
+                    target["id"],
+                    archive,
+                    run_smoke=False,
+                    inspect_metadata=False,
+                    source_dir=temporary / "source",
                 )
 
     def test_wasm_metadata_rejects_llvm_bitcode(self) -> None:

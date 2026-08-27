@@ -66,13 +66,9 @@ on:
           - ohos-armeabi-v7a
           - ohos-x86_64
       version:
-        description: Exact ONNX Runtime version
+        description: Cataloged ONNX Runtime version
         required: true
         default: "1.29.0"
-        type: string
-      source_ref:
-        description: Optional full Microsoft commit (empty uses the exact version tag)
-        required: false
         type: string
       jobs:
         description: Bounded parallel build jobs
@@ -128,8 +124,8 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "ndk;26.1.10909125"
-          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/26.1.10909125" >> "${GITHUB_ENV}"
+          sdkmanager "platforms;android-35" "ndk;28.0.13004108"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/28.0.13004108" >> "${GITHUB_ENV}"
 
       - name: Show resolved target
         shell: bash
@@ -140,14 +136,10 @@ jobs:
         env:
           TARGET: ${{ inputs.target }}
           VERSION: ${{ inputs.version }}
-          SOURCE_REF: ${{ inputs.source_ref }}
           JOBS: ${{ inputs.jobs }}
           SKIP_TESTS: ${{ inputs.skip_microsoft_tests }}
         run: |
           args=(build "${TARGET}" --version "${VERSION}" --jobs "${JOBS}")
-          if [[ -n "${SOURCE_REF}" ]]; then
-            args+=(--source-ref "${SOURCE_REF}")
-          fi
           if [[ "${SKIP_TESTS}" == "true" ]]; then
             args+=(--skip-tests)
           fi
@@ -157,15 +149,17 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ inputs.target }}
+          VERSION: ${{ inputs.version }}
         run: |
+          source_dir="tools/onnxruntime-build/.cache/sources/onnxruntime-${VERSION}"
+          test -d "${source_dir}"
           if [[ "${TARGET}" == wasm-* ]]; then
-            emsdk_env=$(find tools/onnxruntime-build/.cache/sources -name emsdk_env.sh -print -quit)
-            test -n "${emsdk_env}"
-            source "${emsdk_env}"
+            source "${source_dir}/cmake/external/emsdk/emsdk_env.sh"
           fi
           archive=$(find tools/onnxruntime-build/.out -maxdepth 1 -name '*.zip' -print -quit)
           test -n "${archive}"
-          python tools/onnxruntime-build/ort-builder validate "${TARGET}" "${archive}"
+          python tools/onnxruntime-build/ort-builder validate \
+            "${TARGET}" "${archive}" --source-dir "${source_dir}"
 
       - uses: actions/upload-artifact@v7
         with:
