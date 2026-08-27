@@ -184,3 +184,16 @@ target.
 
 Use `--skip-smoke` only when the target cannot be linked on the validation
 runner. The command records that step as skipped; it does not report a pass.
+
+For a WebAssembly archive, either activate the cataloged Emscripten SDK or
+point validation at the Microsoft checkout that installed it:
+
+```sh
+./tools/onnxruntime-build/ort-builder validate \
+  wasm-static_lib-simd \
+  path/to/onnxruntime-wasm-static_lib-simd-1.29.0-0123456789ab.zip \
+  --source-dir tools/onnxruntime-build/.cache/sources/onnxruntime-1.29.0
+```
+
+This lets validation use the matching `llvm-ar` and `em++` for object-format
+inspection and the final-link smoke test.

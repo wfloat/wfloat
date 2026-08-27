@@ -49,6 +49,11 @@ def _parser(catalog: Catalog) -> argparse.ArgumentParser:
     validate_parser = commands.add_parser("validate", help="Validate an existing target archive")
     validate_parser.add_argument("target", choices=catalog.target_ids)
     validate_parser.add_argument("archive", type=Path)
+    validate_parser.add_argument(
+        "--source-dir",
+        type=Path,
+        help="Microsoft ONNX Runtime checkout used to locate cross-toolchain validators",
+    )
     validate_parser.add_argument("--skip-smoke", action="store_true", help="Skip the compile/link C API smoke test")
     return parser
 
@@ -108,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.target,
                 args.archive,
                 run_smoke=not args.skip_smoke,
+                source_dir=args.source_dir,
             )
             for message in messages:
                 print(message)

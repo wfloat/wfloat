@@ -6,9 +6,16 @@ import unittest
 import zipfile
 import plistlib
 from pathlib import Path
+from unittest import mock
 
 from onnxruntime_builder.catalog import Catalog
-from onnxruntime_builder.validate import ValidationError, _architecture_matches, validate_archive
+from onnxruntime_builder.validate import (
+    ValidationError,
+    _architecture_matches,
+    _object_archive_members,
+    _smoke_test,
+    validate_archive,
+)
 
 
 BUILDER = "0123456789ab"
@@ -167,6 +174,37 @@ class PackageContractTest(unittest.TestCase):
     def test_wasm_metadata_rejects_llvm_bitcode(self) -> None:
         self.assertFalse(_architecture_matches("wasm32", "LLVM IR bitcode"))
         self.assertTrue(_architecture_matches("wasm32", "WebAssembly (wasm) binary module"))
+
+    def test_archive_symbol_tables_are_not_selected_as_objects(self) -> None:
+        members = ["/", "//", "runtime.cc.o/", "/0", "provider.obj", "module.bc"]
+        self.assertEqual(
+            _object_archive_members(members),
+            ["runtime.cc.o/", "provider.obj", "module.bc"],
+        )
+
+    def test_wasm_smoke_cross_compiles_instead_of_skipping_for_host_architecture(self) -> None:
+        target = self.catalog.target("wasm-static_lib-simd")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            root = temporary / "package"
+            (root / "include").mkdir(parents=True)
+            (root / "lib").mkdir()
+            (root / "lib" / "libonnxruntime.a").write_bytes(b"archive")
+            source_dir = temporary / "source"
+            compiler = source_dir / "cmake/external/emsdk/upstream/emscripten/em++"
+            compiler.parent.mkdir(parents=True)
+            compiler.write_text("fixture\n", encoding="utf-8")
+
+            def fake_tool(command: list[str]) -> str:
+                output = Path(command[command.index("-o") + 1])
+                output.write_bytes(b"\x00asm")
+                return ""
+
+            with mock.patch("onnxruntime_builder.validate.shutil.which", return_value=None), mock.patch(
+                "onnxruntime_builder.validate._tool_output", side_effect=fake_tool
+            ):
+                result = _smoke_test(target, root, source_dir)
+        self.assertEqual(result, "PASS compile/link smoke (WebAssembly final link)")
 
 
 if __name__ == "__main__":

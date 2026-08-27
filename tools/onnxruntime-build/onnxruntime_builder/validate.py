@@ -131,24 +131,58 @@ def _tool_output(command: list[str]) -> str:
         raise ValidationError(f"validation command failed: {' '.join(command)}\n{error.stdout}") from error
 
 
-def _first_archive_object(archive: Path, temporary: Path) -> Path:
-    archiver = shutil.which("ar") or shutil.which("llvm-ar") or shutil.which("emar")
-    if not archiver:
+def _archive_tools(source_dir: Path | None) -> list[str]:
+    candidates: list[str | None] = []
+    if source_dir:
+        candidates.append(str(source_dir / "cmake" / "external" / "emsdk" / "upstream" / "bin" / "llvm-ar"))
+    candidates.extend([shutil.which("llvm-ar"), shutil.which("emar"), shutil.which("ar")])
+    tools: list[str] = []
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file() and candidate not in tools:
+            tools.append(candidate)
+    return tools
+
+
+def _object_archive_members(members: list[str]) -> list[str]:
+    return [name for name in members if name.rstrip("/").endswith((".o", ".obj", ".bc"))]
+
+
+def _first_archive_object(archive: Path, temporary: Path, source_dir: Path | None = None) -> Path:
+    archivers = _archive_tools(source_dir)
+    if not archivers:
         raise ValidationError("ar, llvm-ar, or emar is required to inspect static archives")
-    members = [line.strip() for line in _tool_output([archiver, "t", str(archive)]).splitlines() if line.strip()]
-    if not members:
-        raise ValidationError(f"static archive is empty: {archive}")
-    member = next((name for name in members if name.endswith((".o", ".obj", ".bc"))), members[0])
-    subprocess.run(
-        [archiver, "x", str(archive), member], cwd=temporary, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    extracted = temporary / Path(member).name
-    if not extracted.is_file():
-        matches = list(temporary.rglob(Path(member).name))
-        if not matches:
-            raise ValidationError(f"unable to inspect an object from {archive}")
-        extracted = matches[0]
-    return extracted
+    failures: list[str] = []
+    for archiver in archivers:
+        try:
+            members = [
+                line.strip()
+                for line in _tool_output([archiver, "t", str(archive)]).splitlines()
+                if line.strip()
+            ]
+            object_members = _object_archive_members(members)
+            if not object_members:
+                failures.append(f"{archiver}: no object members")
+                continue
+            member = object_members[0]
+            subprocess.run(
+                [archiver, "x", str(archive), member],
+                cwd=temporary,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            member_name = Path(member.rstrip("/")).name
+            extracted = temporary / member_name
+            if not extracted.is_file():
+                matches = list(temporary.rglob(member_name))
+                if not matches:
+                    failures.append(f"{archiver}: did not extract {member!r}")
+                    continue
+                extracted = matches[0]
+            return extracted
+        except (ValidationError, subprocess.CalledProcessError) as error:
+            failures.append(f"{archiver}: {error}")
+    raise ValidationError(f"unable to inspect an object from {archive}: {'; '.join(failures)}")
 
 
 def _file_description(binary: Path) -> str:
@@ -172,14 +206,14 @@ def _architecture_matches(architecture: str, description: str) -> bool:
     return architecture.lower() in lowered
 
 
-def _inspect_archive_architecture(archive: Path, architecture: str) -> str:
+def _inspect_archive_architecture(archive: Path, architecture: str, source_dir: Path | None = None) -> str:
     if _host() == "macos" and architecture in {"arm64", "x86_64"}:
         output = _tool_output(["lipo", "-archs", str(archive)]).strip()
         if architecture not in output.split():
             raise ValidationError(f"{archive} does not contain {architecture}; lipo reports {output!r}")
         return output
     with tempfile.TemporaryDirectory(prefix="ort-archive-object-") as temporary_name:
-        object_file = _first_archive_object(archive, Path(temporary_name))
+        object_file = _first_archive_object(archive, Path(temporary_name), source_dir)
         description = _file_description(object_file)
     if not _architecture_matches(architecture, description):
         raise ValidationError(f"{archive} has wrong architecture for {architecture}: {description}")
@@ -373,7 +407,9 @@ def _validate_windows_metadata(target: dict, libraries: list[Path], root: Path) 
             raise ValidationError("/MT package unexpectedly depends on the dynamic MSVC runtime")
 
 
-def _validate_standard_metadata(target: dict, root: Path, libraries: list[Path]) -> None:
+def _validate_standard_metadata(
+    target: dict, root: Path, libraries: list[Path], source_dir: Path | None = None
+) -> None:
     if target["platform"] == "windows":
         _validate_windows_metadata(target, libraries, root)
         return
@@ -382,7 +418,7 @@ def _validate_standard_metadata(target: dict, root: Path, libraries: list[Path])
     architectures = [architecture for architecture in architectures if architecture]
     if target["linkage"] == "static":
         for architecture in architectures:
-            _inspect_archive_architecture(primary, architecture)
+            _inspect_archive_architecture(primary, architecture, source_dir)
     else:
         description = _check_linkage(primary, target)
         for architecture in architectures:
@@ -414,7 +450,11 @@ def _smoke_test(target: dict, root: Path, source_dir: Path | None) -> str:
         return "SKIP compile/link smoke: target cannot be exercised directly on this host"
     architecture = target.get("architecture")
     normalized = "x86_64" if architecture == "x64" else architecture
-    if normalized and normalized not in {_host_architecture(), "arm64" if _host_architecture() == "aarch64" else ""}:
+    if (
+        target["platform"] != "wasm"
+        and normalized
+        and normalized not in {_host_architecture(), "arm64" if _host_architecture() == "aarch64" else ""}
+    ):
         return "SKIP compile/link smoke: target architecture cannot execute on this host"
 
     include_dir = root / target["package"]["headers_dir"]
@@ -511,6 +551,7 @@ def validate_archive(
 ) -> list[str]:
     target = catalog.target(target_id)
     archive = archive.resolve()
+    source_dir = source_dir.resolve() if source_dir else None
     if not archive.is_file():
         raise ValidationError(f"archive does not exist: {archive}")
     _parse_archive_identity(target, archive)
@@ -541,7 +582,7 @@ def validate_archive(
             _validate_headers(root / target["package"]["headers_dir"])
             libraries = _required_libraries(target, root)
             if inspect_metadata:
-                _validate_standard_metadata(target, root, libraries)
+                _validate_standard_metadata(target, root, libraries, source_dir)
         messages.append("PASS required headers, libraries, providers, architecture, and linkage")
 
         if run_smoke:
