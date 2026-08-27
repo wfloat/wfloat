@@ -299,6 +299,8 @@ def _apple_settings(target: dict, jobs: int, run_tests: bool) -> dict:
         "--build_apple_framework",
         "--use_coreml",
         "--skip_submodule_sync",
+        "--compile_no_warning_as_error",
+        "--no_telemetry",
     ]
     if not run_tests:
         base.extend(["--skip_tests", "--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF"])

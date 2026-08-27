@@ -7,7 +7,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from onnxruntime_builder.build import BuildError, _android_sdk_paths, build_target
+from onnxruntime_builder.build import (
+    BuildError,
+    _android_sdk_paths,
+    _apple_settings,
+    build_target,
+)
 from onnxruntime_builder.catalog import Catalog
 
 
@@ -15,6 +20,12 @@ PINNED_COMMIT = "2e2543fbe9fae542f921d47a72d21d5a4ef0b710"
 
 
 class BuildTest(unittest.TestCase):
+    def test_apple_builds_disable_telemetry(self) -> None:
+        target = Catalog.load().target("ios-static-xcframework")
+        base = _apple_settings(target, jobs=2, run_tests=False)["build_params"]["base"]
+        self.assertIn("--no_telemetry", base)
+        self.assertIn("--compile_no_warning_as_error", base)
+
     def test_android_ndk_environment_must_match_cataloged_revision(self) -> None:
         target = Catalog.load().target("android")
         with tempfile.TemporaryDirectory() as temporary_name:
