@@ -55,6 +55,11 @@ filename. Non-native bundles use `include/` and `lib/`, except the combined
 Android target, which uses common `headers/` and `jni/<abi>/` directories.
 Apple XCFramework targets contain `onnxruntime.xcframework`.
 
+The iOS consumer deployment floor is 13.0. The arm64 simulator architecture,
+which Apple introduced with iOS 14, is allowed to carry a 14.0 Mach-O minimum
+while the x86_64 simulator and arm64 device slices remain at 13.0. Validation
+thins universal archives and checks each architecture independently.
+
 The version must resolve to exactly one commit in `source_revisions`. The CLI
 has no arbitrary source-revision override. Changing a version's source commit
 therefore requires a committed catalog change, which also changes `<builder>`

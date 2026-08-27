@@ -104,6 +104,10 @@ class CatalogTest(unittest.TestCase):
         target = self.catalog.target("ios-static-xcframework")
         self.assertEqual(target["minimum_platforms"]["iphoneos"], "13.0")
         self.assertEqual(target["minimum_platforms"]["iphonesimulator"], "13.0")
+        self.assertEqual(
+            target["minimum_platforms_by_architecture"]["iphonesimulator"]["arm64"],
+            "14.0",
+        )
         self.assertEqual(target["slices"]["iphoneos"], ["arm64"])
         self.assertEqual(target["slices"]["iphonesimulator"], ["arm64", "x86_64"])
 

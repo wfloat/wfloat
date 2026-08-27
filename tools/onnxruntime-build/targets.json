@@ -181,12 +181,14 @@
     "ios-static-xcframework": {
       "profile": "apple_xcframework_static",
       "slices": {"iphoneos": ["arm64"], "iphonesimulator": ["arm64", "x86_64"]},
-      "minimum_platforms": {"iphoneos": "13.0", "iphonesimulator": "13.0"}
+      "minimum_platforms": {"iphoneos": "13.0", "iphonesimulator": "13.0"},
+      "minimum_platforms_by_architecture": {"iphonesimulator": {"arm64": "14.0"}}
     },
     "ios-shared-xcframework": {
       "profile": "apple_xcframework_shared",
       "slices": {"iphoneos": ["arm64"], "iphonesimulator": ["arm64", "x86_64"]},
-      "minimum_platforms": {"iphoneos": "13.0", "iphonesimulator": "13.0"}
+      "minimum_platforms": {"iphoneos": "13.0", "iphonesimulator": "13.0"},
+      "minimum_platforms_by_architecture": {"iphonesimulator": {"arm64": "14.0"}}
     },
     "macos-static-xcframework": {
       "profile": "apple_xcframework_static",

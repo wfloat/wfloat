@@ -299,12 +299,42 @@ def _version_tuple(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
-def _check_apple_minimum(binary: Path, maximum: str) -> None:
-    versions = _apple_minimum_versions(binary)
-    if not versions:
-        raise ValidationError(f"otool did not report minimum-platform metadata for {binary}")
-    if any(_version_tuple(version) > _version_tuple(maximum) for version in versions):
-        raise ValidationError(f"{binary} minimum platform {versions} exceeds declared compatibility {maximum}")
+def _apple_minimum_versions_by_architecture(
+    binary: Path, architectures: list[str]
+) -> dict[str, list[str]]:
+    if len(architectures) == 1:
+        return {architectures[0]: _apple_minimum_versions(binary)}
+    with tempfile.TemporaryDirectory(prefix="ort-apple-slice-") as temporary_name:
+        temporary = Path(temporary_name)
+        versions: dict[str, list[str]] = {}
+        for architecture in architectures:
+            thin_binary = temporary / f"{architecture}.binary"
+            _tool_output(
+                ["lipo", str(binary), "-thin", architecture, "-output", str(thin_binary)]
+            )
+            versions[architecture] = _apple_minimum_versions(thin_binary)
+        return versions
+
+
+def _check_apple_minimum(
+    binary: Path,
+    maximum: str,
+    architectures: list[str] | None = None,
+    maximums_by_architecture: dict[str, str] | None = None,
+) -> None:
+    architectures = architectures or ["binary"]
+    maximums_by_architecture = maximums_by_architecture or {}
+    versions_by_architecture = _apple_minimum_versions_by_architecture(binary, architectures)
+    for architecture, versions in versions_by_architecture.items():
+        if not versions:
+            raise ValidationError(
+                f"otool did not report minimum-platform metadata for {binary} ({architecture})"
+            )
+        allowed = maximums_by_architecture.get(architecture, maximum)
+        if any(_version_tuple(version) > _version_tuple(allowed) for version in versions):
+            raise ValidationError(
+                f"{binary} {architecture} minimum platform {versions} exceeds declared compatibility {allowed}"
+            )
 
 
 def _xcframework_binary(bundle: Path, entry: dict) -> Path:
@@ -341,10 +371,12 @@ def _validate_xcframework(target: dict, root: Path, inspect_metadata: bool = Tru
 
     expected: dict[tuple[str, str | None], set[str]] = {}
     minimums: dict[tuple[str, str | None], str] = {}
+    sysroots: dict[tuple[str, str | None], str] = {}
     for sysroot, architectures in target["slices"].items():
         key = _expected_apple_slice(sysroot)
         expected[key] = set(architectures)
         minimums[key] = target["minimum_platforms"][sysroot]
+        sysroots[key] = sysroot
     actual: dict[tuple[str, str | None], set[str]] = {}
     binaries: list[Path] = []
     for entry in entries:
@@ -361,8 +393,23 @@ def _validate_xcframework(target: dict, root: Path, inspect_metadata: bool = Tru
         _validate_headers(headers)
         if inspect_metadata:
             if key in minimums:
-                _check_apple_minimum(binary, minimums[key])
+                architecture_minimums = target.get(
+                    "minimum_platforms_by_architecture", {}
+                ).get(sysroots[key], {})
+                _check_apple_minimum(
+                    binary,
+                    minimums[key],
+                    list(entry.get("SupportedArchitectures", [])),
+                    architecture_minimums,
+                )
             description = _file_description(binary)
+            declared_architectures = set(entry.get("SupportedArchitectures", []))
+            binary_architectures = set(_tool_output(["lipo", "-archs", str(binary)]).split())
+            if binary_architectures != declared_architectures:
+                raise ValidationError(
+                    f"XCFramework slice {entry['LibraryIdentifier']} declares {declared_architectures} "
+                    f"but its binary contains {binary_architectures}"
+                )
             if target["linkage"] == "static" and "archive" not in description.lower():
                 raise ValidationError(f"XCFramework static slice is not an archive: {binary}: {description}")
             if target["linkage"] == "shared" and "dynamically linked shared library" not in description.lower():
@@ -598,7 +645,7 @@ def validate_archive(
             libraries = _required_libraries(target, root)
             if inspect_metadata:
                 _validate_standard_metadata(target, root, libraries, source_dir)
-        messages.append("PASS required headers, libraries, providers, architecture, and linkage")
+        messages.append("PASS required headers, libraries, architecture, and linkage")
 
         if run_smoke:
             messages.append(_smoke_test(target, root, source_dir))

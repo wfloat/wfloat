@@ -12,6 +12,7 @@ from onnxruntime_builder.catalog import Catalog
 from onnxruntime_builder.validate import (
     ValidationError,
     _architecture_matches,
+    _check_apple_minimum,
     _object_archive_members,
     _smoke_test,
     validate_archive,
@@ -59,6 +60,25 @@ class PackageContractTest(unittest.TestCase):
             )
         self.assertEqual(len(messages), 3)
         self.assertTrue(messages[0].startswith("PASS"))
+
+    def test_apple_minimum_validation_is_architecture_specific(self) -> None:
+        reported = {"arm64": ["14.0"], "x86_64": ["13.0"]}
+        with mock.patch(
+            "onnxruntime_builder.validate._apple_minimum_versions_by_architecture",
+            return_value=reported,
+        ):
+            _check_apple_minimum(
+                Path("simulator.a"),
+                "13.0",
+                ["arm64", "x86_64"],
+                {"arm64": "14.0"},
+            )
+            with self.assertRaisesRegex(ValidationError, "arm64"):
+                _check_apple_minimum(
+                    Path("simulator.a"),
+                    "13.0",
+                    ["arm64", "x86_64"],
+                )
 
     def test_missing_notice_is_rejected(self) -> None:
         target = self.catalog.target("wasm-static_lib-simd")
