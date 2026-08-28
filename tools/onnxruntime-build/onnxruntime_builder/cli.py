@@ -69,17 +69,27 @@ def _list_targets(catalog: Catalog, platform: str | None, as_json: bool) -> int:
     if as_json:
         print(json.dumps(targets, indent=2, sort_keys=True))
         return 0
-    headings = ("TARGET", "PLATFORM", "ARCHITECTURE(S)", "LINKAGE", "PROVIDERS")
+    headings = (
+        "TARGET",
+        "RECIPE",
+        "PLATFORM",
+        "ARCHITECTURE(S)",
+        "LINKAGE",
+        "PROVIDERS",
+        "VERIFICATION",
+    )
     rows: list[tuple[str, ...]] = []
     for target in targets:
         architectures = target.get("architectures") or [target.get("architecture", "slices")]
         rows.append(
             (
                 target["id"],
+                target["recipe"],
                 target["platform"],
                 ",".join(architectures),
                 target["linkage"],
                 ",".join(target["providers"]),
+                target["verification"],
             )
         )
     widths = [max(len(headings[index]), *(len(row[index]) for row in rows)) for index in range(len(headings))]

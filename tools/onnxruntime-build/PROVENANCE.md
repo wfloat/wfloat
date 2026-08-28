@@ -19,22 +19,73 @@ The implementer used only:
 
 The implementer did not inspect or use source, history, workflows, scripts,
 patches, diffs, disassembly, or implementation details from
-`csukuangfj/onnxruntime-build`, `csukuangfj/onnxruntime-libs`,
-`wfloat/onnxruntime-build`, its removed private submodule, or Supertone's
-derivative builder.
+`csukuangfj/onnxruntime-build`, `csukuangfj/onnxruntime-libs`, the removed
+Wfloat submodule, or Supertone's derivative builder.
 
-## Build identity
+## Microsoft source identity
 
-The builder fetches the exact Microsoft commit mapped from `<version>` in
-`targets.json`, including Microsoft's required submodules. A caller cannot
-override that revision. An existing checkout is accepted only when its origin
-is Microsoft and its `HEAD` equals the committed catalog pin. The build prints
-the resolved Microsoft commit.
+[`source-lock.json`](source-lock.json) is intentionally small. Its `repository`
+must be Microsoft's ONNX Runtime Git repository, `default_version` selects the
+CLI default, and `revisions` maps each accepted version to one full lowercase
+Microsoft commit. It contains no target definitions or generated metadata.
+
+For v1.29.0 the exact Microsoft tag and committed lock both resolve to:
+
+```text
+2e2543fbe9fae542f921d47a72d21d5a4ef0b710
+```
+
+A caller cannot override that revision. An existing checkout is accepted only
+when all of the following hold:
+
+- `origin` is Microsoft's repository;
+- `HEAD` equals the locked commit;
+- the superproject has no tracked modifications, untracked files, or ignored
+  files;
+- every recursive submodule is initialized at the recorded gitlink; and
+- every recursive submodule has no tracked modifications, untracked files, or
+  ignored files.
+
+Source acquisition rechecks those conditions after recursive submodule update.
+Before a builder-owned cached checkout is reused, acquisition first rejects
+tracked or ordinary untracked changes, then removes ignored build/tool outputs
+from that cache and performs the full check. Caller-supplied checkouts are never
+cleaned; any ignored content is rejected. This prevents a checkout with the
+right origin and `HEAD`, but modified source, bytecode, generated toolchain, or
+submodule contents, from being treated as the exact Microsoft source.
+
+After Microsoft's build commands finish and before packaging reads headers or
+notices, the builder rechecks origin, locked `HEAD`, tracked and ordinary
+untracked contents, recorded gitlinks, and recursive submodule worktrees.
+Ignored outputs created by Microsoft's build machinery are allowed only in
+this post-build check; they are removed before the cache can be reused.
+
+## Builder and target identity
+
+Target definitions and Microsoft command plans live together in independently
+owned modules under `onnxruntime_builder/recipes/`. Shared code owns source
+acquisition and integrity, builder identity, process execution, deterministic
+archives, notices, extraction safety, CLI behavior, and common validation
+primitives.
 
 The archive name contains the first 12 hexadecimal characters of the committed
 Wfloat revision containing the builder. A real build refuses dirty builder or
 builder-workflow paths so that this revision identifies the source that created
-the package.
+the package. The public launcher restarts Python in isolated, bytecode-free mode
+before importing recipes for every command. List, plan, and validation commands
+do not impose an executable-path cleanliness policy because they cannot create
+an artifact. Before a real non-plan build, the launcher fails closed unless
+executable builder paths have no tracked modifications or untracked/ignored
+files.
+
+`verification: verified` is reserved for targets backed by a completed artifact
+and the checks documented for that contract. It does not claim that every
+provider ran on hardware. `unverified` recipes may be inspected or attempted,
+but the CLI warns that command-plan coverage is not evidence that the platform
+works. CI may build an unverified target to collect evidence, but workflow
+selection never promotes catalog verification. At this source lock, ROCm is not cataloged because Microsoft v1.29.0
+lacks the provider and `--use_rocm`; OpenHarmony is not cataloged because no
+Microsoft/Wfloat implementation and completed evidence exist.
 
 ## Distributed notices
 
@@ -61,4 +112,6 @@ Validate an existing archive with the same public command used by CI:
 Reproduction means rebuilding and satisfying the same source, package,
 metadata, linkage, and consumer contracts. Byte-for-byte identity with an
 artifact from another build environment or distributor is not claimed or
-required.
+required. GitHub Actions does not retain the completed zip: validation occurs
+on the runner and the output directory is removed afterward. Registry
+publication remains a separate, explicitly approved operation.

@@ -53,6 +53,20 @@ class CliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count("-fno-lto"), 2)
 
+    def test_wasm_release_plan_explicitly_enables_exception_catching(self) -> None:
+        result = self.run_cli("build", "wasm-static_lib-simd", "--plan")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "onnxruntime_ENABLE_WEBASSEMBLY_EXCEPTION_CATCHING=ON",
+            result.stdout,
+        )
+
+    def test_cuda_plan_does_not_enable_tensorrt(self) -> None:
+        result = self.run_cli("build", "linux-x64-gpu_cuda12", "--plan")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--use_cuda", result.stdout)
+        self.assertNotIn("tensorrt", result.stdout.lower())
+
     def test_unpinned_version_is_rejected_even_for_plan(self) -> None:
         result = self.run_cli(
             "build", "wasm-static_lib-simd", "--version", "1.30.0", "--plan"
@@ -75,6 +89,55 @@ class CliTest(unittest.TestCase):
         result = self.run_cli("--catalog", "/tmp/alternate-targets.json", "list", "targets")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid choice", result.stderr)
+
+    def test_list_and_plan_allow_ignored_executable_builder_files(self) -> None:
+        cache = ROOT / "onnxruntime_builder/__pycache__"
+        injected = cache / "injected.pyc"
+        cache.mkdir(exist_ok=True)
+        injected.write_bytes(b"not trusted builder code")
+        try:
+            listed = self.run_cli("list", "targets")
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            planned = self.run_cli("build", "wasm-static_lib-simd", "--plan")
+            self.assertEqual(planned.returncode, 0, planned.stderr)
+        finally:
+            injected.unlink(missing_ok=True)
+            try:
+                cache.rmdir()
+            except OSError:
+                pass
+
+    def test_real_build_rejects_ignored_code_before_recipe_import(self) -> None:
+        cache = ROOT / "onnxruntime_builder/__pycache__"
+        injected = cache / "injected.pyc"
+        cache.mkdir(exist_ok=True)
+        injected.write_bytes(b"not trusted builder code")
+        try:
+            result = self.run_cli("build", "wasm-static_lib-simd")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "dirty, untracked, or ignored files are present in executable builder paths",
+                result.stderr,
+            )
+        finally:
+            injected.unlink(missing_ok=True)
+            try:
+                cache.rmdir()
+            except OSError:
+                pass
+
+    def test_real_build_rejects_untracked_code_before_recipe_import(self) -> None:
+        injected = ROOT / "onnxruntime_builder/injected_extension.so"
+        injected.write_bytes(b"not trusted builder code")
+        try:
+            result = self.run_cli("build", "wasm-static_lib-simd")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "dirty, untracked, or ignored files are present in executable builder paths",
+                result.stderr,
+            )
+        finally:
+            injected.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

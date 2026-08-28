@@ -40,7 +40,6 @@ EXPECTED_TARGETS = {
     "linux-x64-gpu_cuda13",
     "linux-aarch64-gpu_cuda12",
     "linux-aarch64-gpu_cuda13",
-    "linux-x64-rocm",
     "win-x86-md",
     "win-x86-mt",
     "win-x86-static_lib-md",
@@ -61,9 +60,6 @@ EXPECTED_TARGETS = {
     "wasm-static_lib-simd",
     "wasm-static_lib-threads",
     "wasm-static_lib-simd-threads",
-    "ohos-arm64-v8a",
-    "ohos-armeabi-v7a",
-    "ohos-x86_64",
 }
 
 
@@ -74,7 +70,7 @@ class CatalogTest(unittest.TestCase):
 
     def test_complete_target_catalog(self) -> None:
         self.assertEqual(set(self.catalog.target_ids), EXPECTED_TARGETS)
-        self.assertEqual(len(self.catalog.target_ids), 57)
+        self.assertEqual(len(self.catalog.target_ids), 53)
 
     def test_default_source_contract(self) -> None:
         self.assertEqual(self.catalog.default_version, "1.29.0")
@@ -111,30 +107,44 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(target["slices"]["iphoneos"], ["arm64"])
         self.assertEqual(target["slices"]["iphonesimulator"], ["arm64", "x86_64"])
 
-    def test_cuda_compatibility_is_exact_and_tensorrt_is_off(self) -> None:
+    def test_cuda_compatibility_is_exact(self) -> None:
         cuda12 = self.catalog.target("linux-x64-gpu_cuda12")["toolchain"]
         cuda13 = self.catalog.target("win-x64-gpu_cuda13")["toolchain"]
         self.assertEqual(cuda12["cuda"], "12.8")
         self.assertEqual(cuda12["cudnn"], "9.10.2")
-        self.assertFalse(cuda12["tensorrt"])
         self.assertEqual(cuda13["cuda"], "13.0")
         self.assertEqual(cuda13["cudnn"], "9.14.0")
-        self.assertFalse(cuda13["tensorrt"])
 
     def test_wasm_variants_do_not_enable_lto(self) -> None:
         for target_id in sorted(name for name in EXPECTED_TARGETS if name.startswith("wasm-")):
             target = self.catalog.target(target_id)
-            self.assertFalse(target["toolchain"]["lto"])
+            self.assertFalse(target["features"]["archive_lto"])
             self.assertEqual(target["architecture"], "wasm32")
+            self.assertTrue(target["features"]["exception_catching"])
 
     def test_windows_crt_is_in_target_identity(self) -> None:
         self.assertEqual(self.catalog.target("win-x64-static_lib-mt")["crt"], "mt")
         self.assertEqual(self.catalog.target("win-x64-static_lib-md")["crt"], "md")
 
-    def test_rocm_is_not_declared_as_migraphx(self) -> None:
-        target = self.catalog.target("linux-x64-rocm")
-        self.assertIn("rocm", target["providers"])
-        self.assertNotIn("migraphx", target["providers"])
+    def test_only_completed_artifact_contracts_are_marked_verified(self) -> None:
+        verified = {
+            target["id"]
+            for target in self.catalog.targets()
+            if target["verification"] == "verified"
+        }
+        self.assertEqual(
+            verified,
+            {"android", "ios-static-xcframework", "wasm-static_lib-simd"},
+        )
+
+    def test_unavailable_rocm_and_openharmony_contracts_are_not_build_targets(self) -> None:
+        self.assertNotIn("linux-x64-rocm", self.catalog.target_ids)
+        self.assertFalse(any(target.startswith("ohos-") for target in self.catalog.target_ids))
+
+    def test_recipe_field_is_enforced_and_resolved(self) -> None:
+        self.assertEqual(self.catalog.target("android")["recipe"], "android")
+        self.assertEqual(self.catalog.target("win-x64-directml")["recipe"], "directml")
+        self.assertEqual(self.catalog.recipe("wasm-static_lib-simd").name, "wasm")
 
     def test_manual_workflow_addresses_every_target(self) -> None:
         repository = Path(__file__).resolve().parents[3]
@@ -156,6 +166,7 @@ class CatalogTest(unittest.TestCase):
             self.assertIn("permissions:\n  contents: read", workflow)
             self.assertNotIn("id-token: write", workflow)
             self.assertNotIn("publish", workflow.lower())
+            self.assertNotIn("upload-artifact", workflow)
 
     def test_manual_workflow_has_no_arbitrary_source_override(self) -> None:
         repository = Path(__file__).resolve().parents[3]
@@ -165,6 +176,12 @@ class CatalogTest(unittest.TestCase):
         self.assertNotIn("source_ref", workflow)
         self.assertNotIn("--source-ref", workflow)
         self.assertIn("ndk;28.0.13004108", workflow)
+
+    def test_source_lock_is_small_and_separate_from_recipe_catalog(self) -> None:
+        self.assertEqual(
+            set(self.catalog.source_lock), {"repository", "default_version", "revisions"}
+        )
+        self.assertNotIn("targets", self.catalog.source_lock)
 
 
 if __name__ == "__main__":

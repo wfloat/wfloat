@@ -1,44 +1,72 @@
 # Target catalog reference
 
-[`targets.json`](../../targets.json) is the single declarative source for target
-identity, version-sensitive toolchains, platform slices, package expectations,
-and validation policy. Workflows and local commands resolve the same data.
+Target definitions live in the platform modules under
+`onnxruntime_builder/recipes/`. [`source-lock.json`](../../source-lock.json)
+contains only Microsoft source provenance. Workflows and local commands consume
+the same assembled catalog, and this command emits every fully resolved target:
 
-## Catalog root
+```sh
+./tools/onnxruntime-build/ort-builder list targets --json
+```
+
+## Source lock fields
 
 | Field | Meaning |
 | --- | --- |
-| `schema_version` | Catalog schema understood by this builder |
-| `default_onnxruntime_version` | Cataloged version used when `--version` is omitted |
-| `source_repository` | Required Microsoft ONNX Runtime Git origin |
-| `source_revisions` | Exact cataloged version-to-Microsoft-commit map |
-| `profiles` | Shared declarative defaults for related targets |
-| `targets` | All public target identifiers and their overrides |
+| `repository` | Required Microsoft ONNX Runtime Git origin |
+| `default_version` | Version used when `--version` is omitted |
+| `revisions` | Exact version-to-full-Microsoft-commit map |
 
-Target profiles are deep-merged with target entries. Arrays replace profile
-arrays; objects merge recursively. `ort-builder list targets --json` prints the
-fully resolved definitions.
+The lock intentionally has no target definitions, profiles, or generated
+schema metadata.
 
 ## Resolved target fields
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Command target identifier |
+| `id` | Public command target identifier |
 | `family` | Registry/archive family; defaults to `id` |
-| `platform` | Package platform |
-| `host` | Required primary build host |
-| `driver` | Adapter around a Microsoft build entry point |
-| `architecture` / `architectures` / `slices` | Target CPU or platform-native slice set |
+| `recipe` | Module that owns target data and the Microsoft command plan |
+| `verification` | `verified` completed evidence or `unverified` implementation |
+| `platform` / `host` | Package platform and required primary build host |
+| `architecture` / `architectures` / `slices` | CPU or platform-native slice set |
 | `linkage` | `static` or `shared` |
 | `providers` | Required ONNX Runtime execution providers |
 | `minimum_platform` / `minimum_platforms` | Explicit deployment compatibility |
-| `toolchain` | Exact SDK/provider versions and required environment |
+| `toolchain` | Recipe-enforced SDK/provider versions and required environment |
 | `package` | Archive kind, header location, and required library paths |
-| `validation` | Binary format and Microsoft test policy |
+| `validation` | Microsoft test policy enforced by shared command behavior |
+| `features` | Recipe-enforced feature choices, currently used by WebAssembly |
 
-The visionOS targets resolve `providers` to `cpu` and `coreml`; they do not
-inherit XNNPACK from the shared Apple profiles. iOS and macOS targets retain
-their cataloged XNNPACK provider.
+Catalog loading rejects missing required fields, unknown recipe ownership, and
+unknown verification or test-policy values. The `validation` object rejects
+extra descriptive fields. Recipes consume fields such as toolchain and features
+when producing commands; the catalog does not retain old `profile`, `driver`,
+or binary-format labels that merely described behavior elsewhere.
+
+## Recipe groups
+
+| Recipe | Related targets | Verification at v1.29.0 |
+| --- | --- | --- |
+| Android | combined shared plus four per-ABI static packages | combined `android` verified |
+| Apple XCFramework | iOS, macOS, and visionOS; static/shared | `ios-static-xcframework` verified |
+| macOS shared | arm64, x86_64, universal2 | unverified |
+| macOS static | arm64, x86_64, universal2 | unverified |
+| Linux native | x86-64/AArch64, glibc 2.17/2.28, static/shared | unverified |
+| Linux cross/RISC-V | ARM and RISC-V static/shared | unverified |
+| CUDA | Linux x86-64/AArch64 and Windows x64, CUDA 12/13 | unverified |
+| Windows CPU | x86/x64/arm64, `/MD`/`/MT`, static/shared | unverified |
+| Windows ARM64X | two-stage ARM64/ARM64EC shared build | unverified |
+| DirectML | Windows x64 shared | unverified |
+| WebAssembly | SIMD/threads combinations, static | `wasm-static_lib-simd` verified |
+
+VisionOS resolves providers to CPU and CoreML; it does not inherit XNNPACK.
+iOS and macOS retain XNNPACK where Microsoft's Apple builder supports it.
+
+ROCm and OpenHarmony are not target rows at v1.29.0. ROCm lacks its provider
+and Microsoft build flag at the locked commit. OpenHarmony lacks Microsoft
+build machinery and completed Wfloat implementation evidence. Consequently the
+CLI rejects those identifiers instead of emitting plausible-looking commands.
 
 ## Archive identity
 
@@ -50,25 +78,20 @@ onnxruntime-<family>-<version>-<builder>.zip
 └── onnxruntime-<family>-<version>-<builder>/
 ```
 
-Every archive is a Release package. `release` is not part of the family or
-filename. Non-native bundles use `include/` and `lib/`, except the combined
-Android target, which uses common `headers/` and `jni/<abi>/` directories.
+Every archive is a Release package. Non-native bundles use `include/` and
+`lib/`, except combined Android, which uses `headers/` and `jni/<abi>/`.
 Apple XCFramework targets contain `onnxruntime.xcframework`.
 
-The iOS consumer deployment floor is 13.0. The arm64 simulator architecture,
-which Apple introduced with iOS 14, is allowed to carry a 14.0 Mach-O minimum
-while the x86_64 simulator and arm64 device slices remain at 13.0. Validation
-thins universal archives and checks each architecture independently.
+The iOS deployment floor is 13.0. The arm64 simulator architecture may carry a
+14.0 Mach-O minimum while x86_64 simulator and arm64 device slices remain at
+13.0. Validation thins universal archives and checks each architecture.
 
-The version must resolve to exactly one commit in `source_revisions`. The CLI
-has no arbitrary source-revision override. Changing a version's source commit
-therefore requires a committed catalog change, which also changes `<builder>`
-in the archive identity. `--source-dir` accepts only a Microsoft checkout whose
-`HEAD` equals the cataloged commit.
-
-Every archive contains the exact Microsoft source revision's `LICENSE` and
-`ThirdPartyNotices.txt` at its top level. No checksum, JSON, registry metadata,
-or provenance sidecar is part of the package.
+The CLI has no arbitrary source-revision override. `--source-dir` accepts only
+a Microsoft checkout with no tracked, untracked, or ignored content whose
+`HEAD` and recursive submodules match the locked revision. Every archive
+contains that source's `LICENSE` and
+`ThirdPartyNotices.txt`; there is no checksum, JSON, registry metadata, or
+provenance sidecar in the package.
 
 ## Test policies
 
@@ -79,3 +102,21 @@ or provenance sidecar is part of the package.
 | `gpu-compile` | Build and validate provider files/linkage; report runtime validation separately unless matching hardware is available |
 
 The validator never converts a skipped test into a pass.
+
+## Automatic CI targets
+
+The automatic workflow builds these exact targets when shared builder behavior
+changes:
+
+- `android`
+- `ios-static-xcframework`
+- `wasm-static_lib-simd`
+- `linux-x64-glibc2_17`
+- `linux-aarch64-glibc2_17`
+- `osx-arm64-static_lib`
+- `osx-x86_64-static_lib`
+- `win-x64-static_lib-mt`
+
+Recipe-only changes select only the automatic targets owned by that recipe.
+Being in this list does not imply `verification: verified`; successful build,
+artifact, and proportional consumer evidence must earn that status.

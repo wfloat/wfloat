@@ -6,6 +6,12 @@ Runtime's own source and build entry points. The default source version is
 `1.29.0`; every cataloged version maps to one exact Microsoft commit, and every
 build records an exact committed Wfloat builder revision.
 
+Target definitions live beside their platform command plans in
+`onnxruntime_builder/recipes/`. The small `source-lock.json` file contains only
+the Microsoft repository, default version, and exact version-to-commit map.
+`list targets --json` assembles those inputs into the fully resolved catalog
+used by CI.
+
 Start with the task you need:
 
 - [Build or validate an artifact](docs/how-to/build-and-validate.md)
@@ -21,10 +27,23 @@ The three public commands are:
 ./tools/onnxruntime-build/ort-builder validate wasm-static_lib-simd path/to/archive.zip
 ```
 
+The list marks targets `verified` only when Wfloat has completed artifact
+evidence, not merely a generated command plan. Other implemented recipes are
+shown as `unverified`, and a build prints that distinction. ROCm and
+OpenHarmony are absent at Microsoft v1.29.0 because this exact source revision
+does not provide the required build machinery.
+
 Build commands create local cache, intermediate, and output directories below
 this directory. Those directories are ignored by Git. Nothing in this builder
 publishes to Wfloat's registry, creates registry metadata, or changes consumer
 URLs and hashes.
+
+GitHub Actions automatically builds the exact targets used by Wfloat's current
+Android, iOS, Web, Linux x86-64/AArch64, macOS arm64/x86-64, and Windows x64
+consumer matrix. An automatic build does not become `verified` until its
+completed evidence is reviewed. Actions validates each artifact and then
+removes it from the runner; it does not upload completed archives as workflow
+artifacts.
 
 The source is licensed under the repository's [MIT license](../../LICENSE).
 Generated archives contain Microsoft's `LICENSE` and

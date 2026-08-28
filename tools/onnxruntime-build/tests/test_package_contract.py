@@ -260,6 +260,7 @@ class PackageContractTest(unittest.TestCase):
             compiler.write_text("fixture\n", encoding="utf-8")
 
             def fake_tool(command: list[str]) -> str:
+                self.assertIn("-sDISABLE_EXCEPTION_CATCHING=0", command)
                 output = Path(command[command.index("-o") + 1])
                 output.write_bytes(b"\x00asm")
                 return ""

@@ -6,6 +6,12 @@ on:
       - main
     paths:
       - "tools/onnxruntime-build/**"
+      - "vendor/sherpa-onnx/build-wasm-simd-speech.sh"
+      - "vendor/sherpa-onnx/cmake/onnxruntime-wasm-simd.cmake"
+      - "vendor/sherpa-onnx/wasm/speech/CMakeLists.txt"
+      - "vendor/sherpa-onnx/wasm/wasm-common.cmake"
+      - "scripts/ensure-emscripten.sh"
+      - "packages/wfloat-web/scripts/build-sherpa-speech-wasm.sh"
       - ".github/workflows/onnxruntime-builder-ci.yml"
       - ".github/workflows/onnxruntime-builder-manual.yml"
   pull_request:
@@ -13,6 +19,12 @@ on:
       - main
     paths:
       - "tools/onnxruntime-build/**"
+      - "vendor/sherpa-onnx/build-wasm-simd-speech.sh"
+      - "vendor/sherpa-onnx/cmake/onnxruntime-wasm-simd.cmake"
+      - "vendor/sherpa-onnx/wasm/speech/CMakeLists.txt"
+      - "vendor/sherpa-onnx/wasm/wasm-common.cmake"
+      - "scripts/ensure-emscripten.sh"
+      - "packages/wfloat-web/scripts/build-sherpa-speech-wasm.sh"
       - ".github/workflows/onnxruntime-builder-ci.yml"
       - ".github/workflows/onnxruntime-builder-manual.yml"
   workflow_dispatch:
@@ -39,19 +51,60 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run command and validator tests
+      - name: Run command, catalog, selector, and validator tests
         working-directory: tools/onnxruntime-build
-        run: python -m unittest discover -s tests -v
+        run: python -B -m unittest discover -s tests -v
 
       - name: Resolve every target
         run: |
           python tools/onnxruntime-build/ort-builder list targets --json > /tmp/onnxruntime-targets.json
           python -m json.tool /tmp/onnxruntime-targets.json > /dev/null
 
-  wasm_smoke:
-    name: WebAssembly SIMD package smoke
+  select_automatic_builds:
+    name: Select automatic artifact builds
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      has_jobs: ${{ steps.select.outputs.has_jobs }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - id: select
+        name: Select from changed files
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          args=(--github-output "${GITHUB_OUTPUT}")
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" || "${BASE_SHA}" =~ ^0+$ ]]; then
+            args+=(--all)
+          else
+            args+=(--base "${BASE_SHA}" --head "${HEAD_SHA}")
+          fi
+          python tools/onnxruntime-build/ci/select_builds.py "${args[@]}"
+
+  build_automatic:
+    name: ${{ matrix.target }} build
+    needs: [package_contracts, select_automatic_builds]
+    if: needs.select_automatic_builds.outputs.has_jobs == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select_automatic_builds.outputs.matrix) }}
+    # Target data cannot choose arbitrary or self-hosted runners. Every
+    # automatic target is mapped by this fixed expression to a hosted image.
+    runs-on: ${{ matrix.target == 'ios-static-xcframework' && 'macos-15' || matrix.target == 'osx-arm64-static_lib' && 'macos-15' || matrix.target == 'osx-x86_64-static_lib' && 'macos-15-intel' || matrix.target == 'win-x64-static_lib-mt' && 'windows-2025' || matrix.target == 'linux-aarch64-glibc2_17' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v5
@@ -62,31 +115,55 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tools
+      - name: Install Linux build tools
+        if: runner.os == 'Linux' && matrix.recipe != 'linux_native'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build
 
-      - name: Build through the public command
+      - uses: actions/setup-java@v5
+        if: matrix.recipe == 'android'
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+        if: matrix.recipe == 'android'
+
+      - name: Install exact Android NDK
+        if: matrix.recipe == 'android'
+        shell: bash
         run: |
-          python tools/onnxruntime-build/ort-builder build \
-            wasm-static_lib-simd \
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-35" "ndk;28.0.13004108"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/28.0.13004108" >> "${GITHUB_ENV}"
+
+      - name: Build through the public command
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          python tools/onnxruntime-build/ci/run_target.py build \
+            "${TARGET}" \
             --version 1.29.0 \
             --jobs 4
 
-      - name: Validate through the public command
+      - name: Revalidate before cleanup
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           source_dir=tools/onnxruntime-build/.cache/sources/onnxruntime-1.29.0
           test -d "${source_dir}"
-          source "${source_dir}/cmake/external/emsdk/emsdk_env.sh"
+          if [[ "${TARGET}" == wasm-* ]]; then
+            source "${source_dir}/cmake/external/emsdk/emsdk_env.sh"
+          fi
           archive=$(find tools/onnxruntime-build/.out -maxdepth 1 -name '*.zip' -print -quit)
           test -n "${archive}"
-          python tools/onnxruntime-build/ort-builder validate \
-            wasm-static_lib-simd "${archive}" --source-dir "${source_dir}"
+          python tools/onnxruntime-build/ci/run_target.py validate \
+            "${TARGET}" "${archive}"
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: onnxruntime-wasm-static-lib-simd-smoke
-          path: tools/onnxruntime-build/.out/*.zip
-          if-no-files-found: error
-          retention-days: 7
+      - name: Remove completed artifact from the runner
+        if: always()
+        shell: bash
+        run: rm -rf tools/onnxruntime-build/.out

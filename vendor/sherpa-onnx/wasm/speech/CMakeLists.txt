@@ -87,6 +87,10 @@ list(JOIN mangled_exported_functions "," all_exported_functions)
 
 include_directories(${CMAKE_SOURCE_DIR})
 set(MY_FLAGS " -s FORCE_FILESYSTEM=1 -s INITIAL_MEMORY=512MB -s ALLOW_MEMORY_GROWTH=1 -s ALLOW_TABLE_GROWTH=1")
+# Wfloat's ONNX Runtime archive is compiled with Microsoft's full Emscripten
+# exception-handling mode. DISABLE_EXCEPTION_CATCHING is a compile+link setting,
+# so the downstream executable must select the same mode explicitly.
+string(APPEND MY_FLAGS " -sDISABLE_EXCEPTION_CATCHING=0 ")
 string(APPEND MY_FLAGS " -sSTACK_SIZE=10485760 ")
 string(APPEND MY_FLAGS " -sEXPORTED_FUNCTIONS=[_malloc,_free,${all_exported_functions}] ")
 string(APPEND MY_FLAGS " -sEXPORTED_RUNTIME_METHODS=['FS','ccall','stringToUTF8','setValue','getValue','lengthBytesUTF8','UTF8ToString','UTF8ArrayToString','wasmMemory','stackSave','stackRestore','addFunction','removeFunction'] ")

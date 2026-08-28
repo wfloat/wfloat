@@ -553,6 +553,7 @@ def _smoke_test(target: dict, root: Path, source_dir: Path | None) -> str:
                 str(lib_dir / "libonnxruntime.a"),
                 "-Wl,--no-entry",
                 "-sERROR_ON_UNDEFINED_SYMBOLS=1",
+                "-sDISABLE_EXCEPTION_CATCHING=0",
                 "-o",
                 str(output),
             ]
@@ -623,6 +624,7 @@ def validate_archive(
     run_smoke: bool = True,
     inspect_metadata: bool = True,
     source_dir: Path | None = None,
+    source_was_verified_after_build: bool = False,
 ) -> list[str]:
     target = catalog.target(target_id)
     archive = archive.resolve()
@@ -631,7 +633,7 @@ def validate_archive(
         raise ValidationError(f"archive does not exist: {archive}")
     version, _ = _parse_archive_identity(target, archive)
     source_revision = catalog.source_revision(version)
-    if source_dir:
+    if source_dir and not source_was_verified_after_build:
         try:
             validation_source_revision = verify_microsoft_source(source_dir)
         except SourceError as error:

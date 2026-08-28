@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/microsoft/onnxruntime.git",
+  "default_version": "1.29.0",
+  "revisions": {
+    "1.29.0": "2e2543fbe9fae542f921d47a72d21d5a4ef0b710"
+  }
+}

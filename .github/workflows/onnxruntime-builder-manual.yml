@@ -41,7 +41,6 @@ on:
           - linux-x64-gpu_cuda13
           - linux-aarch64-gpu_cuda12
           - linux-aarch64-gpu_cuda13
-          - linux-x64-rocm
           - win-x86-md
           - win-x86-mt
           - win-x86-static_lib-md
@@ -62,9 +61,6 @@ on:
           - wasm-static_lib-simd
           - wasm-static_lib-threads
           - wasm-static_lib-simd-threads
-          - ohos-arm64-v8a
-          - ohos-armeabi-v7a
-          - ohos-x86_64
       version:
         description: Cataloged ONNX Runtime version
         required: true
@@ -145,7 +141,7 @@ jobs:
           fi
           python tools/onnxruntime-build/ort-builder "${args[@]}"
 
-      - name: Revalidate the workflow artifact
+      - name: Revalidate the completed archive
         shell: bash
         env:
           TARGET: ${{ inputs.target }}
@@ -159,11 +155,9 @@ jobs:
           archive=$(find tools/onnxruntime-build/.out -maxdepth 1 -name '*.zip' -print -quit)
           test -n "${archive}"
           python tools/onnxruntime-build/ort-builder validate \
-            "${TARGET}" "${archive}" --source-dir "${source_dir}"
+            "${TARGET}" "${archive}"
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: onnxruntime-${{ inputs.target }}-${{ github.run_id }}
-          path: tools/onnxruntime-build/.out/*.zip
-          if-no-files-found: error
-          retention-days: 14
+      - name: Remove completed artifact from the runner
+        if: always()
+        shell: bash
+        run: rm -rf tools/onnxruntime-build/.out
