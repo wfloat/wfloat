@@ -30,7 +30,13 @@ def command_for(arguments: list[str]) -> list[str]:
     target = arguments[1]
     image = MANYLINUX_IMAGES.get(target)
     if image is None:
-        return [sys.executable, str(BUILDER_ROOT / "onnxruntime-build"), *arguments]
+        return [
+            sys.executable,
+            "-I",
+            "-B",
+            str(BUILDER_ROOT / "onnxruntime-build"),
+            *arguments,
+        ]
 
     if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
         raise RuntimeError(f"{target} requires Docker on a Linux runner")

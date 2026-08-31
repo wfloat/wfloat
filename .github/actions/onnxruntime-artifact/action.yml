@@ -19,7 +19,7 @@ runs:
         TARGET: ${{ inputs.target }}
         MANYLINUX: ${{ inputs.manylinux }}
       run: |
-        builder=(python tools/onnxruntime-build/onnxruntime-build)
+        builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)
         if [[ "${MANYLINUX}" == "true" ]]; then
           builder=(python tools/onnxruntime-build/ci/run_target.py)
         fi
@@ -41,7 +41,7 @@ runs:
           source "${source_dirs[0]}/cmake/external/emsdk/emsdk_env.sh"
         fi
 
-        builder=(python tools/onnxruntime-build/onnxruntime-build)
+        builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)
         if [[ "${MANYLINUX}" == "true" ]]; then
           builder=(python tools/onnxruntime-build/ci/run_target.py)
         fi

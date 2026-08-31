@@ -151,7 +151,12 @@ class WorkflowTopologyTest(unittest.TestCase):
 
     def test_shared_action_builds_revalidates_and_briefly_retains_archives(self) -> None:
         text = ARTIFACT_ACTION.read_text(encoding="utf-8")
-        self.assertIn("builder=(python tools/onnxruntime-build/onnxruntime-build)", text)
+        self.assertEqual(
+            text.count(
+                "builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)"
+            ),
+            2,
+        )
         self.assertIn("builder=(python tools/onnxruntime-build/ci/run_target.py)", text)
         self.assertIn('"${builder[@]}" build', text)
         self.assertIn('"${builder[@]}" validate', text)
@@ -285,7 +290,8 @@ class CiRunnerTest(unittest.TestCase):
     def test_other_targets_use_the_public_launcher_with_current_python(self) -> None:
         command = RUNNER.command_for(["build", "win-x64-static_lib-mt"])
         self.assertEqual(command[0], sys.executable)
-        self.assertEqual(command[1], str(ROOT / "onnxruntime-build"))
+        self.assertEqual(command[1:3], ["-I", "-B"])
+        self.assertEqual(command[3], str(ROOT / "onnxruntime-build"))
         self.assertEqual(command[-2:], ["build", "win-x64-static_lib-mt"])
 
 
