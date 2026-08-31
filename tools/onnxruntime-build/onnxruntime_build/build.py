@@ -37,8 +37,13 @@ def _builder_revision(require_clean: bool) -> tuple[Path, str]:
         relative_builder = BUILDER_ROOT.relative_to(repository)
         paths = [
             str(relative_builder),
-            ".github/workflows/onnxruntime-builder-ci.yml",
-            ".github/workflows/onnxruntime-builder-manual.yml",
+            ".github/actions/onnxruntime-artifact",
+            ".github/workflows/onnxruntime-builder-android.yml",
+            ".github/workflows/onnxruntime-builder-apple.yml",
+            ".github/workflows/onnxruntime-builder-contracts.yml",
+            ".github/workflows/onnxruntime-builder-linux.yml",
+            ".github/workflows/onnxruntime-builder-wasm.yml",
+            ".github/workflows/onnxruntime-builder-windows.yml",
         ]
         status = capture(
             ["git", "status", "--porcelain", "--untracked-files=normal", "--", *paths],
@@ -50,7 +55,7 @@ def _builder_revision(require_clean: bool) -> tuple[Path, str]:
                 + status
             )
         executable_paths = [
-            str(relative_builder / "onnxruntime_builder"),
+            str(relative_builder / "onnxruntime_build"),
             str(relative_builder / "ci"),
         ]
         ignored_status = capture(

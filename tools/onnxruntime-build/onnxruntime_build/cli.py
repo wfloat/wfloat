@@ -22,7 +22,7 @@ def _positive_integer(value: str) -> int:
 
 def _parser(catalog: Catalog) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ort-builder",
+        prog="onnxruntime-build",
         description="Build and validate Wfloat ONNX Runtime C/C++ artifacts.",
     )
     commands = parser.add_subparsers(dest="command", required=True)

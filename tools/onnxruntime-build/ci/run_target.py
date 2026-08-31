@@ -26,11 +26,11 @@ MANYLINUX_IMAGES = {
 
 def command_for(arguments: list[str]) -> list[str]:
     if len(arguments) < 2:
-        raise ValueError("expected an ort-builder command followed by a target")
+        raise ValueError("expected an onnxruntime-build command followed by a target")
     target = arguments[1]
     image = MANYLINUX_IMAGES.get(target)
     if image is None:
-        return [sys.executable, str(BUILDER_ROOT / "ort-builder"), *arguments]
+        return [sys.executable, str(BUILDER_ROOT / "onnxruntime-build"), *arguments]
 
     if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
         raise RuntimeError(f"{target} requires Docker on a Linux runner")
@@ -38,7 +38,7 @@ def command_for(arguments: list[str]) -> list[str]:
         "/opt/python/cp312-cp312/bin/python",
         "-I",
         "-B",
-        "/workspace/tools/onnxruntime-build/ort-builder",
+        "/workspace/tools/onnxruntime-build/onnxruntime-build",
         *arguments,
     ]
     return [

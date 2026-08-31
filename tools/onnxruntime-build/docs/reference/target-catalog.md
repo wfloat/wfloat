@@ -1,12 +1,12 @@
 # Target catalog reference
 
 Target definitions live in the platform modules under
-`onnxruntime_builder/recipes/`. [`source-lock.json`](../../source-lock.json)
+`onnxruntime_build/recipes/`. [`source-lock.json`](../../source-lock.json)
 contains only Microsoft source provenance. Workflows and local commands consume
 the same assembled catalog, and this command emits every fully resolved target:
 
 ```sh
-./tools/onnxruntime-build/ort-builder list targets --json
+./tools/onnxruntime-build/onnxruntime-build list targets --json
 ```
 
 ## Source lock fields
@@ -49,7 +49,7 @@ or binary-format labels that merely described behavior elsewhere.
 | Recipe | Related targets | Verification at v1.29.0 |
 | --- | --- | --- |
 | Android | combined shared plus four per-ABI static packages | combined `android` verified |
-| Apple XCFramework | iOS, macOS, and visionOS; static/shared | `ios-static-xcframework` verified |
+| Apple XCFramework | iOS, macOS, and visionOS; static/shared | unverified |
 | macOS shared | arm64, x86_64, universal2 | unverified |
 | macOS static | arm64, x86_64, universal2 | unverified |
 | Linux native | x86-64/AArch64, glibc 2.17/2.28, static/shared | unverified |
@@ -58,10 +58,12 @@ or binary-format labels that merely described behavior elsewhere.
 | Windows CPU | x86/x64/arm64, `/MD`/`/MT`, static/shared | unverified |
 | Windows ARM64X | two-stage ARM64/ARM64EC shared build | unverified |
 | DirectML | Windows x64 shared | unverified |
-| WebAssembly | SIMD/threads combinations, static | `wasm-static_lib-simd` verified |
+| WebAssembly | SIMD/threads combinations, static | unverified |
 
 VisionOS resolves providers to CPU and CoreML; it does not inherit XNNPACK.
 iOS and macOS retain XNNPACK where Microsoft's Apple builder supports it.
+Every Apple target records and enforces Xcode 16.4 build 16F6 at
+`/Applications/Xcode_16.4.app/Contents/Developer`.
 
 ROCm and OpenHarmony are not target rows at v1.29.0. ROCm lacks its provider
 and Microsoft build flag at the locked commit. OpenHarmony lacks Microsoft
@@ -103,10 +105,10 @@ provenance sidecar in the package.
 
 The validator never converts a skipped test into a pass.
 
-## Automatic CI targets
+## Automatic CI evidence targets
 
-The automatic workflow builds these exact targets when shared builder behavior
-changes:
+Five platform-family workflows build this intended migration and evidence
+matrix when shared builder behavior changes:
 
 - `android`
 - `ios-static-xcframework`
@@ -117,6 +119,16 @@ changes:
 - `osx-x86_64-static_lib`
 - `win-x64-static_lib-mt`
 
-Recipe-only changes select only the automatic targets owned by that recipe.
-Being in this list does not imply `verification: verified`; successful build,
-artifact, and proportional consumer evidence must earn that status.
+Some live consumers still pin older artifacts; this matrix is not a claim that
+all consumers already use v1.29.0. Ordered workflow filters include future
+shared `onnxruntime_build` modules, exclude every recipe, and reinclude only
+the owning family's recipes. A validator or other shared-module change therefore
+triggers all families, while an unrelated recipe change does not. Tests and
+documentation run the separate contract workflow without rebuilding every
+platform. Each family workflow also supports input-free manual dispatch, so a
+caller cannot substitute a target, runner, version, or source revision. Every
+completed archive is revalidated and retained as a GitHub Actions artifact for
+three days of inspection.
+
+Being in this list, or completing CI, does not imply `verification: verified`;
+completed artifact and proportional consumer evidence must earn that status.

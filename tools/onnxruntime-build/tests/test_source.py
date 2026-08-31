@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from unittest import mock
 
-from onnxruntime_builder.source import (
+from onnxruntime_build.source import (
     MICROSOFT_REPOSITORY,
     SourceError,
     _sanitize_managed_cache,
@@ -47,8 +47,8 @@ class SourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_name:
             temporary = Path(temporary_name)
             with mock.patch(
-                "onnxruntime_builder.source.verify_microsoft_source", return_value="b" * 40
-            ), mock.patch("onnxruntime_builder.source._run") as run:
+                "onnxruntime_build.source.verify_microsoft_source", return_value="b" * 40
+            ), mock.patch("onnxruntime_build.source._run") as run:
                 with self.assertRaisesRegex(SourceError, "not cataloged commit"):
                     acquire_source(
                         cache_dir=temporary / "cache",

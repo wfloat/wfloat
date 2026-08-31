@@ -553,7 +553,6 @@ def _smoke_test(target: dict, root: Path, source_dir: Path | None) -> str:
                 str(lib_dir / "libonnxruntime.a"),
                 "-Wl,--no-entry",
                 "-sERROR_ON_UNDEFINED_SYMBOLS=1",
-                "-sDISABLE_EXCEPTION_CATCHING=0",
                 "-o",
                 str(output),
             ]

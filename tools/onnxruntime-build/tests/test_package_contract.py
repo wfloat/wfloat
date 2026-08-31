@@ -8,8 +8,8 @@ import plistlib
 from pathlib import Path
 from unittest import mock
 
-from onnxruntime_builder.catalog import Catalog
-from onnxruntime_builder.validate import (
+from onnxruntime_build.catalog import Catalog
+from onnxruntime_build.validate import (
     ValidationError,
     _android_readelf,
     _architecture_matches,
@@ -71,13 +71,13 @@ class PackageContractTest(unittest.TestCase):
             readelf.chmod(0o755)
             with mock.patch.dict(
                 "os.environ", {"ANDROID_NDK_HOME": str(ndk)}, clear=True
-            ), mock.patch("onnxruntime_builder.validate.shutil.which", return_value=None):
+            ), mock.patch("onnxruntime_build.validate.shutil.which", return_value=None):
                 self.assertEqual(_android_readelf("28.0.13004108"), str(readelf))
 
     def test_apple_minimum_validation_is_architecture_specific(self) -> None:
         reported = {"arm64": ["14.0"], "x86_64": ["13.0"]}
         with mock.patch(
-            "onnxruntime_builder.validate._apple_minimum_versions_by_architecture",
+            "onnxruntime_build.validate._apple_minimum_versions_by_architecture",
             return_value=reported,
         ):
             _check_apple_minimum(
@@ -224,7 +224,7 @@ class PackageContractTest(unittest.TestCase):
             archive = temporary / f"onnxruntime-wasm-static_lib-1.29.0-{BUILDER}.zip"
             _standard_fixture(archive, target)
             with mock.patch(
-                "onnxruntime_builder.validate.verify_microsoft_source", return_value="b" * 40
+                "onnxruntime_build.validate.verify_microsoft_source", return_value="b" * 40
             ), self.assertRaisesRegex(ValidationError, "not cataloged commit"):
                 validate_archive(
                     self.catalog,
@@ -260,13 +260,13 @@ class PackageContractTest(unittest.TestCase):
             compiler.write_text("fixture\n", encoding="utf-8")
 
             def fake_tool(command: list[str]) -> str:
-                self.assertIn("-sDISABLE_EXCEPTION_CATCHING=0", command)
+                self.assertNotIn("-sDISABLE_EXCEPTION_CATCHING=0", command)
                 output = Path(command[command.index("-o") + 1])
                 output.write_bytes(b"\x00asm")
                 return ""
 
-            with mock.patch("onnxruntime_builder.validate.shutil.which", return_value=None), mock.patch(
-                "onnxruntime_builder.validate._tool_output", side_effect=fake_tool
+            with mock.patch("onnxruntime_build.validate.shutil.which", return_value=None), mock.patch(
+                "onnxruntime_build.validate._tool_output", side_effect=fake_tool
             ):
                 result = _smoke_test(target, root, source_dir)
         self.assertEqual(result, "PASS compile/link smoke (WebAssembly final link)")

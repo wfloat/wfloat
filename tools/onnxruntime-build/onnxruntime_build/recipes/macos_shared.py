@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..core import BuildContext, CommandPlan, Recipe, base_build_command, finish_test_args, target_architectures
+from .apple_xcframework import APPLE_TOOLCHAIN, apple_preflight
 
 
 _COMMON = {
@@ -8,6 +9,7 @@ _COMMON = {
     "host": "macos",
     "linkage": "shared",
     "providers": ["cpu", "coreml", "xnnpack"],
+    "toolchain": dict(APPLE_TOOLCHAIN),
     "minimum_platform": "11.0",
     "package": {
         "kind": "standard",
@@ -41,4 +43,4 @@ def plan(target: dict, context: BuildContext) -> CommandPlan:
     return CommandPlan({"macos": context.build_root}, [command])
 
 
-RECIPE = Recipe("macos_shared", TARGETS, plan)
+RECIPE = Recipe("macos_shared", TARGETS, plan, apple_preflight)

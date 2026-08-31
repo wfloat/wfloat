@@ -17,7 +17,7 @@ The shared core owns behavior that must be identical for every target:
 - CLI parsing and resolved JSON output.
 
 Practical platform boundaries own their target data and Microsoft command
-plans in `onnxruntime_builder/recipes/`: Android, Apple XCFramework, macOS
+plans in `onnxruntime_build/recipes/`: Android, Apple XCFramework, macOS
 shared, macOS static, Linux native, Linux cross/RISC-V, CUDA, Windows CPU,
 Windows ARM64X, DirectML, and WebAssembly. A recipe contains related
 architecture, linkage, and feature variants as data; there is no module per
@@ -49,10 +49,11 @@ policy: it may build an unverified target specifically to gather the evidence
 needed for later promotion, but a workflow entry does not change the catalog's
 verification state.
 
-At Microsoft v1.29.0, the verified targets are the combined Android shared
-package, iOS static XCFramework, and `wasm-static_lib-simd`. The other accepted
-targets remain unverified until a real build and proportional consumer check
-complete.
+At Microsoft v1.29.0, the only verified target is the combined Android shared
+package. The Apple targets require new artifact evidence under the exact Xcode
+16.4 build 16F6 contract, and `wasm-static_lib-simd` likewise remains
+unverified. Every accepted unverified target requires a real build and
+proportional consumer check at a committed Wfloat revision before promotion.
 
 ROCm is not an accepted target at this lock: Microsoft's source has neither
 the ROCm provider directory nor `--use_rocm`, and MIGraphX is not a substitute.
@@ -68,16 +69,15 @@ its general LTO option is off. Wfloat supplies later Release `-fno-lto` flags
 because Sherpa performs the final Emscripten link. Package validation extracts
 an archive member and rejects LLVM bitcode in place of a WebAssembly object.
 
-Exception catching remains enabled. Microsoft v1.29.0 maps
-`onnxruntime_ENABLE_WEBASSEMBLY_EXCEPTION_CATCHING=ON` to Emscripten's
-`DISABLE_EXCEPTION_CATCHING=0`; the recipe now passes that CMake choice
-explicitly and verifies the mapping in the exact Microsoft source. Emscripten
-defines the setting for both compile and link, so Wfloat's real Sherpa final
-link now carries the same option. That consumer currently pins Emscripten 4.0.8
-while Microsoft's v1.29.0 archive recipe uses 4.0.23; the completed Sherpa
-combined-speech link is the compatibility evidence between those exact roles.
-The C API smoke also enables catching. SIMD is enabled and threads remain off
-for Wfloat's demonstrated browser dependency.
+Exception catching remains disabled. The recipe passes Microsoft's
+`--disable_wasm_exception_catching` option, and Sherpa's final link leaves
+Emscripten's disabled-by-default mode unchanged. That consumer currently pins
+Emscripten 4.0.8 and a published ONNX Runtime 1.23.2 archive, while Microsoft's
+v1.29.0 archive recipe uses Emscripten 4.0.23. The v1.29.0 target remains
+unverified. Promoting it requires a deliberate artifact build and review,
+immutable publication, an explicit consumer URL/hash update, and the affected
+Web consumer validation. SIMD is enabled and threads remain off for the
+intended browser dependency.
 
 Build invocations also set CMake's policy compatibility minimum to 3.5. This
 lets current CMake configure legacy third-party dependency declarations such
@@ -85,26 +85,49 @@ as XNNPACK's psimd project without modifying Microsoft-selected sources.
 
 ## CI and publication
 
-CI selection is deliberately file-based. A recipe file selects every automatic
-target owned by that recipe. A source-lock or genuinely shared build/source/
-package change selects all automatic targets. Validator, test, and
-documentation changes run the contract suite without recompiling targets. The
-small set of live Sherpa/Emscripten files that defines the later WebAssembly
-link selects only `wasm-static_lib-simd`.
+CI is divided into a contract workflow and five build families: Android,
+Apple, Linux, Windows, and WebAssembly. Each build workflow declares its own
+fixed hosted runner, platform setup, and small target matrix. A recipe change
+therefore triggers only a family with an automatic target owned by that recipe,
+while source-lock or genuinely shared build/source/package changes trigger all
+five families. The ordered path filters first include all shared
+`onnxruntime_build` modules, then exclude every recipe, and finally reinclude
+only the family's recipe modules. Consequently a validator change triggers all
+families, while an unrelated recipe change does not. The shared composite-action
+directory also triggers every family so a future helper placed there cannot be
+missed. Tests and documentation run the contract suite without recompiling
+targets. Downstream Sherpa, llama, and Web package changes remain the
+responsibility of Wfloat Web CI, which consumes the exact published ONNX
+Runtime URL and checksum committed in Sherpa's CMake configuration. They do not
+trigger an ONNX Runtime rebuild.
 
-The automatic set follows Wfloat's current consumers: combined Android shared,
-iOS static XCFramework, Wasm SIMD static, Linux x86-64/AArch64 shared with the
-glibc 2.17 floor, macOS arm64/x86-64 static, and Windows x64 static with `/MT`.
-The two Linux targets run inside the same manylinux2014 environment family used
-by Wfloat's wheel matrix. The exact architecture-specific container manifests
-are pinned in `ci/run_target.py`, preventing a moving image tag from silently
-changing the compiler or sysroot. Each architecture is a separate job so native
-tests can run where applicable and one 14 GB runner does not hold multiple
-architecture build trees.
+The automatic set is an intended migration and evidence matrix: combined
+Android shared, iOS static XCFramework, Wasm SIMD static, Linux
+x86-64/AArch64 shared with the glibc 2.17 floor, macOS arm64/x86-64 static, and
+Windows x64 static with `/MT`. Some live consumers still pin older artifacts,
+so this list must not be read as a statement that every consumer already uses
+v1.29.0. The two Linux targets run inside the same manylinux2014 environment
+family used by Wfloat's wheel matrix. The exact architecture-specific container
+manifests are pinned in `ci/run_target.py`, preventing a moving image tag from
+silently changing the compiler or sysroot. Each architecture is a separate job
+so native tests can run where applicable and one 14 GB runner does not hold
+multiple architecture build trees.
+
+Apple jobs select `/Applications/Xcode_16.4.app/Contents/Developer` and require
+Xcode 16.4 build 16F6 on both `macos-15` arm64 and `macos-15-intel`. Windows
+uses `windows-2022`, initializes the Visual Studio 2022 x64 developer
+environment, and proves `cl.exe` and `dumpbin.exe` are available before the
+build. These checks fail closed if hosted-runner toolchains drift.
+
+Each family workflow can also be dispatched manually, but exposes no target,
+runner, version, source-revision, or test-policy input. Manual execution is thus
+bounded by the same committed source lock, target set, toolchain, and validation
+path as automatic execution.
 
 Workflows keep read-only repository permissions and the existing pull-request
-approval model. They contain no registry credentials. A completed archive is
-revalidated in the same job and then removed from the runner; GitHub Actions
-does not store it as a workflow artifact. Registry publication remains a
-separate Wfloat operation after the exact archive passes its real downstream
-consumer contract and receives explicit approval.
+approval model. External actions are pinned to immutable commits, and workflows
+contain no registry credentials. A completed archive is revalidated in the
+same job, uploaded for three days of inspection, and removed from the runner.
+Registry publication remains a separate Wfloat operation requiring explicit
+approval. Consumer URL/hash changes and their validation belong to that
+deliberate promotion process rather than ordinary builder CI.

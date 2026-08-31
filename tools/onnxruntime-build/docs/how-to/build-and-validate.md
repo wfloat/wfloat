@@ -10,9 +10,9 @@ List target identifiers and their resolved platform, architecture, linkage,
 execution-provider, recipe, and verification properties:
 
 ```sh
-./tools/onnxruntime-build/ort-builder list targets
-./tools/onnxruntime-build/ort-builder list targets --platform android
-./tools/onnxruntime-build/ort-builder list targets --json
+./tools/onnxruntime-build/onnxruntime-build list targets
+./tools/onnxruntime-build/onnxruntime-build list targets --platform android
+./tools/onnxruntime-build/onnxruntime-build list targets --json
 ```
 
 `verified` means a completed artifact exists and passed the documented checks
@@ -24,7 +24,7 @@ Use `--plan` to inspect the Microsoft build commands without fetching source or
 requiring a platform SDK:
 
 ```sh
-./tools/onnxruntime-build/ort-builder build ios-static-xcframework --plan --jobs 4
+./tools/onnxruntime-build/onnxruntime-build build ios-static-xcframework --plan --jobs 4
 ```
 
 ## Prepare the builder revision
@@ -49,7 +49,7 @@ place them elsewhere.
 Build the default cataloged ONNX Runtime revision with a bounded job count:
 
 ```sh
-./tools/onnxruntime-build/ort-builder build wasm-static_lib-simd --jobs 4
+./tools/onnxruntime-build/onnxruntime-build build wasm-static_lib-simd --jobs 4
 ```
 
 Every accepted version must have an exact Microsoft commit in the `revisions`
@@ -60,7 +60,7 @@ Arbitrary source overrides are not accepted.
 Select a cataloged version with `--version`:
 
 ```sh
-./tools/onnxruntime-build/ort-builder build wasm-static_lib-simd \
+./tools/onnxruntime-build/onnxruntime-build build wasm-static_lib-simd \
   --version 1.29.0 \
   --jobs 8
 ```
@@ -72,7 +72,7 @@ recursive submodule is at the recorded gitlink, and every submodule worktree is
 equally clean:
 
 ```sh
-./tools/onnxruntime-build/ort-builder build wasm-static_lib-simd \
+./tools/onnxruntime-build/onnxruntime-build build wasm-static_lib-simd \
   --version 1.29.0 \
   --source-dir /path/to/microsoft/onnxruntime
 ```
@@ -93,7 +93,7 @@ The `revisions` map in `source-lock.json` is authoritative for versions. When a
 recipe exposes toolchain versions or required environment variables in
 `list targets --json`, its preflight and command generation enforce them.
 Target definitions live in their owning modules under
-`onnxruntime_builder/recipes/`.
+`onnxruntime_build/recipes/`.
 
 ### Android
 
@@ -103,7 +103,7 @@ Set the Android SDK and NDK roots. The default catalog uses NDK
 ```sh
 export ANDROID_HOME=/path/to/android-sdk
 export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"
-./tools/onnxruntime-build/ort-builder build android --jobs 4
+./tools/onnxruntime-build/onnxruntime-build build android --jobs 4
 ```
 
 The combined package builds all four ABIs. Static Android targets build one
@@ -111,10 +111,17 @@ cataloged ABI.
 
 ### Apple
 
-Run Apple targets on macOS with suitable Xcode SDKs available. The builder
-uses Microsoft's Apple framework assembler for XCFramework and traditional
-static packages. iOS device and simulator slices are built with an explicit
-13.0 deployment target.
+Run Apple targets on macOS with Xcode 16.4 build 16F6 selected at the cataloged
+developer directory:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+xcodebuild -version
+```
+
+The builder preflight requires that exact selection. It uses Microsoft's Apple
+framework assembler for XCFramework and traditional static packages. iOS
+device and simulator slices are built with an explicit 13.0 deployment target.
 
 ### Linux glibc targets
 
@@ -160,21 +167,28 @@ target to select.
 
 ### Windows
 
-Run Windows builds from a Visual Studio developer environment. The target's
-`-md` or `-mt` suffix selects Microsoft's default dynamic MSVC runtime or its
+Run Windows builds from a Visual Studio 2022 x64 developer environment. The
+locked Microsoft source defaults to its `Visual Studio 17 2022` generator, and
+the family workflow uses `windows-2022` and verifies both `cl.exe` and
+`dumpbin.exe` before the build. The target's `-md` or `-mt` suffix selects
+Microsoft's default dynamic MSVC runtime or its
 `--enable_msvc_static_runtime` option. ARM64X uses Microsoft's documented
 two-stage ARM64 then ARM64EC build.
 
 ### WebAssembly
 
-Microsoft's build entry point installs and activates Emscripten 4.0.23 for the
+Microsoft’s build entry point installs and activates Emscripten 4.0.23 for the
 ONNX Runtime archive. Wfloat's live Sherpa consumer links with its independently
-pinned Emscripten 4.0.8. SIMD and threads are controlled independently by the
-target. The builder explicitly keeps exception catching enabled for ONNX
-Runtime's static objects and never enables archive-level LTO. Because Emscripten
-defines exception catching as a compile-and-link setting, Sherpa's real final
-link now explicitly uses `-sDISABLE_EXCEPTION_CATCHING=0`; validation uses the
-same setting.
+pinned Emscripten 4.0.8. Wfloat's bootstrap checks out the official emsdk at
+exact commit `419021fa040428bc69ef1559b325addb8e10211f`, refuses a modified or
+wrong-origin managed cache, and requires the compiler to report exactly
+`4.0.8`. The consumer currently pins a published ONNX Runtime 1.23.2 archive.
+SIMD and threads are controlled independently by the target. The builder uses
+Microsoft's `--disable_wasm_exception_catching` option and never enables
+archive-level LTO. Sherpa's final link does not override Emscripten's
+disabled-by-default exception-catching mode. The v1.29.0
+`wasm-static_lib-simd` contract remains unverified pending a successful
+committed-revision consumer run and reviewed evidence.
 
 ### OpenHarmony
 
@@ -188,7 +202,7 @@ target to select.
 Use the same target identifier that built the package:
 
 ```sh
-./tools/onnxruntime-build/ort-builder validate \
+./tools/onnxruntime-build/onnxruntime-build validate \
   linux-x64-glibc2_17 \
   tools/onnxruntime-build/.out/onnxruntime-linux-x64-glibc2_17-1.29.0-0123456789ab.zip
 ```
@@ -207,7 +221,7 @@ validation without treating the generated SDK as pristine Microsoft source:
 
 ```sh
 source ./scripts/ensure-emscripten.sh
-./tools/onnxruntime-build/ort-builder validate \
+./tools/onnxruntime-build/onnxruntime-build validate \
   wasm-static_lib-simd \
   path/to/onnxruntime-wasm-static_lib-simd-1.29.0-0123456789ab.zip
 ```
@@ -219,12 +233,20 @@ deliberately rejected as exact source.
 
 ## CI retention policy
 
-Builder workflows automatically cover Wfloat's current Android, iOS, Web,
-Linux x86-64/AArch64, macOS arm64/x86-64, and Windows x64 artifact contracts.
-The glibc 2.17 Linux builds run in architecture-matched manylinux2014
-containers. Their exact manifests are pinned in `ci/run_target.py`; changing a
-Linux build environment is therefore a reviewable source change rather than an
-implicit consequence of a moving image tag. Each workflow validates the
-completed zip and then removes `.out` from the runner. It does not upload the
-zip to GitHub Actions. Publication to Wfloat's immutable R2 registry remains a
-separate, explicitly approved operation.
+The contract, Android, Apple, Linux, Windows, and WebAssembly workflows are
+separate so each platform family owns fixed hosted runners and a small target
+set. Family workflows can be manually dispatched without accepting a target,
+runner, version, or source-revision override; the committed source lock remains
+authoritative.
+
+Automatic builds form Wfloat's intended migration and evidence matrix for
+Android, iOS, Web, Linux x86-64/AArch64, macOS arm64/x86-64, and Windows x64.
+Some live consumers still pin older artifacts, so membership is not a claim of
+current deployment or verification. The glibc 2.17 Linux builds run in
+architecture-matched manylinux2014 containers. Their exact manifests are pinned
+in `ci/run_target.py`; changing a Linux build environment is therefore a
+reviewable source change rather than an implicit consequence of a moving image
+tag. Each build revalidates its completed zip, uploads it to GitHub Actions with
+three-day retention, and then removes `.out` from the runner. Publication to
+Wfloat's immutable R2 registry remains a separate, explicitly approved
+operation.

@@ -1,19 +1,55 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import subprocess
 import sys
 
 from ..core import BuildContext, BuildError, CommandPlan, Recipe, tests_enabled
 
 
+APPLE_TOOLCHAIN = {
+    "xcode": "16.4",
+    "xcode_build": "16F6",
+    "developer_dir": "/Applications/Xcode_16.4.app/Contents/Developer",
+}
+
 _COMMON = {
     "platform": "apple",
     "host": "macos",
     "providers": ["cpu", "coreml", "xnnpack"],
+    "toolchain": dict(APPLE_TOOLCHAIN),
     "package": {"kind": "xcframework", "bundle": "onnxruntime.xcframework"},
     "validation": {"test_policy": "cross"},
     "verification": "unverified",
 }
+
+
+def apple_preflight(target: dict, source_dir: Path) -> None:
+    del source_dir
+    toolchain = target["toolchain"]
+    expected_dir = toolchain["developer_dir"]
+    actual_dir = os.environ.get("DEVELOPER_DIR")
+    if actual_dir != expected_dir:
+        raise BuildError(
+            f"{target['id']} requires DEVELOPER_DIR={expected_dir}; found {actual_dir or 'unset'}"
+        )
+    try:
+        result = subprocess.run(
+            ["xcodebuild", "-version"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise BuildError(f"unable to inspect the selected Xcode: {error}") from error
+    expected = [f"Xcode {toolchain['xcode']}", f"Build version {toolchain['xcode_build']}"]
+    if result.stdout.splitlines()[:2] != expected:
+        raise BuildError(
+            f"{target['id']} requires {' / '.join(expected)}; found {result.stdout.strip()}"
+        )
 
 
 def _target(linkage: str, slices: dict, minimums: dict, **extra: object) -> dict:
@@ -41,7 +77,6 @@ TARGETS = {
         _IOS_SLICES,
         _IOS_MINIMUMS,
         minimum_platforms_by_architecture=_IOS_ARCH_MINIMUMS,
-        verification="verified",
     ),
     "ios-shared-xcframework": _target(
         "shared",
@@ -120,4 +155,4 @@ def plan(target: dict, context: BuildContext) -> CommandPlan:
     return CommandPlan({"apple": context.build_root}, [command])
 
 
-RECIPE = Recipe("apple_xcframework", TARGETS, plan)
+RECIPE = Recipe("apple_xcframework", TARGETS, plan, apple_preflight)

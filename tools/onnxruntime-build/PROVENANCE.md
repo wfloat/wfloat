@@ -63,16 +63,17 @@ this post-build check; they are removed before the cache can be reused.
 ## Builder and target identity
 
 Target definitions and Microsoft command plans live together in independently
-owned modules under `onnxruntime_builder/recipes/`. Shared code owns source
+owned modules under `onnxruntime_build/recipes/`. Shared code owns source
 acquisition and integrity, builder identity, process execution, deterministic
 archives, notices, extraction safety, CLI behavior, and common validation
 primitives.
 
 The archive name contains the first 12 hexadecimal characters of the committed
-Wfloat revision containing the builder. A real build refuses dirty builder or
-builder-workflow paths so that this revision identifies the source that created
-the package. The public launcher restarts Python in isolated, bytecode-free mode
-before importing recipes for every command. List, plan, and validation commands
+Wfloat revision containing the builder. A real build refuses dirty builder,
+builder-workflow, or shared CI-action paths so that this revision identifies the
+source that created the package. The public launcher restarts Python in
+isolated, bytecode-free mode before importing recipes for every command. List,
+plan, and validation commands
 do not impose an executable-path cleanliness policy because they cannot create
 an artifact. Before a real non-plan build, the launcher fails closed unless
 executable builder paths have no tracked modifications or untracked/ignored
@@ -83,9 +84,10 @@ and the checks documented for that contract. It does not claim that every
 provider ran on hardware. `unverified` recipes may be inspected or attempted,
 but the CLI warns that command-plan coverage is not evidence that the platform
 works. CI may build an unverified target to collect evidence, but workflow
-selection never promotes catalog verification. At this source lock, ROCm is not cataloged because Microsoft v1.29.0
-lacks the provider and `--use_rocm`; OpenHarmony is not cataloged because no
-Microsoft/Wfloat implementation and completed evidence exist.
+selection never promotes catalog verification. At this source lock, ROCm is
+not cataloged because Microsoft v1.29.0 lacks the provider and `--use_rocm`;
+OpenHarmony is not cataloged because no Microsoft/Wfloat implementation and
+completed evidence exist.
 
 ## Distributed notices
 
@@ -99,19 +101,19 @@ From the identified Wfloat commit, list the resolved target and rebuild it with
 the recorded version, platform toolchain, and bounded job count:
 
 ```sh
-./tools/onnxruntime-build/ort-builder list targets --json
-./tools/onnxruntime-build/ort-builder build <target> --version <version> --jobs <jobs>
+./tools/onnxruntime-build/onnxruntime-build list targets --json
+./tools/onnxruntime-build/onnxruntime-build build <target> --version <version> --jobs <jobs>
 ```
 
 Validate an existing archive with the same public command used by CI:
 
 ```sh
-./tools/onnxruntime-build/ort-builder validate <target> <archive.zip>
+./tools/onnxruntime-build/onnxruntime-build validate <target> <archive.zip>
 ```
 
 Reproduction means rebuilding and satisfying the same source, package,
 metadata, linkage, and consumer contracts. Byte-for-byte identity with an
 artifact from another build environment or distributor is not claimed or
-required. GitHub Actions does not retain the completed zip: validation occurs
-on the runner and the output directory is removed afterward. Registry
-publication remains a separate, explicitly approved operation.
+required. GitHub Actions revalidates a completed zip before uploading it with a
+three-day inspection retention. That short-lived CI copy is not registry
+publication; publication remains a separate, explicitly approved operation.

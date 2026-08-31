@@ -5,11 +5,11 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from onnxruntime_builder.catalog import Catalog
+from onnxruntime_build.catalog import Catalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "ort-builder"
+CLI = ROOT / "onnxruntime-build"
 
 
 class CliTest(unittest.TestCase):
@@ -53,10 +53,11 @@ class CliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count("-fno-lto"), 2)
 
-    def test_wasm_release_plan_explicitly_enables_exception_catching(self) -> None:
+    def test_wasm_release_plan_explicitly_disables_exception_catching(self) -> None:
         result = self.run_cli("build", "wasm-static_lib-simd", "--plan")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(
+        self.assertIn("--disable_wasm_exception_catching", result.stdout)
+        self.assertNotIn(
             "onnxruntime_ENABLE_WEBASSEMBLY_EXCEPTION_CATCHING=ON",
             result.stdout,
         )
@@ -91,7 +92,7 @@ class CliTest(unittest.TestCase):
         self.assertIn("invalid choice", result.stderr)
 
     def test_list_and_plan_allow_ignored_executable_builder_files(self) -> None:
-        cache = ROOT / "onnxruntime_builder/__pycache__"
+        cache = ROOT / "onnxruntime_build/__pycache__"
         injected = cache / "injected.pyc"
         cache.mkdir(exist_ok=True)
         injected.write_bytes(b"not trusted builder code")
@@ -108,7 +109,7 @@ class CliTest(unittest.TestCase):
                 pass
 
     def test_real_build_rejects_ignored_code_before_recipe_import(self) -> None:
-        cache = ROOT / "onnxruntime_builder/__pycache__"
+        cache = ROOT / "onnxruntime_build/__pycache__"
         injected = cache / "injected.pyc"
         cache.mkdir(exist_ok=True)
         injected.write_bytes(b"not trusted builder code")
@@ -127,7 +128,7 @@ class CliTest(unittest.TestCase):
                 pass
 
     def test_real_build_rejects_untracked_code_before_recipe_import(self) -> None:
-        injected = ROOT / "onnxruntime_builder/injected_extension.so"
+        injected = ROOT / "onnxruntime_build/injected_extension.so"
         injected.write_bytes(b"not trusted builder code")
         try:
             result = self.run_cli("build", "wasm-static_lib-simd")

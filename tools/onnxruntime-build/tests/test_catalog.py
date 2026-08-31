@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-from onnxruntime_builder.catalog import Catalog
+from onnxruntime_build.catalog import Catalog
 
 
 EXPECTED_TARGETS = {
@@ -107,6 +106,17 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(target["slices"]["iphoneos"], ["arm64"])
         self.assertEqual(target["slices"]["iphonesimulator"], ["arm64", "x86_64"])
 
+    def test_apple_toolchain_is_exact(self) -> None:
+        expected = {
+            "xcode": "16.4",
+            "xcode_build": "16F6",
+            "developer_dir": "/Applications/Xcode_16.4.app/Contents/Developer",
+        }
+        for target in self.catalog.targets():
+            if target["host"] == "macos":
+                with self.subTest(target=target["id"]):
+                    self.assertEqual(target["toolchain"], expected)
+
     def test_cuda_compatibility_is_exact(self) -> None:
         cuda12 = self.catalog.target("linux-x64-gpu_cuda12")["toolchain"]
         cuda13 = self.catalog.target("win-x64-gpu_cuda13")["toolchain"]
@@ -119,8 +129,8 @@ class CatalogTest(unittest.TestCase):
         for target_id in sorted(name for name in EXPECTED_TARGETS if name.startswith("wasm-")):
             target = self.catalog.target(target_id)
             self.assertFalse(target["features"]["archive_lto"])
+            self.assertFalse(target["features"]["exception_catching"])
             self.assertEqual(target["architecture"], "wasm32")
-            self.assertTrue(target["features"]["exception_catching"])
 
     def test_windows_crt_is_in_target_identity(self) -> None:
         self.assertEqual(self.catalog.target("win-x64-static_lib-mt")["crt"], "mt")
@@ -134,7 +144,7 @@ class CatalogTest(unittest.TestCase):
         }
         self.assertEqual(
             verified,
-            {"android", "ios-static-xcframework", "wasm-static_lib-simd"},
+            {"android"},
         )
 
     def test_unavailable_rocm_and_openharmony_contracts_are_not_build_targets(self) -> None:
@@ -145,37 +155,6 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(self.catalog.target("android")["recipe"], "android")
         self.assertEqual(self.catalog.target("win-x64-directml")["recipe"], "directml")
         self.assertEqual(self.catalog.recipe("wasm-static_lib-simd").name, "wasm")
-
-    def test_manual_workflow_addresses_every_target(self) -> None:
-        repository = Path(__file__).resolve().parents[3]
-        workflow = (repository / ".github" / "workflows" / "onnxruntime-builder-manual.yml").read_text(
-            encoding="utf-8"
-        )
-        target_options = workflow.split("      target:\n", 1)[1].split("      version:\n", 1)[0]
-        options = {
-            line.strip().removeprefix("- ")
-            for line in target_options.splitlines()
-            if line.strip().startswith("- ")
-        }
-        self.assertEqual(options, EXPECTED_TARGETS)
-
-    def test_builder_workflows_are_read_only_and_do_not_publish(self) -> None:
-        repository = Path(__file__).resolve().parents[3]
-        for name in ["onnxruntime-builder-ci.yml", "onnxruntime-builder-manual.yml"]:
-            workflow = (repository / ".github" / "workflows" / name).read_text(encoding="utf-8")
-            self.assertIn("permissions:\n  contents: read", workflow)
-            self.assertNotIn("id-token: write", workflow)
-            self.assertNotIn("publish", workflow.lower())
-            self.assertNotIn("upload-artifact", workflow)
-
-    def test_manual_workflow_has_no_arbitrary_source_override(self) -> None:
-        repository = Path(__file__).resolve().parents[3]
-        workflow = (repository / ".github/workflows/onnxruntime-builder-manual.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("source_ref", workflow)
-        self.assertNotIn("--source-ref", workflow)
-        self.assertIn("ndk;28.0.13004108", workflow)
 
     def test_source_lock_is_small_and_separate_from_recipe_catalog(self) -> None:
         self.assertEqual(

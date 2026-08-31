@@ -11,7 +11,7 @@ SCRIPT = Path(__file__).resolve()
 BUILDER_ROOT = SCRIPT.parent
 REAL_BUILD = len(sys.argv) > 1 and sys.argv[1] == "build" and "--plan" not in sys.argv[2:]
 
-# `python ort-builder` ignores the shebang. Restart in isolated mode before
+# `python onnxruntime-build` ignores the shebang. Restart in isolated mode before
 # importing builder modules so local site hooks cannot alter artifact behavior.
 if not sys.flags.isolated:
     os.execv(sys.executable, [sys.executable, "-I", "-B", str(SCRIPT), *sys.argv[1:]])
@@ -37,7 +37,7 @@ if REAL_BUILD:
                 "--ignored=matching",
                 "--untracked-files=all",
                 "--",
-                str(relative / "onnxruntime_builder"),
+                str(relative / "onnxruntime_build"),
                 str(relative / "ci"),
             ],
             cwd=repository,
@@ -59,7 +59,7 @@ if REAL_BUILD:
 
 sys.path.insert(0, str(BUILDER_ROOT))
 
-from onnxruntime_builder.cli import main
+from onnxruntime_build.cli import main
 
 
 if __name__ == "__main__":

@@ -1,0 +1,59 @@
+name: ONNX Runtime builder WebAssembly
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/source-lock.json"
+      - "tools/onnxruntime-build/onnxruntime-build"
+      - "tools/onnxruntime-build/onnxruntime_build/**"
+      - "!tools/onnxruntime-build/onnxruntime_build/recipes/**"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/__init__.py"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/wasm.py"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-wasm.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/source-lock.json"
+      - "tools/onnxruntime-build/onnxruntime-build"
+      - "tools/onnxruntime-build/onnxruntime_build/**"
+      - "!tools/onnxruntime-build/onnxruntime_build/recipes/**"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/__init__.py"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/wasm.py"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-wasm.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onnxruntime-builder-wasm-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simd_static:
+    name: wasm-static_lib-simd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - uses: ./.github/actions/onnxruntime-artifact
+        with:
+          target: wasm-static_lib-simd
