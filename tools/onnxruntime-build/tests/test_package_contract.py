@@ -528,6 +528,34 @@ class PackageContractTest(unittest.TestCase):
         self.assertEqual(result, "PASS compile/link/run smoke")
         self.assertEqual(executions[-1]["LD_LIBRARY_PATH"], str(root / "lib"))
 
+    def test_native_smoke_compiles_against_the_ort_cxx17_header_contract(self) -> None:
+        target = self.catalog.target("osx-arm64-static_lib")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name) / "package"
+            (root / "include").mkdir(parents=True)
+            (root / "lib").mkdir()
+            (root / "lib" / "libonnxruntime.a").write_bytes(b"archive")
+            compilations: list[list[str]] = []
+
+            def fake_tool(command: list[str]) -> str:
+                compilations.append(command)
+                return ""
+
+            with mock.patch(
+                "onnxruntime_build.validate._host_architecture", return_value="arm64"
+            ), mock.patch(
+                "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/c++"
+            ), mock.patch(
+                "onnxruntime_build.validate._tool_output", side_effect=fake_tool
+            ), mock.patch(
+                "onnxruntime_build.validate.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0),
+            ):
+                result = _smoke_test(target, root, None)
+
+        self.assertEqual(result, "PASS compile/link/run smoke")
+        self.assertEqual(compilations[0][0:2], ["/usr/bin/c++", "-std=c++17"])
+
 
 if __name__ == "__main__":
     unittest.main()

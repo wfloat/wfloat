@@ -843,7 +843,16 @@ def _smoke_test(target: dict, root: Path, source_dir: Path | None) -> str:
         if not compiler:
             return "SKIP compile/link smoke: C++ compiler is not available"
         output = temporary / "smoke"
-        command = [compiler, str(source), f"-I{include_dir}", f"-L{lib_dir}", "-lonnxruntime", "-o", str(output)]
+        command = [
+            compiler,
+            "-std=c++17",
+            str(source),
+            f"-I{include_dir}",
+            f"-L{lib_dir}",
+            "-lonnxruntime",
+            "-o",
+            str(output),
+        ]
         if target["linkage"] == "shared":
             if _host() == "macos":
                 command.append(f"-Wl,-rpath,{lib_dir}")
