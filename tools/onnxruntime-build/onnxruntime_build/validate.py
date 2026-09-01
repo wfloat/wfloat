@@ -277,6 +277,11 @@ _MANYLINUX_LIBRARIES = {
     "libz.so.1",
 }
 
+_MANYLINUX_DYNAMIC_LOADERS = {
+    "x86_64": "ld-linux-x86-64.so.2",
+    "aarch64": "ld-linux-aarch64.so.1",
+}
+
 
 def _numeric_versions(prefix: str, first: int, last: int) -> set[str]:
     return {prefix, *(f"{prefix}.{value}" for value in range(first, last + 1))}
@@ -467,8 +472,13 @@ def _check_manylinux_abi(
 
     dynamic_output = _tool_output([readelf, "--dynamic", str(binary)])
     dependencies = set(re.findall(r"\(NEEDED\).*?Shared library:\s*\[([^]]+)\]", dynamic_output))
+    # TLS can create DT_NEEDED entries for the architecture's ELF loader.
+    # It is part of glibc itself, so manylinux tooling excludes it from
+    # external shared-library analysis rather than treating it as a library
+    # that must be bundled.
+    external_dependencies = dependencies - {_MANYLINUX_DYNAMIC_LOADERS[architecture]}
     libraries = _MANYLINUX_LIBRARIES | ({"libmvec.so.1"} if maximum == "2.28" else set())
-    unexpected = sorted(dependencies - libraries)
+    unexpected = sorted(external_dependencies - libraries)
     if unexpected:
         raise ValidationError(
             f"{binary} has dependencies outside the glibc {maximum} policy: {', '.join(unexpected)}"

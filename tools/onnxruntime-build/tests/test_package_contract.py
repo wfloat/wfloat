@@ -145,7 +145,7 @@ class PackageContractTest(unittest.TestCase):
         )
         dynamic = "\n".join(
             f"(NEEDED) Shared library: [{library}]"
-            for library in ["libatomic.so.1", "libc.so.6"]
+            for library in ["libatomic.so.1", "libc.so.6", "ld-linux-aarch64.so.1"]
         )
         with mock.patch(
             "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
@@ -154,9 +154,16 @@ class PackageContractTest(unittest.TestCase):
         ):
             _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "aarch64")
 
-    def test_static_cxx_runtime_accepts_no_dynamic_gnu_runtime(self) -> None:
+    def test_static_cxx_runtime_accepts_the_architecture_loader_without_dynamic_gnu_runtime(
+        self,
+    ) -> None:
         versions = "Name: GLIBC_2.17 Flags: none"
-        dynamic = "(NEEDED) Shared library: [libc.so.6]"
+        dynamic = "\n".join(
+            [
+                "(NEEDED) Shared library: [libc.so.6]",
+                "(NEEDED) Shared library: [ld-linux-x86-64.so.2]",
+            ]
+        )
         with mock.patch(
             "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
         ), mock.patch(
@@ -170,6 +177,21 @@ class PackageContractTest(unittest.TestCase):
                 static_cxx_runtime=True,
             )
         self.assertEqual(result, "GLIBC=2.17")
+
+    def test_manylinux_rejects_a_dynamic_loader_for_the_wrong_architecture(self) -> None:
+        versions = "Name: GLIBC_2.17 Flags: none"
+        dynamic = "(NEEDED) Shared library: [ld-linux-aarch64.so.1]"
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output", side_effect=[versions, dynamic]
+        ), self.assertRaisesRegex(ValidationError, "ld-linux-aarch64.so.1"):
+            _check_manylinux_abi(
+                Path("libonnxruntime.so"),
+                "2.17",
+                "x86_64",
+                static_cxx_runtime=True,
+            )
 
     def test_static_cxx_runtime_rejects_dynamic_gnu_runtime(self) -> None:
         versions = "Name: GLIBC_2.17 Flags: none"
