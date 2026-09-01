@@ -16,6 +16,8 @@ The implementer used only:
 - PyPA manylinux images and auditwheel manylinux policy data;
 - GNU's GCC 11.4.0 release, published SHA-512, prerequisite checksums, and
   installation documentation;
+- GNU's binutils 2.42 release, detached release signature, and installation
+  documentation;
 - Wfloat's current public source and consumer build contracts; and
 - Wfloat's independent-implementation specification describing target names,
   required files, architectures, linkage, and consumer behavior.
@@ -122,17 +124,28 @@ three-day inspection retention. That short-lived CI copy is not registry
 publication; publication remains a separate, explicitly approved operation.
 
 The automatic glibc 2.17 builds use architecture-specific manylinux2014 image
-digests plus GCC 11.4.0 built from GNU's release archive. The installer verifies
-GNU's published archive SHA-512 and the GMP, MPFR, and MPC SHA-512 values
-carried by that verified release before building the C/C++ toolchain into
-the ephemeral container's temporary directory. It runs as the hosted runner's
-unprivileged UID/GID, does not use a third-party compiler image or moving
-package repository, and disables GCC's three-stage bootstrap to keep the
-per-build toolchain construction bounded. Before invoking that repository-owned
-installer, the host wrapper rejects dirty, untracked, or ignored executable
-builder paths; the public launcher repeats the check inside the container. The
-recipe then proves the exact GCC/G++ version, required C++20 library feature,
-and AArch64 feature modes. The
-resulting shared library must separately satisfy Wfloat's committed manylinux
-symbol allow-sets, forbidden-symbol rules, direct dependency allowlist, and
-runtime smoke; toolchain selection alone does not establish ABI compatibility.
+digests plus GCC 11.4.0 and GNU binutils 2.42 built from GNU release archives.
+The committed binutils SHA-512 was derived only after its official detached
+signature verified against GNU's keyring; the installer verifies that digest
+on every build. It also verifies GNU's published GCC archive SHA-512 and the
+GMP, MPFR, and MPC SHA-512 values carried by that verified GCC release before
+building the C/C++ toolchain into the ephemeral container's temporary
+directory. GCC is configured to select the pinned assembler and linker. The
+installer runs as the hosted runner's unprivileged UID/GID, does not use a
+third-party compiler image or moving package repository, and disables GCC's
+three-stage bootstrap to keep per-build toolchain construction bounded.
+
+Before invoking that repository-owned installer, the host wrapper rejects
+dirty, untracked, or ignored executable builder paths; the public launcher
+repeats the check inside the container. The recipe then proves the exact
+versions and prefix paths of every compiler and binutils program exported to
+the build, the compiler's selected assembler/linker paths, the required C++20
+library feature, all
+AArch64 feature modes, and forced AVX-VNNI assembly/disassembly on x86-64. The
+glibc 2.17 targets do not build Microsoft's unit-test targets because an
+upstream test-only `endian.h` include collision is incompatible with glibc
+2.17; Microsoft's runtime sources remain exact and unmodified. The resulting
+shared library must separately satisfy Wfloat's committed manylinux symbol
+allow-sets, forbidden-symbol rules, direct dependency allowlist, package
+contract, and C API compile/link/run smoke. Toolchain selection and skipped
+upstream tests alone do not establish ABI compatibility.

@@ -149,19 +149,34 @@ distributor.
 
 The two automatic glibc 2.17 jobs use architecture-matched manylinux2014 images
 pinned by manifest digest. Inside each image, `ci/run_target.py` invokes
-`ci/install_gcc.py` as the hosted runner's unprivileged UID/GID. That installer
-downloads GCC 11.4.0 from GNU over HTTPS, verifies GNU's published SHA-512,
-downloads only the GMP, MPFR, and MPC releases named by the verified GCC
-archive, verifies their embedded SHA-512 values, and builds C/C++ into the
-container's temporary directory. No third-party compiler image or moving
-package repository is used. Before Microsoft configure runs, the recipe
-requires GCC/G++ 11.4.0, proves `std::make_unique_for_overwrite` under C++20,
-and on AArch64 separately proves all four Microsoft build modes:
+`ci/install_gnu_toolchain.py` as the hosted runner's unprivileged UID/GID. That
+installer downloads GNU binutils 2.42 and GCC 11.4.0 over HTTPS, verifies their
+committed SHA-512 values, and configures GCC to use the newly built GNU
+assembler and linker. It downloads only the GMP, MPFR, and MPC releases named
+by the verified GCC archive and verifies their embedded SHA-512 values. The
+toolchain is built into the container's temporary directory; no third-party
+compiler image or moving package repository is used.
+
+Before Microsoft configure runs, the recipe requires GCC/G++ 11.4.0 and every
+exported GNU binutils program at version 2.42 from the cataloged prefix. This
+includes the assembler, linker, archive tools, `strip`, `objdump`, and
+`readelf`. It proves that GCC selects that assembler and linker and that
+`std::make_unique_for_overwrite` compiles and links under C++20. On x86-64 it
+forces `vpdpbusds` into an AVX-VNNI object and confirms the instruction through
+the pinned `objdump`; the probe is never executed. On AArch64 it separately
+proves all four Microsoft build modes:
 `-march=armv8.2-a+bf16`,
 `-march=armv8.2-a+dotprod`, `-march=armv8.2-a+fp16`, and
-`-march=armv8.2-a+i8mm`. The completed ELF still has to pass the symbol,
-dependency, and runtime policy; the selected compiler is not treated as proof
-of glibc 2.17 or libstdc++ compatibility.
+`-march=armv8.2-a+i8mm`.
+
+These glibc 2.17 targets use package-only validation: Microsoft unit-test
+targets are not built because one v1.29.0 test target places ONNX Runtime's
+`core/common/endian.h` where glibc 2.17 resolves the system `endian.h`, causing
+duplicate `waitstatus.h` declarations. The runtime sources are unchanged. The
+completed ELF still has to pass the package, symbol, dependency, C API
+compile/link/run, and clean-runtime policies; toolchain selection and skipped
+upstream tests are not treated as proof of glibc 2.17 or libstdc++
+compatibility.
 
 For a cross-compiled ARM or AArch64 build, provide target compilers, an exact
 sysroot, and a host `protoc`:

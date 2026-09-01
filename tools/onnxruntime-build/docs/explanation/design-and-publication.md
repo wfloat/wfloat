@@ -109,17 +109,21 @@ so this list must not be read as a statement that every consumer already uses
 v1.29.0. The two Linux targets run inside the same manylinux2014 environment
 family used by Wfloat's wheel matrix. Their exact architecture-specific
 container manifests, GNU GCC 11.4.0 source URL, and GNU-published SHA-512 are
-cataloged with the Linux recipe and consumed by `ci/run_target.py`. The compiler
-is built from the verified GNU release inside the ephemeral container as the
-hosted runner's unprivileged UID/GID. The host wrapper proves the executable
-builder paths are clean before the repository-owned installer runs, and the
-public launcher checks them again inside the container. The recipe verifies
-GCC/G++ 11.4.0, C++20 library support, and the required AArch64 assembler modes;
-package validation independently enforces the
+cataloged with the Linux recipe and consumed by `ci/run_target.py`. GNU
+binutils 2.42, its official release URL, and the SHA-512 derived after verifying
+GNU's detached release signature are cataloged alongside GCC. Both are built
+from verified GNU releases inside the ephemeral container as the hosted
+runner's unprivileged UID/GID, and GCC is bound to the pinned assembler and
+linker. The host wrapper proves the executable builder paths are clean before
+the repository-owned installer runs, and the public launcher checks them again
+inside the container. The recipe verifies the exact versions and prefix paths
+of every compiler and binutils program exported to the build, C++20 library
+support, the required AArch64 assembler modes, and forced
+AVX-VNNI assembly/disassembly on x86-64. Package validation independently
+enforces the
 architecture-specific manylinux symbol, forbidden-symbol, and direct-dependency
-policy. Each architecture is a separate job so native tests can run where
-applicable and one 14 GB runner does not hold multiple architecture build
-trees.
+policy. Each architecture is a separate job so one 14 GB runner does not hold
+multiple architecture build trees.
 
 Apple jobs select `/Applications/Xcode_16.4.app/Contents/Developer` and require
 Xcode 16.4 build 16F6 on both `macos-15` arm64 and `macos-15-intel`. Windows
@@ -131,9 +135,19 @@ The automatic macOS static-library builds preserve a macOS 11.0 deployment
 floor and use package-only validation. Microsoft unit-test targets are not
 built because ONNX Runtime v1.29.0's test-only Xcode 16.4 standard-library path
 requires macOS 13.3. This exception does not alter the runtime sources or raise
-the artifact floor, and it does not apply to native Linux or Windows CPU builds.
+the artifact floor. It is independent of the Linux exception below and does not
+apply to Windows CPU builds.
 The completed macOS archive must still pass architecture, linkage,
 minimum-platform, package, and basic C API compile/link/run validation.
+
+The automatic glibc 2.17 Linux builds also use package-only validation. ONNX
+Runtime v1.29.0 gives one unit-test target an include path where its private
+`endian.h` shadows glibc 2.17's system header; compiling that test target fails
+before it can validate the shipped library. Wfloat does not patch Microsoft's
+test source or include ordering. It omits all Microsoft unit-test targets while
+retaining full runtime compilation and Wfloat's package, ELF ABI/dependency,
+and C API compile/link/run validation. Native glibc 2.28 and Windows CPU
+targets retain their `native` policy.
 
 Each family workflow can also be dispatched manually, but exposes no target,
 runner, version, source-revision, or test-policy input. Manual execution is thus

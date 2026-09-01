@@ -10,8 +10,8 @@ from pathlib import Path
 
 BUILDER_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = BUILDER_ROOT.parents[1]
-GCC_PREFIX = "/tmp/wfloat-gcc-11.4.0"
-GCC_INSTALLER = BUILDER_ROOT / "ci" / "install_gcc.py"
+GNU_TOOLCHAIN_PREFIX = "/tmp/wfloat-gnu-toolchain-gcc-11.4.0-binutils-2.42"
+GNU_TOOLCHAIN_INSTALLER = BUILDER_ROOT / "ci" / "install_gnu_toolchain.py"
 MANYLINUX_IMAGES = {
     "linux-x64-glibc2_17": (
         "quay.io/pypa/manylinux2014_x86_64@"
@@ -46,12 +46,12 @@ def _require_clean_executable_paths() -> None:
         ).stdout.splitlines()
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         raise RuntimeError(
-            f"unable to verify executable builder paths before installing GCC: {error}"
+            f"unable to verify executable builder paths before installing the GNU toolchain: {error}"
         ) from error
     if status:
         raise RuntimeError(
             "dirty, untracked, or ignored files are present in executable builder paths; "
-            "remove them before installing GCC:\n" + "\n".join(status)
+            "remove them before installing the GNU toolchain:\n" + "\n".join(status)
         )
 
 
@@ -82,14 +82,16 @@ def command_for(arguments: list[str]) -> list[str]:
     ]
     build = arguments[0] == "build"
     if build:
-        container_installer = Path("/workspace") / GCC_INSTALLER.relative_to(REPOSITORY)
+        container_installer = Path("/workspace") / GNU_TOOLCHAIN_INSTALLER.relative_to(
+            REPOSITORY
+        )
         installer = [
             "/opt/python/cp312-cp312/bin/python",
             "-I",
             "-B",
             str(container_installer),
             "--prefix",
-            GCC_PREFIX,
+            GNU_TOOLCHAIN_PREFIX,
             "--jobs",
             "4",
         ]
@@ -99,17 +101,22 @@ def command_for(arguments: list[str]) -> list[str]:
             "GIT_CONFIG_COUNT=1",
             "GIT_CONFIG_KEY_0=safe.directory",
             "GIT_CONFIG_VALUE_0=/workspace",
-            f"CC={GCC_PREFIX}/bin/gcc",
-            f"CXX={GCC_PREFIX}/bin/g++",
-            f"AR={GCC_PREFIX}/bin/gcc-ar",
-            f"NM={GCC_PREFIX}/bin/gcc-nm",
-            f"RANLIB={GCC_PREFIX}/bin/gcc-ranlib",
-            "STRIP=strip",
+            f"CC={GNU_TOOLCHAIN_PREFIX}/bin/gcc",
+            f"CXX={GNU_TOOLCHAIN_PREFIX}/bin/g++",
+            f"AS={GNU_TOOLCHAIN_PREFIX}/bin/as",
+            f"LD={GNU_TOOLCHAIN_PREFIX}/bin/ld",
+            f"AR={GNU_TOOLCHAIN_PREFIX}/bin/gcc-ar",
+            f"NM={GNU_TOOLCHAIN_PREFIX}/bin/gcc-nm",
+            f"RANLIB={GNU_TOOLCHAIN_PREFIX}/bin/gcc-ranlib",
+            f"STRIP={GNU_TOOLCHAIN_PREFIX}/bin/strip",
+            f"OBJDUMP={GNU_TOOLCHAIN_PREFIX}/bin/objdump",
+            f"READELF={GNU_TOOLCHAIN_PREFIX}/bin/readelf",
             *container_command,
         ]
-        runtime_paths = f"{GCC_PREFIX}/lib64:{GCC_PREFIX}/lib"
+        runtime_paths = f"{GNU_TOOLCHAIN_PREFIX}/lib64:{GNU_TOOLCHAIN_PREFIX}/lib"
         shell_command = (
             f"{shlex.join(installer)} && "
+            f"export PATH={shlex.quote(GNU_TOOLCHAIN_PREFIX + '/bin')}:$PATH && "
             f"export LD_LIBRARY_PATH={shlex.quote(runtime_paths)}"
             "${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} && "
             f"exec {shlex.join(container_command)}"

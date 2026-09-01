@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,7 +10,10 @@ from unittest import mock
 from onnxruntime_build.catalog import Catalog
 from onnxruntime_build.core import BuildError
 from onnxruntime_build.recipes.apple_xcframework import apple_preflight
-from onnxruntime_build.recipes.linux_native import _require_gcc_toolchain
+from onnxruntime_build.recipes.linux_native import (
+    _require_gnu_toolchain,
+    _require_tool,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,26 +62,45 @@ class AppleToolchainTest(unittest.TestCase):
 
 
 class LinuxToolchainTest(unittest.TestCase):
-    def test_gcc_preflight_proves_cxx20_and_all_aarch64_feature_modes(self) -> None:
-        target = Catalog.load().target("linux-aarch64-glibc2_17")
-        completed = subprocess.CompletedProcess(["g++"], 0, stdout="")
-        with mock.patch.dict(
-            os.environ,
-            {"CC": "gcc", "CXX": "g++"},
-            clear=True,
-        ), mock.patch(
-            "onnxruntime_build.recipes.linux_native._tool_version",
-            side_effect=["11.4.0", "11.4.0"],
-        ), mock.patch(
-            "onnxruntime_build.recipes.linux_native.shutil.which",
-            return_value="/tmp/wfloat-gcc-11.4.0/bin/g++",
-        ), mock.patch(
-            "onnxruntime_build.recipes.linux_native.subprocess.run",
-            return_value=completed,
-        ) as run:
-            _require_gcc_toolchain(target)
+    @staticmethod
+    def _resolved_tools(target: dict) -> list[str]:
+        prefix = target["toolchain"]["toolchain_prefix"]
+        return [
+            f"{prefix}/bin/gcc",
+            f"{prefix}/bin/g++",
+            f"{prefix}/bin/as",
+            f"{prefix}/bin/ld",
+            f"{prefix}/bin/gcc-ar",
+            f"{prefix}/bin/gcc-nm",
+            f"{prefix}/bin/gcc-ranlib",
+            f"{prefix}/bin/strip",
+            f"{prefix}/bin/objdump",
+            f"{prefix}/bin/readelf",
+        ]
 
-        probes = [call.args[0] for call in run.call_args_list]
+    def test_gnu_preflight_proves_cxx20_and_all_aarch64_feature_modes(self) -> None:
+        target = Catalog.load().target("linux-aarch64-glibc2_17")
+        prefix = Path(target["toolchain"]["toolchain_prefix"])
+        with (
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._require_tool",
+                side_effect=self._resolved_tools(target),
+            ),
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._compiler_program_path",
+                side_effect=[
+                    (prefix / "bin" / "as").resolve(),
+                    (prefix / "bin" / "ld").resolve(),
+                ],
+            ),
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._run_probe",
+                return_value="",
+            ) as run_probe,
+        ):
+            _require_gnu_toolchain(target)
+
+        probes = [call.args[0] for call in run_probe.call_args_list]
         expected_flags = [
             "-march=armv8.2-a+bf16",
             "-march=armv8.2-a+dotprod",
@@ -92,13 +115,96 @@ class LinuxToolchainTest(unittest.TestCase):
         self.assertTrue(all("-std=c++20" in probe for probe in probes))
         self.assertTrue(all("-fuse-ld=lld" not in probe for probe in probes))
 
-    def test_gcc_preflight_rejects_toolchain_drift(self) -> None:
+    def test_gnu_preflight_forces_and_disassembles_vnni(self) -> None:
         target = Catalog.load().target("linux-x64-glibc2_17")
-        with mock.patch(
-            "onnxruntime_build.recipes.linux_native._tool_version",
-            side_effect=["11.4.0", "12.1.0"],
-        ), self.assertRaisesRegex(BuildError, "requires C\\+\\+ compiler 11.4.0"):
-            _require_gcc_toolchain(target)
+        prefix = Path(target["toolchain"]["toolchain_prefix"])
+        observed_source: list[str] = []
+
+        def run_probe(command: list[str], label: str) -> str:
+            if "forced AVX-VNNI" in label:
+                observed_source.append(
+                    Path(command[command.index("-c") + 1]).read_text(encoding="utf-8")
+                )
+            if "disassembly" in label:
+                return "0000: vpdpbusds %ymm0,%ymm1,%ymm2"
+            return ""
+
+        with (
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._require_tool",
+                side_effect=self._resolved_tools(target),
+            ),
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._compiler_program_path",
+                side_effect=[
+                    (prefix / "bin" / "as").resolve(),
+                    (prefix / "bin" / "ld").resolve(),
+                ],
+            ),
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._run_probe",
+                side_effect=run_probe,
+            ) as run_probe,
+        ):
+            _require_gnu_toolchain(target)
+
+        probes = [call.args[0] for call in run_probe.call_args_list]
+        self.assertEqual(len(probes), 3)
+        self.assertIn("-mavxvnni", probes[1])
+        self.assertIn("-c", probes[1])
+        self.assertEqual(probes[2][0], f"{prefix}/bin/objdump")
+        self.assertEqual(probes[2][1], "-d")
+        self.assertEqual(len(observed_source), 1)
+        self.assertIn("_mm256_dpbusds_avx_epi32", observed_source[0])
+
+    def test_gnu_preflight_rejects_a_false_positive_vnni_probe(self) -> None:
+        target = Catalog.load().target("linux-x64-glibc2_17")
+        prefix = Path(target["toolchain"]["toolchain_prefix"])
+        with (
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._require_tool",
+                side_effect=self._resolved_tools(target),
+            ),
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._compiler_program_path",
+                side_effect=[
+                    (prefix / "bin" / "as").resolve(),
+                    (prefix / "bin" / "ld").resolve(),
+                ],
+            ),
+            mock.patch(
+                "onnxruntime_build.recipes.linux_native._run_probe",
+                side_effect=["", "", "no matching instruction"],
+            ),
+            self.assertRaisesRegex(BuildError, "did not emit vpdpbusds"),
+        ):
+            _require_gnu_toolchain(target)
+
+    def test_required_tool_rejects_version_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            prefix = Path(temporary_name)
+            (prefix / "bin").mkdir()
+            compiler = prefix / "bin" / "g++"
+            compiler.touch()
+            with (
+                mock.patch(
+                    "onnxruntime_build.recipes.linux_native.shutil.which",
+                    return_value=str(compiler),
+                ),
+                mock.patch(
+                    "onnxruntime_build.recipes.linux_native._tool_version",
+                    return_value="12.1.0",
+                ),
+                self.assertRaisesRegex(BuildError, "requires C\\+\\+ compiler 11.4.0"),
+            ):
+                _require_tool(
+                    prefix,
+                    str(compiler),
+                    "g++",
+                    "C++ compiler",
+                    r"g\\+\\+ (.*)",
+                    "11.4.0",
+                )
 
 
 class WasmConsumerContractTest(unittest.TestCase):

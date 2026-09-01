@@ -49,7 +49,9 @@ def _workflow_selects(text: str, changed_path: str) -> bool:
 
 
 RUNNER = _load("run_target", ROOT / "ci" / "run_target.py")
-GCC_INSTALLER = _load("install_gcc", ROOT / "ci" / "install_gcc.py")
+GNU_TOOLCHAIN_INSTALLER = _load(
+    "install_gnu_toolchain", ROOT / "ci" / "install_gnu_toolchain.py"
+)
 
 FAMILIES = {
     "onnxruntime-builder-android.yml": {
@@ -240,7 +242,9 @@ class WorkflowTopologyTest(unittest.TestCase):
 
         linux = (WORKFLOWS / "onnxruntime-builder-linux.yml").read_text(encoding="utf-8")
         self.assertIn('\"tools/onnxruntime-build/ci/run_target.py\"', linux)
-        self.assertIn('\"tools/onnxruntime-build/ci/install_gcc.py\"', linux)
+        self.assertIn(
+            '\"tools/onnxruntime-build/ci/install_gnu_toolchain.py\"', linux
+        )
         self.assertEqual(linux.count('manylinux: "true"'), 2)
 
     def test_android_workflow_installs_the_cataloged_toolchain(self) -> None:
@@ -286,11 +290,11 @@ class CiRunnerTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             ["git", "status"],
             0,
-            stdout=" M tools/onnxruntime-build/ci/install_gcc.py\n",
+            stdout=" M tools/onnxruntime-build/ci/install_gnu_toolchain.py\n",
         )
         with mock.patch.object(
             RUNNER.subprocess, "run", return_value=completed
-        ) as run, self.assertRaisesRegex(RuntimeError, "before installing GCC"):
+        ) as run, self.assertRaisesRegex(RuntimeError, "before installing the GNU toolchain"):
             RUNNER._require_clean_executable_paths()
 
         checked_paths = run.call_args.args[0]
@@ -325,16 +329,36 @@ class CiRunnerTest(unittest.TestCase):
                 toolchain = catalog.target(target_id)["toolchain"]
                 self.assertEqual(image, toolchain["container_image"])
                 self.assertEqual(
-                    GCC_INSTALLER.GCC_VERSION,
+                    GNU_TOOLCHAIN_INSTALLER.GCC_VERSION,
                     toolchain["compiler_version"],
                 )
                 self.assertEqual(
-                    GCC_INSTALLER.GCC_SOURCE_URL,
+                    GNU_TOOLCHAIN_INSTALLER.GCC_SOURCE_URL,
                     toolchain["compiler_source"],
                 )
                 self.assertEqual(
-                    GCC_INSTALLER.GCC_SOURCE_SHA512,
+                    GNU_TOOLCHAIN_INSTALLER.GCC_SOURCE_SHA512,
                     toolchain["compiler_source_sha512"],
+                )
+                self.assertEqual(
+                    GNU_TOOLCHAIN_INSTALLER.BINUTILS_VERSION,
+                    toolchain["binutils_version"],
+                )
+                self.assertEqual(
+                    GNU_TOOLCHAIN_INSTALLER.BINUTILS_SOURCE_URL,
+                    toolchain["binutils_source"],
+                )
+                self.assertEqual(
+                    GNU_TOOLCHAIN_INSTALLER.BINUTILS_SOURCE_SHA512,
+                    toolchain["binutils_source_sha512"],
+                )
+                self.assertEqual(
+                    str(GNU_TOOLCHAIN_INSTALLER.DEFAULT_PREFIX),
+                    toolchain["toolchain_prefix"],
+                )
+                self.assertEqual(
+                    str(GNU_TOOLCHAIN_INSTALLER.DEFAULT_PREFIX),
+                    RUNNER.GNU_TOOLCHAIN_PREFIX,
                 )
 
     def test_manylinux_targets_run_in_the_matching_container(self) -> None:
@@ -354,12 +378,25 @@ class CiRunnerTest(unittest.TestCase):
         self.assertIn("--user", arm64)
         self.assertIn("501:20", x64)
         self.assertIn("501:20", arm64)
-        self.assertIn("tools/onnxruntime-build/ci/install_gcc.py", x64[-1])
-        self.assertIn(GCC_INSTALLER.GCC_VERSION, x64[-1])
+        self.assertIn(
+            "tools/onnxruntime-build/ci/install_gnu_toolchain.py", x64[-1]
+        )
+        self.assertIn(GNU_TOOLCHAIN_INSTALLER.GCC_VERSION, x64[-1])
+        self.assertIn(GNU_TOOLCHAIN_INSTALLER.BINUTILS_VERSION, x64[-1])
         self.assertNotIn("setpriv", x64[-1])
-        self.assertIn(f"CC={RUNNER.GCC_PREFIX}/bin/gcc", x64[-1])
-        self.assertIn(f"CXX={RUNNER.GCC_PREFIX}/bin/g++", x64[-1])
-        self.assertIn(f"LD_LIBRARY_PATH={RUNNER.GCC_PREFIX}/lib64", x64[-1])
+        prefix = RUNNER.GNU_TOOLCHAIN_PREFIX
+        self.assertIn(f"export PATH={prefix}/bin:$PATH", x64[-1])
+        self.assertIn(f"CC={prefix}/bin/gcc", x64[-1])
+        self.assertIn(f"CXX={prefix}/bin/g++", x64[-1])
+        self.assertIn(f"AS={prefix}/bin/as", x64[-1])
+        self.assertIn(f"LD={prefix}/bin/ld", x64[-1])
+        self.assertIn(f"AR={prefix}/bin/gcc-ar", x64[-1])
+        self.assertIn(f"NM={prefix}/bin/gcc-nm", x64[-1])
+        self.assertIn(f"RANLIB={prefix}/bin/gcc-ranlib", x64[-1])
+        self.assertIn(f"STRIP={prefix}/bin/strip", x64[-1])
+        self.assertIn(f"OBJDUMP={prefix}/bin/objdump", x64[-1])
+        self.assertIn(f"READELF={prefix}/bin/readelf", x64[-1])
+        self.assertIn(f"LD_LIBRARY_PATH={prefix}/lib64", x64[-1])
         self.assertNotIn("/opt/clang", x64[-1])
         self.assertNotIn("-fuse-ld=lld", x64[-1])
 

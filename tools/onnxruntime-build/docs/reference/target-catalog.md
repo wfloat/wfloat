@@ -106,11 +106,13 @@ provenance sidecar in the package.
 
 The validator never converts a skipped test into a pass.
 
-The traditional macOS static-library targets use `package-only`. They preserve
-the macOS 11.0 artifact floor instead of compiling Microsoft's v1.29.0 test
-executables, whose Xcode 16.4 standard-library path requires floating-point
-`std::to_chars` introduced in macOS 13.3. Linux and Windows native CPU targets
-remain `native`; this exception does not disable their Microsoft tests.
+The traditional macOS static-library targets and native glibc 2.17 Linux
+targets use `package-only`. The macOS policy preserves the 11.0 artifact floor
+instead of compiling Microsoft's v1.29.0 test executables, whose Xcode 16.4
+standard-library path requires floating-point `std::to_chars` introduced in
+macOS 13.3. The Linux policy avoids an upstream test-only include-path collision
+between ONNX Runtime's `core/common/endian.h` and glibc 2.17's system
+`endian.h`. Native glibc 2.28 and Windows CPU targets remain `native`.
 
 ## Automatic CI evidence targets
 

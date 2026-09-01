@@ -117,7 +117,7 @@ class CatalogTest(unittest.TestCase):
                 with self.subTest(target=target["id"]):
                     self.assertEqual(target["toolchain"], expected)
 
-    def test_macos_static_uses_package_only_validation(self) -> None:
+    def test_compatibility_floor_targets_use_package_only_validation(self) -> None:
         for target_id in [
             "osx-arm64-static_lib",
             "osx-x86_64-static_lib",
@@ -133,8 +133,19 @@ class CatalogTest(unittest.TestCase):
             self.catalog.target("osx-arm64")["validation"]["test_policy"],
             "native",
         )
+        for target_id in [
+            "linux-x64-glibc2_17",
+            "linux-x64-static_lib-glibc2_17",
+            "linux-aarch64-glibc2_17",
+            "linux-aarch64-static_lib-glibc2_17",
+        ]:
+            with self.subTest(target=target_id):
+                self.assertEqual(
+                    self.catalog.target(target_id)["validation"]["test_policy"],
+                    "package-only",
+                )
         self.assertEqual(
-            self.catalog.target("linux-x64-glibc2_17")["validation"]["test_policy"],
+            self.catalog.target("linux-x64-glibc2_28")["validation"]["test_policy"],
             "native",
         )
         self.assertEqual(

@@ -17,6 +17,7 @@ from onnxruntime_build.build import (
 )
 from onnxruntime_build.catalog import Catalog
 from onnxruntime_build.core import BuildContext, CommandPlan
+from onnxruntime_build.recipes.linux_native import plan as linux_native_plan
 from onnxruntime_build.recipes.macos_static import plan as macos_static_plan
 
 
@@ -52,6 +53,15 @@ class BuildTest(unittest.TestCase):
         base = settings["build_params"]["base"]
         self.assertIn("--skip_tests", base)
         self.assertIn("--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF", base)
+
+    def test_glibc_2_17_build_disables_microsoft_unit_test_targets(self) -> None:
+        target = Catalog.load().target("linux-x64-glibc2_17")
+        context = BuildContext(Path("/source"), Path("/build"), 2, False, False)
+        command = linux_native_plan(target, context).commands[0]
+        self.assertIn("--skip_tests", command)
+        self.assertIn(
+            "--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF", command
+        )
 
     def test_android_ndk_environment_must_match_cataloged_revision(self) -> None:
         target = Catalog.load().target("android")
