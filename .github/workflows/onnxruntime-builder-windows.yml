@@ -1,0 +1,70 @@
+name: ONNX Runtime builder Windows
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/source-lock.json"
+      - "tools/onnxruntime-build/onnxruntime-build"
+      - "tools/onnxruntime-build/onnxruntime_build/**"
+      - "!tools/onnxruntime-build/onnxruntime_build/recipes/**"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/__init__.py"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/windows_cpu.py"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-windows.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/source-lock.json"
+      - "tools/onnxruntime-build/onnxruntime-build"
+      - "tools/onnxruntime-build/onnxruntime_build/**"
+      - "!tools/onnxruntime-build/onnxruntime_build/recipes/**"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/__init__.py"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/windows_cpu.py"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onnxruntime-builder-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  x64_static_mt:
+    name: win-x64-static_lib-mt
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+          vsversion: "2022"
+
+      - name: Verify the VS2022 x64 developer environment
+        shell: pwsh
+        run: |
+          if ($env:VisualStudioVersion -ne "17.0") {
+            throw "Expected Visual Studio 2022 (17.0), found $env:VisualStudioVersion"
+          }
+          $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
+          $compiler = (Get-Command cl.exe -ErrorAction Stop).Source
+          Write-Host "dumpbin: $dumpbin"
+          Write-Host "compiler: $compiler"
+
+      - uses: ./.github/actions/onnxruntime-artifact
+        with:
+          target: win-x64-static_lib-mt

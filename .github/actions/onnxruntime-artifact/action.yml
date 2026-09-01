@@ -1,0 +1,63 @@
+name: Build and inspect an ONNX Runtime artifact
+description: Build through Wfloat's public command, revalidate, and retain the archive for review.
+
+inputs:
+  target:
+    description: Committed target identifier owned by the calling family workflow
+    required: true
+  manylinux:
+    description: Run the public command inside the target's pinned manylinux container
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Build through the public Wfloat command
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        MANYLINUX: ${{ inputs.manylinux }}
+      run: |
+        builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)
+        if [[ "${MANYLINUX}" == "true" ]]; then
+          builder=(python -I -B tools/onnxruntime-build/ci/run_target.py)
+        fi
+        "${builder[@]}" build "${TARGET}" --jobs 4
+
+    - name: Revalidate the completed archive
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        MANYLINUX: ${{ inputs.manylinux }}
+      run: |
+        shopt -s nullglob
+        archives=(tools/onnxruntime-build/.out/*.zip)
+        test "${#archives[@]}" -eq 1
+
+        if [[ "${TARGET}" == wasm-* ]]; then
+          source_dirs=(tools/onnxruntime-build/.cache/sources/onnxruntime-*)
+          test "${#source_dirs[@]}" -eq 1
+          source "${source_dirs[0]}/cmake/external/emsdk/emsdk_env.sh"
+        fi
+
+        builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)
+        if [[ "${MANYLINUX}" == "true" ]]; then
+          builder=(python -I -B tools/onnxruntime-build/ci/run_target.py)
+        fi
+        "${builder[@]}" validate "${TARGET}" "${archives[0]}"
+
+    - name: Upload the validated archive for inspection
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: onnxruntime-${{ inputs.target }}
+        path: tools/onnxruntime-build/.out/*.zip
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 3
+        compression-level: 0
+
+    - name: Remove the completed archive from the runner
+      if: always()
+      shell: bash
+      run: rm -rf tools/onnxruntime-build/.out

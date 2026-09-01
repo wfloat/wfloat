@@ -1,0 +1,78 @@
+name: ONNX Runtime builder Linux
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/source-lock.json"
+      - "tools/onnxruntime-build/onnxruntime-build"
+      - "tools/onnxruntime-build/ci/run_target.py"
+      - "tools/onnxruntime-build/ci/install_gnu_toolchain.py"
+      - "tools/onnxruntime-build/onnxruntime_build/**"
+      - "!tools/onnxruntime-build/onnxruntime_build/recipes/**"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/__init__.py"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/linux_native.py"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-linux.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/source-lock.json"
+      - "tools/onnxruntime-build/onnxruntime-build"
+      - "tools/onnxruntime-build/ci/run_target.py"
+      - "tools/onnxruntime-build/ci/install_gnu_toolchain.py"
+      - "tools/onnxruntime-build/onnxruntime_build/**"
+      - "!tools/onnxruntime-build/onnxruntime_build/recipes/**"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/__init__.py"
+      - "tools/onnxruntime-build/onnxruntime_build/recipes/linux_native.py"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onnxruntime-builder-linux-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  x86_64:
+    name: linux-x64-glibc2_17
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - uses: ./.github/actions/onnxruntime-artifact
+        with:
+          target: linux-x64-glibc2_17
+          manylinux: "true"
+
+  aarch64:
+    name: linux-aarch64-glibc2_17
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - uses: ./.github/actions/onnxruntime-artifact
+        with:
+          target: linux-aarch64-glibc2_17
+          manylinux: "true"

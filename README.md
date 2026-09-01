@@ -17,8 +17,14 @@ wfloat/
   examples/
   native/wfloat-core/
   packages/
+  tools/onnxruntime-build/
   vendor/
 ```
+
+`tools/onnxruntime-build/` contains Wfloat's independent, public system for
+building ONNX Runtime C and C++ artifacts across the platforms supported by
+the vendored Sherpa integration. SDK builds consume only explicitly published,
+SHA-pinned artifacts; the builder itself never publishes them.
 
 ## Current Native Status
 

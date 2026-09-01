@@ -1,0 +1,57 @@
+name: ONNX Runtime builder contracts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/**"
+      - "vendor/sherpa-onnx/cmake/onnxruntime-wasm-simd.cmake"
+      - "vendor/sherpa-onnx/wasm/speech/CMakeLists.txt"
+      - "vendor/sherpa-onnx/wasm/wasm-common.cmake"
+      - "scripts/ensure-emscripten.sh"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-*.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tools/onnxruntime-build/**"
+      - "vendor/sherpa-onnx/cmake/onnxruntime-wasm-simd.cmake"
+      - "vendor/sherpa-onnx/wasm/speech/CMakeLists.txt"
+      - "vendor/sherpa-onnx/wasm/wasm-common.cmake"
+      - "scripts/ensure-emscripten.sh"
+      - ".github/actions/onnxruntime-artifact/**"
+      - ".github/workflows/onnxruntime-builder-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onnxruntime-builder-contracts-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package_contracts:
+    name: Command and package contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Run command, catalog, workflow, and validator tests
+        working-directory: tools/onnxruntime-build
+        run: python -B -m unittest discover -s tests -v
+
+      - name: Resolve every target
+        run: |
+          python tools/onnxruntime-build/onnxruntime-build list targets --json > /tmp/onnxruntime-targets.json
+          python -m json.tool /tmp/onnxruntime-targets.json > /dev/null

@@ -1,0 +1,66 @@
+#!/usr/bin/env -S python3 -I -B
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).resolve()
+BUILDER_ROOT = SCRIPT.parent
+REAL_BUILD = len(sys.argv) > 1 and sys.argv[1] == "build" and "--plan" not in sys.argv[2:]
+
+# `python onnxruntime-build` ignores the shebang. Restart in isolated mode before
+# importing builder modules so local site hooks cannot alter artifact behavior.
+if not sys.flags.isolated:
+    os.execv(sys.executable, [sys.executable, "-I", "-B", str(SCRIPT), *sys.argv[1:]])
+
+if REAL_BUILD:
+    try:
+        repository = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=BUILDER_ROOT,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            ).stdout.strip()
+        )
+        relative = BUILDER_ROOT.relative_to(repository)
+        executable_status = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain=v1",
+                "--ignored=matching",
+                "--untracked-files=all",
+                "--",
+                str(relative / "onnxruntime_build"),
+                str(relative / "ci"),
+            ],
+            cwd=repository,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        raise SystemExit(
+            f"error: unable to verify executable builder paths before importing recipes: {error}"
+        ) from error
+    if executable_status:
+        raise SystemExit(
+            "error: dirty, untracked, or ignored files are present in executable builder paths; "
+            "remove them before use:\n"
+            + "\n".join(executable_status)
+        )
+
+sys.path.insert(0, str(BUILDER_ROOT))
+
+from onnxruntime_build.cli import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
