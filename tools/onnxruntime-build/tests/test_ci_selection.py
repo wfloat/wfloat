@@ -357,6 +357,10 @@ class CiRunnerTest(unittest.TestCase):
                     toolchain["toolchain_prefix"],
                 )
                 self.assertEqual(
+                    GNU_TOOLCHAIN_INSTALLER.RUNTIME_LICENSE_SHA256,
+                    toolchain.get("runtime_license_sha256"),
+                )
+                self.assertEqual(
                     str(GNU_TOOLCHAIN_INSTALLER.DEFAULT_PREFIX),
                     RUNNER.GNU_TOOLCHAIN_PREFIX,
                 )

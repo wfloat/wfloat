@@ -120,10 +120,15 @@ inside the container. The recipe verifies the exact versions and prefix paths
 of every compiler and binutils program exported to the build, C++20 library
 support, the required AArch64 assembler modes, and forced
 AVX-VNNI assembly/disassembly on x86-64. Package validation independently
-enforces the
-architecture-specific manylinux symbol, forbidden-symbol, and direct-dependency
-policy. Each architecture is a separate job so one 14 GB runner does not hold
-multiple architecture build trees.
+enforces the architecture-specific manylinux symbol, forbidden-symbol, and
+direct-dependency policy. The two shared libraries statically incorporate the
+pinned GNU C++ and support runtimes, and validation rejects a dynamic
+`libstdc++.so.6` or `libgcc_s.so.1` dependency or any remaining `GLIBCXX`,
+`CXXABI`, or `GCC` requirement. Each artifact must include the GCC GPLv3,
+Runtime Library Exception, and retained libstdc++ HP/SGI notices derived from
+the verified GCC source at their committed SHA-256 identities. Each
+architecture is a separate job so one 14 GB runner does not hold multiple
+architecture build trees.
 
 Apple jobs select `/Applications/Xcode_16.4.app/Contents/Developer` and require
 Xcode 16.4 build 16F6 on both `macos-15` arm64 and `macos-15-intel`. Windows

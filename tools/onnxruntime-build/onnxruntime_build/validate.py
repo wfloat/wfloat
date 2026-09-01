@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import plistlib
@@ -108,6 +109,20 @@ def _parse_archive_identity(target: dict, archive: Path) -> tuple[str, str]:
 def _require_file(path: Path, description: str) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise ValidationError(f"missing or empty {description}: {path}")
+
+
+def _require_sha256(path: Path, expected: str, description: str) -> None:
+    if path.is_symlink():
+        raise ValidationError(f"{description} must be a regular file: {path}")
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise ValidationError(
+            f"{description} has SHA-256 {actual}; expected {expected}: {path}"
+        )
 
 
 def _validate_headers(root: Path) -> None:
@@ -403,7 +418,13 @@ def _check_glibc(binary: Path, maximum: str) -> str:
     return f"GLIBC_{found[0]}.{found[1]}"
 
 
-def _check_manylinux_abi(binary: Path, maximum: str, architecture: str) -> str:
+def _check_manylinux_abi(
+    binary: Path,
+    maximum: str,
+    architecture: str,
+    *,
+    static_cxx_runtime: bool = False,
+) -> str:
     architecture = "x86_64" if architecture == "x64" else architecture
     policy = _MANYLINUX_SYMBOLS.get((maximum, architecture))
     if policy is None:
@@ -432,6 +453,17 @@ def _check_manylinux_abi(binary: Path, maximum: str, architecture: str) -> str:
         raise ValidationError(
             f"{binary} exceeds the glibc {maximum} {architecture} symbol policy: {details}"
         )
+    if static_cxx_runtime:
+        dynamic_runtime_requirements = sorted(
+            f"{namespace}_{version}"
+            for namespace in ("CXXABI", "GCC", "GLIBCXX")
+            for version in requirements.get(namespace, set())
+        )
+        if dynamic_runtime_requirements:
+            raise ValidationError(
+                f"{binary} has dynamic GNU C++ symbol requirements despite its static runtime contract: "
+                + ", ".join(dynamic_runtime_requirements)
+            )
 
     dynamic_output = _tool_output([readelf, "--dynamic", str(binary)])
     dependencies = set(re.findall(r"\(NEEDED\).*?Shared library:\s*\[([^]]+)\]", dynamic_output))
@@ -441,6 +473,15 @@ def _check_manylinux_abi(binary: Path, maximum: str, architecture: str) -> str:
         raise ValidationError(
             f"{binary} has dependencies outside the glibc {maximum} policy: {', '.join(unexpected)}"
         )
+    if static_cxx_runtime:
+        dynamic_runtimes = sorted(
+            dependencies & {"libgcc_s.so.1", "libstdc++.so.6"}
+        )
+        if dynamic_runtimes:
+            raise ValidationError(
+                f"{binary} has dynamic GNU C++ runtime dependencies despite its static runtime contract: "
+                + ", ".join(dynamic_runtimes)
+            )
 
     symbol_output = _tool_output([readelf, "--dyn-syms", "--wide", str(binary)])
     undefined_symbols: set[str] = set()
@@ -711,6 +752,7 @@ def _validate_standard_metadata(
             primary,
             target["toolchain"]["glibc"],
             target["architecture"],
+            static_cxx_runtime=target["toolchain"].get("cxx_runtime") == "static",
         )
     if target["platform"] == "android":
         _check_android_api(primary, target["toolchain"]["android_api"])
@@ -861,6 +903,16 @@ def validate_archive(
         root = _safe_extract(archive, extraction, archive.stem)
         _require_file(root / "LICENSE", "Microsoft LICENSE")
         _require_file(root / "ThirdPartyNotices.txt", "Microsoft ThirdPartyNotices.txt")
+        for notice in target["package"].get("required_notices", []):
+            _require_file(root / notice, f"required third-party notice {notice}")
+        for notice, expected_sha256 in target["package"].get(
+            "required_notice_sha256", {}
+        ).items():
+            _require_sha256(
+                root / notice,
+                expected_sha256,
+                f"required third-party notice {notice}",
+            )
         messages.append("PASS archive identity, safe extraction, license, and notices")
 
         kind = target["package"]["kind"]

@@ -29,6 +29,53 @@ def _copy_file(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
+def _copy_framework_binary_as_archive(source: Path, destination: Path) -> None:
+    framework = next(
+        (parent for parent in source.parents if parent.suffix == ".framework"),
+        None,
+    )
+    if framework is None:
+        raise PackageError("Apple static build did not produce an onnxruntime.framework binary")
+    try:
+        resolved_source = source.resolve(strict=True)
+        resolved_source.relative_to(framework.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as error:
+        raise PackageError(
+            "Apple framework binary is missing or resolves outside its framework"
+        ) from error
+    if not resolved_source.is_file():
+        raise PackageError("Apple framework binary does not resolve to a regular file")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(resolved_source, destination)
+
+
+def _copy_toolchain_runtime_notices(target: dict, destination: Path) -> None:
+    toolchain = target.get("toolchain", {})
+    names = toolchain.get("runtime_license_files", [])
+    if not names:
+        return
+    source_dir_value = toolchain.get("runtime_license_dir")
+    if not source_dir_value:
+        raise PackageError("static toolchain runtime has no license directory")
+    expected_hashes = toolchain.get("runtime_license_sha256", {})
+    if set(expected_hashes) != set(names):
+        raise PackageError("static toolchain runtime notice hashes are incomplete")
+    source_dir = Path(source_dir_value)
+    for name in names:
+        source = source_dir / name
+        if not source.is_file() or source.is_symlink():
+            raise PackageError(f"static toolchain runtime notice is missing: {source}")
+        actual_sha256 = sha256(source)
+        if actual_sha256 != expected_hashes[name]:
+            raise PackageError(
+                f"static toolchain runtime notice {name} has SHA-256 {actual_sha256}; "
+                f"expected {expected_hashes[name]}"
+            )
+        target_notice = destination / "licenses" / name
+        target_notice.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target_notice)
+
+
 def copy_public_headers(source_dir: Path, destination: Path, providers: Iterable[str]) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     session_dir = source_dir / "include" / "onnxruntime" / "core" / "session"
@@ -153,9 +200,10 @@ def _copy_standard_libraries(target: dict, build_dirs: list[Path], destination: 
         return
     if platform == "macos" and linkage == "static":
         framework_binary = _find_named_file(build_dirs, "onnxruntime")
-        if ".framework" not in str(framework_binary):
-            raise PackageError("Apple static build did not produce an onnxruntime.framework binary")
-        _copy_file(framework_binary, lib_dir / "libonnxruntime.a")
+        _copy_framework_binary_as_archive(
+            framework_binary,
+            lib_dir / "libonnxruntime.a",
+        )
         return
 
     if platform == "windows":
@@ -240,6 +288,7 @@ def package_target(
 
     _copy_file(source_dir / "LICENSE", stage_root / "LICENSE")
     _copy_file(source_dir / "ThirdPartyNotices.txt", stage_root / "ThirdPartyNotices.txt")
+    _copy_toolchain_runtime_notices(target, stage_root)
 
     kind = target["package"]["kind"]
     if kind == "android":

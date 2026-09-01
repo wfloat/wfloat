@@ -126,6 +126,68 @@ class GnuToolchainInstallerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "lacks prerequisite checksums"):
                 INSTALLER._prerequisite_hashes(source)
 
+    def test_runtime_notice_bundle_comes_from_verified_gcc_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            source = temporary / "gcc-source"
+            (source / "libstdc++-v3/src/c++98").mkdir(parents=True)
+            (source / "COPYING3").write_text("GPLv3\n", encoding="utf-8")
+            (source / "COPYING.RUNTIME").write_text(
+                "GCC Runtime Library Exception\n",
+                encoding="utf-8",
+            )
+            (source / "libstdc++-v3/src/c++98/tree.cc").write_text(
+                "// GCC Runtime Library Exception\n"
+                "// Hewlett-Packard Company\n"
+                "// Silicon Graphics Computer Systems, Inc.\n"
+                "\n#include <bits/stl_tree.h>\n"
+                "int runtime_code;\n",
+                encoding="utf-8",
+            )
+            prefix = temporary / "prefix"
+
+            INSTALLER._install_runtime_notices(source, prefix)
+
+            license_dir = prefix / INSTALLER.RUNTIME_LICENSE_DIRECTORY
+            self.assertEqual(
+                {path.name for path in license_dir.iterdir()},
+                set(INSTALLER.RUNTIME_LICENSE_FILES),
+            )
+            notices = (license_dir / "libstdc++-NOTICES").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("Hewlett-Packard Company", notices)
+            self.assertIn("Silicon Graphics Computer Systems, Inc.", notices)
+            self.assertNotIn("runtime_code", notices)
+
+    def test_runtime_notice_reuse_requires_exact_regular_files(self) -> None:
+        payloads = {
+            "GCC-COPYING3": b"GPLv3 fixture\n",
+            "GCC-COPYING.RUNTIME": b"runtime exception fixture\n",
+            "libstdc++-NOTICES": b"HP and SGI fixture\n",
+        }
+        expected = {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in payloads.items()
+        }
+        with tempfile.TemporaryDirectory() as temporary_name, mock.patch.object(
+            INSTALLER, "RUNTIME_LICENSE_SHA256", expected
+        ):
+            prefix = Path(temporary_name)
+            license_dir = prefix / INSTALLER.RUNTIME_LICENSE_DIRECTORY
+            license_dir.mkdir(parents=True)
+            for name, payload in payloads.items():
+                (license_dir / name).write_bytes(payload)
+
+            self.assertTrue(INSTALLER._runtime_notices_installed(prefix))
+            (license_dir / "libstdc++-NOTICES").write_bytes(b"altered\n")
+            self.assertFalse(INSTALLER._runtime_notices_installed(prefix))
+            (license_dir / "libstdc++-NOTICES").unlink()
+            external = prefix / "external-notice"
+            external.write_bytes(payloads["libstdc++-NOTICES"])
+            (license_dir / "libstdc++-NOTICES").symlink_to(external)
+            self.assertFalse(INSTALLER._runtime_notices_installed(prefix))
+
     def test_extract_rejects_a_member_that_escapes_the_verified_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             workspace = Path(temporary_name)
@@ -171,6 +233,12 @@ class GnuToolchainInstallerTest(unittest.TestCase):
                     "_prerequisite_hashes",
                     return_value=prerequisite_hashes,
                 ),
+                mock.patch.object(INSTALLER, "_install_runtime_notices") as notices,
+                mock.patch.object(
+                    INSTALLER,
+                    "_runtime_notices_installed",
+                    return_value=True,
+                ),
                 mock.patch.object(INSTALLER, "_run") as run,
             ):
                 INSTALLER.install(prefix, 4)
@@ -200,6 +268,7 @@ class GnuToolchainInstallerTest(unittest.TestCase):
         self.assertIn("--without-isl", gcc_configure)
         self.assertEqual(commands[5], ["make", "-j4"])
         self.assertEqual(commands[6], ["make", "install-strip"])
+        notices.assert_called_once_with(Path("/verified/gcc-11.4.0"), prefix)
 
     def test_install_reuses_only_the_exact_existing_toolchain(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
@@ -208,6 +277,8 @@ class GnuToolchainInstallerTest(unittest.TestCase):
                 INSTALLER,
                 "_installed_versions",
                 return_value=INSTALLER.EXPECTED_TOOL_VERSIONS,
+            ), mock.patch.object(
+                INSTALLER, "_runtime_notices_installed", return_value=True
             ), mock.patch.object(INSTALLER, "_download") as download:
                 INSTALLER.install(prefix, 4)
             download.assert_not_called()

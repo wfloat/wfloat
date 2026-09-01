@@ -171,6 +171,16 @@ proves all four Microsoft build modes:
 `-march=armv8.2-a+dotprod`, `-march=armv8.2-a+fp16`, and
 `-march=armv8.2-a+i8mm`.
 
+Both glibc 2.17 shared-library targets statically incorporate GCC's C++ and
+support runtimes. This keeps the host contract independent of the GCC 11
+`libstdc++.so.6` and `libgcc_s.so.1` installed in the build container. The ELF
+validator rejects either dynamic dependency and rejects any `GLIBCXX`,
+`CXXABI`, or `GCC` version requirement that would reintroduce that dependency.
+The glibc symbol floor and remaining manylinux dependency policy are enforced
+separately. The package also carries the GCC GPLv3, Runtime Library Exception,
+and libstdc++ HP/SGI notices extracted from the verified GCC source; validation
+requires their committed SHA-256 identities.
+
 These glibc 2.17 targets use package-only validation: Microsoft unit-test
 targets are not built because one v1.29.0 test target places ONNX Runtime's
 `core/common/endian.h` where glibc 2.17 resolves the system `endian.h`, causing

@@ -34,6 +34,16 @@ BINUTILS_SOURCE_SHA512 = (
 GNU_TOOLCHAIN_PREFIX = (
     f"/tmp/wfloat-gnu-toolchain-gcc-{GCC_VERSION}-binutils-{BINUTILS_VERSION}"
 )
+GNU_RUNTIME_LICENSE_FILES = [
+    "GCC-COPYING3",
+    "GCC-COPYING.RUNTIME",
+    "libstdc++-NOTICES",
+]
+GNU_RUNTIME_LICENSE_SHA256 = {
+    "GCC-COPYING3": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "GCC-COPYING.RUNTIME": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
+    "libstdc++-NOTICES": "352bc4f3db51612035582fc2f93e220f693a36d55835f4469d8ddd4fca4a0477",
+}
 MANYLINUX2014_IMAGES = {
     # Pin manifests so the sysroot and supporting tools cannot
     # change underneath a committed artifact-builder revision.
@@ -71,6 +81,26 @@ def _target(architecture: str, glibc: str, linkage: str) -> dict:
                 "linker": "bfd",
             }
         )
+        if linkage == "shared":
+            toolchain["cxx_runtime"] = "static"
+            toolchain["runtime_license_dir"] = str(
+                Path(GNU_TOOLCHAIN_PREFIX) / "share/licenses/wfloat-gnu-runtime"
+            )
+            toolchain["runtime_license_files"] = GNU_RUNTIME_LICENSE_FILES
+            toolchain["runtime_license_sha256"] = GNU_RUNTIME_LICENSE_SHA256
+    package = {
+        "kind": "standard",
+        "headers_dir": "include",
+        "required_libraries": [library],
+    }
+    if toolchain.get("cxx_runtime") == "static":
+        package["required_notices"] = [
+            f"licenses/{name}" for name in GNU_RUNTIME_LICENSE_FILES
+        ]
+        package["required_notice_sha256"] = {
+            f"licenses/{name}": digest
+            for name, digest in GNU_RUNTIME_LICENSE_SHA256.items()
+        }
     return {
         "id": target_id,
         "platform": "linux",
@@ -79,11 +109,7 @@ def _target(architecture: str, glibc: str, linkage: str) -> dict:
         "linkage": linkage,
         "providers": ["cpu"],
         "toolchain": toolchain,
-        "package": {
-            "kind": "standard",
-            "headers_dir": "include",
-            "required_libraries": [library],
-        },
+        "package": package,
         "validation": {
             "test_policy": "package-only" if glibc == "2.17" else "native"
         },
@@ -373,6 +399,11 @@ def plan(target: dict, context: BuildContext) -> CommandPlan:
     command = base_build_command(context.source_dir, context.build_root, context.jobs)
     if target["linkage"] == "shared":
         command.append("--build_shared_lib")
+    if target["toolchain"].get("cxx_runtime") == "static":
+        command.append(
+            "--cmake_extra_defines="
+            "CMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
+        )
     finish_test_args(command, target, context.skip_tests)
     return CommandPlan({target["architecture"]: context.build_root}, [command])
 

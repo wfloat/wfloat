@@ -35,6 +35,17 @@ GCC_PREREQUISITE_BASE_URL = "https://gcc.gnu.org/pub/gcc/infrastructure"
 DEFAULT_PREFIX = Path(
     f"/tmp/wfloat-gnu-toolchain-gcc-{GCC_VERSION}-binutils-{BINUTILS_VERSION}"
 )
+RUNTIME_LICENSE_DIRECTORY = Path("share/licenses/wfloat-gnu-runtime")
+RUNTIME_LICENSE_FILES = (
+    "GCC-COPYING3",
+    "GCC-COPYING.RUNTIME",
+    "libstdc++-NOTICES",
+)
+RUNTIME_LICENSE_SHA256 = {
+    "GCC-COPYING3": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "GCC-COPYING.RUNTIME": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
+    "libstdc++-NOTICES": "352bc4f3db51612035582fc2f93e220f693a36d55835f4469d8ddd4fca4a0477",
+}
 BINUTILS_VERSION_PATTERNS = {
     "as": r"GNU assembler .*?([0-9]+\.[0-9]+(?:\.[0-9]+)?)",
     "ld": r"GNU ld .*?([0-9]+\.[0-9]+(?:\.[0-9]+)?)",
@@ -57,6 +68,14 @@ EXPECTED_TOOL_VERSIONS = {
 
 def _sha512(path: Path) -> str:
     digest = hashlib.sha512()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -176,10 +195,50 @@ def _installed_versions(prefix: Path) -> dict[str, str] | None:
     return versions
 
 
+def _runtime_notices_installed(prefix: Path) -> bool:
+    license_dir = prefix / RUNTIME_LICENSE_DIRECTORY
+    if set(RUNTIME_LICENSE_SHA256) != set(RUNTIME_LICENSE_FILES):
+        return False
+    for name, expected_sha256 in RUNTIME_LICENSE_SHA256.items():
+        notice = license_dir / name
+        if not notice.is_file() or notice.is_symlink():
+            return False
+        if _sha256(notice) != expected_sha256:
+            return False
+    return True
+
+
+def _install_runtime_notices(source_dir: Path, prefix: Path) -> None:
+    license_dir = prefix / RUNTIME_LICENSE_DIRECTORY
+    license_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_dir / "COPYING3", license_dir / "GCC-COPYING3")
+    shutil.copy2(
+        source_dir / "COPYING.RUNTIME",
+        license_dir / "GCC-COPYING.RUNTIME",
+    )
+
+    tree_source = source_dir / "libstdc++-v3" / "src" / "c++98" / "tree.cc"
+    tree_text = tree_source.read_text(encoding="utf-8")
+    notice, separator, _ = tree_text.partition("\n#include <bits/stl_tree.h>")
+    required_notice_text = (
+        "Hewlett-Packard Company",
+        "Silicon Graphics Computer Systems, Inc.",
+        "GCC Runtime Library Exception",
+    )
+    if not separator or any(text not in notice for text in required_notice_text):
+        raise RuntimeError(
+            "verified GCC source does not contain the expected libstdc++ runtime notices"
+        )
+    (license_dir / "libstdc++-NOTICES").write_text(
+        notice.rstrip() + "\n",
+        encoding="utf-8",
+    )
+
+
 def install(prefix: Path, jobs: int) -> None:
     installed = _installed_versions(prefix)
     expected = EXPECTED_TOOL_VERSIONS
-    if installed == expected:
+    if installed == expected and _runtime_notices_installed(prefix):
         print(
             f"Using existing GCC {GCC_VERSION} and binutils {BINUTILS_VERSION} at {prefix}",
             flush=True,
@@ -250,11 +309,14 @@ def install(prefix: Path, jobs: int) -> None:
         )
         _run(["make", f"-j{jobs}"], gcc_build_dir)
         _run(["make", "install-strip"], gcc_build_dir)
+        _install_runtime_notices(gcc_source_dir, prefix)
 
     installed = _installed_versions(prefix)
-    if installed != expected:
+    if installed != expected or not _runtime_notices_installed(prefix):
         raise RuntimeError(
-            f"installed GNU toolchain reports {installed!r}; expected {expected!r}"
+            "installed GNU toolchain or runtime notices do not match the committed contract: "
+            f"tools={installed!r}, expected={expected!r}, "
+            f"runtime_notices={_runtime_notices_installed(prefix)}"
         )
 
 

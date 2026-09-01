@@ -63,6 +63,43 @@ class BuildTest(unittest.TestCase):
             "--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF", command
         )
 
+    def test_glibc_2_17_shared_builds_statically_link_gnu_runtimes(self) -> None:
+        catalog = Catalog.load()
+        context = BuildContext(Path("/source"), Path("/build"), 2, False, True)
+        linker_option = (
+            "--cmake_extra_defines="
+            "CMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
+        )
+
+        for target_id in ["linux-x64-glibc2_17", "linux-aarch64-glibc2_17"]:
+            with self.subTest(target_id=target_id):
+                target = catalog.target(target_id)
+                command = linux_native_plan(target, context).commands[0]
+                self.assertEqual(target["toolchain"]["cxx_runtime"], "static")
+                self.assertEqual(
+                    target["package"]["required_notices"],
+                    [
+                        "licenses/GCC-COPYING3",
+                        "licenses/GCC-COPYING.RUNTIME",
+                        "licenses/libstdc++-NOTICES",
+                    ],
+                )
+                self.assertEqual(
+                    set(target["package"]["required_notice_sha256"]),
+                    set(target["package"]["required_notices"]),
+                )
+                self.assertIn(linker_option, command)
+
+        for target_id in [
+            "linux-x64-static_lib-glibc2_17",
+            "linux-x64-glibc2_28",
+        ]:
+            with self.subTest(target_id=target_id):
+                target = catalog.target(target_id)
+                command = linux_native_plan(target, context).commands[0]
+                self.assertNotIn("cxx_runtime", target["toolchain"])
+                self.assertNotIn(linker_option, command)
+
     def test_android_ndk_environment_must_match_cataloged_revision(self) -> None:
         target = Catalog.load().target("android")
         with tempfile.TemporaryDirectory() as temporary_name:

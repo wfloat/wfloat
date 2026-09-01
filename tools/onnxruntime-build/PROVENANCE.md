@@ -147,7 +147,15 @@ AArch64 feature modes, and forced AVX-VNNI assembly/disassembly on x86-64. The
 glibc 2.17 targets do not build Microsoft's unit-test targets because an
 upstream test-only `endian.h` include collision is incompatible with glibc
 2.17; Microsoft's runtime sources remain exact and unmodified. The resulting
-shared library must separately satisfy Wfloat's committed manylinux symbol
-allow-sets, forbidden-symbol rules, direct dependency allowlist, package
-contract, and C API compile/link/run smoke. Toolchain selection and skipped
-upstream tests alone do not establish ABI compatibility.
+shared libraries statically incorporate GCC's C++ and support runtimes so they
+do not depend on the host's `libstdc++.so.6` or `libgcc_s.so.1`. Validation
+rejects either dynamic runtime dependency and any remaining `GLIBCXX`,
+`CXXABI`, or `GCC` version requirement, in addition to enforcing Wfloat's
+committed manylinux symbol allow-sets, forbidden-symbol rules, direct
+dependency allowlist, package contract, and C API compile/link/run smoke.
+The installer derives the GCC GPLv3, Runtime Library Exception, and retained
+libstdc++ HP/SGI notices from that same verified GCC source and the package
+validator requires their committed SHA-256 identities in each affected
+artifact.
+Toolchain selection and skipped upstream tests alone do not establish ABI
+compatibility.

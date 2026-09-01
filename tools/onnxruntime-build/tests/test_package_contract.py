@@ -17,6 +17,7 @@ from onnxruntime_build.validate import (
     _check_apple_minimum,
     _check_manylinux_abi,
     _object_archive_members,
+    _require_sha256,
     _smoke_test,
     validate_archive,
 )
@@ -29,12 +30,22 @@ def _write_member(archive: zipfile.ZipFile, name: str, data: bytes = b"fixture\n
     archive.writestr(name, data)
 
 
-def _standard_fixture(path: Path, target: dict, *, notice: bool = True, extra_top: bool = False) -> None:
+def _standard_fixture(
+    path: Path,
+    target: dict,
+    *,
+    notice: bool = True,
+    runtime_notices: bool = True,
+    extra_top: bool = False,
+) -> None:
     top = path.stem
     with zipfile.ZipFile(path, "w") as archive:
         _write_member(archive, f"{top}/LICENSE")
         if notice:
             _write_member(archive, f"{top}/ThirdPartyNotices.txt")
+        if runtime_notices:
+            for required_notice in target["package"].get("required_notices", []):
+                _write_member(archive, f"{top}/{required_notice}")
         headers = target["package"]["headers_dir"]
         _write_member(archive, f"{top}/{headers}/onnxruntime_c_api.h")
         _write_member(archive, f"{top}/{headers}/onnxruntime_cxx_api.h")
@@ -54,13 +65,24 @@ class PackageContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / f"onnxruntime-linux-x64-glibc2_17-1.29.0-{BUILDER}.zip"
             _standard_fixture(archive, target)
-            messages = validate_archive(
-                self.catalog,
-                target["id"],
-                archive,
-                run_smoke=False,
-                inspect_metadata=False,
-            )
+            notice_hashes = target["package"]["required_notice_sha256"]
+
+            def fixture_notice_sha256(path: Path, expected: str, description: str) -> None:
+                relative = path.relative_to(path.parents[1]).as_posix()
+                self.assertEqual(expected, notice_hashes[relative])
+                self.assertIn(relative, description)
+
+            with mock.patch(
+                "onnxruntime_build.validate._require_sha256",
+                side_effect=fixture_notice_sha256,
+            ):
+                messages = validate_archive(
+                    self.catalog,
+                    target["id"],
+                    archive,
+                    run_smoke=False,
+                    inspect_metadata=False,
+                )
         self.assertEqual(len(messages), 3)
         self.assertTrue(messages[0].startswith("PASS"))
 
@@ -131,6 +153,69 @@ class PackageContractTest(unittest.TestCase):
             "onnxruntime_build.validate._tool_output", side_effect=[versions, dynamic, ""]
         ):
             _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "aarch64")
+
+    def test_static_cxx_runtime_accepts_no_dynamic_gnu_runtime(self) -> None:
+        versions = "Name: GLIBC_2.17 Flags: none"
+        dynamic = "(NEEDED) Shared library: [libc.so.6]"
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output",
+            side_effect=[versions, dynamic, ""],
+        ):
+            result = _check_manylinux_abi(
+                Path("libonnxruntime.so"),
+                "2.17",
+                "x86_64",
+                static_cxx_runtime=True,
+            )
+        self.assertEqual(result, "GLIBC=2.17")
+
+    def test_static_cxx_runtime_rejects_dynamic_gnu_runtime(self) -> None:
+        versions = "Name: GLIBC_2.17 Flags: none"
+        dynamic = "\n".join(
+            [
+                "(NEEDED) Shared library: [libstdc++.so.6]",
+                "(NEEDED) Shared library: [libgcc_s.so.1]",
+                "(NEEDED) Shared library: [libc.so.6]",
+            ]
+        )
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output",
+            side_effect=[versions, dynamic],
+        ), self.assertRaisesRegex(
+            ValidationError, r"dynamic GNU C\+\+ runtime dependencies.*libgcc_s.*libstdc"
+        ):
+            _check_manylinux_abi(
+                Path("libonnxruntime.so"),
+                "2.17",
+                "x86_64",
+                static_cxx_runtime=True,
+            )
+
+    def test_static_cxx_runtime_rejects_versioned_gnu_runtime_requirements(self) -> None:
+        versions = "\n".join(
+            [
+                "Name: GLIBC_2.17 Flags: none",
+                "Name: GLIBCXX_3.4.19 Flags: none",
+                "Name: CXXABI_1.3.7 Flags: none",
+            ]
+        )
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output", return_value=versions
+        ), self.assertRaisesRegex(
+            ValidationError, r"dynamic GNU C\+\+ symbol requirements.*CXXABI.*GLIBCXX"
+        ):
+            _check_manylinux_abi(
+                Path("libonnxruntime.so"),
+                "2.17",
+                "x86_64",
+                static_cxx_runtime=True,
+            )
 
     def test_manylinux_2_28_accepts_exact_x64_symbol_boundaries(self) -> None:
         versions = "\n".join(
@@ -221,6 +306,30 @@ class PackageContractTest(unittest.TestCase):
                 validate_archive(
                     self.catalog, target["id"], archive, run_smoke=False, inspect_metadata=False
                 )
+
+    def test_static_cxx_runtime_notices_are_required(self) -> None:
+        target = self.catalog.target("linux-x64-glibc2_17")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / (
+                f"onnxruntime-linux-x64-glibc2_17-1.29.0-{BUILDER}.zip"
+            )
+            _standard_fixture(archive, target, runtime_notices=False)
+            with self.assertRaisesRegex(ValidationError, "GCC-COPYING3"):
+                validate_archive(
+                    self.catalog,
+                    target["id"],
+                    archive,
+                    run_smoke=False,
+                    inspect_metadata=False,
+                )
+
+    def test_required_notice_sha256_rejects_altered_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            notice = Path(temporary_name) / "notice"
+            notice.write_bytes(b"altered notice\n")
+            expected = "0" * 64
+            with self.assertRaisesRegex(ValidationError, "SHA-256"):
+                _require_sha256(notice, expected, "runtime notice")
 
     def test_multiple_top_level_directories_are_rejected(self) -> None:
         target = self.catalog.target("linux-x64-glibc2_28")
