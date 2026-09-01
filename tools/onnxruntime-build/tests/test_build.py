@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -15,7 +16,8 @@ from onnxruntime_build.build import (
     build_target,
 )
 from onnxruntime_build.catalog import Catalog
-from onnxruntime_build.core import CommandPlan
+from onnxruntime_build.core import BuildContext, CommandPlan
+from onnxruntime_build.recipes.macos_static import plan as macos_static_plan
 
 
 PINNED_COMMIT = "2e2543fbe9fae542f921d47a72d21d5a4ef0b710"
@@ -36,6 +38,20 @@ class BuildTest(unittest.TestCase):
         base = _apple_settings(target, jobs=2, run_tests=False)["build_params"]["base"]
         self.assertIn("--no_telemetry", base)
         self.assertIn("--compile_no_warning_as_error", base)
+
+    def test_macos_static_build_settings_disable_microsoft_unit_tests(self) -> None:
+        target = Catalog.load().target("osx-arm64-static_lib")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            build_root = Path(temporary_name)
+            context = BuildContext(Path("/source"), build_root, 2, False, False)
+            macos_static_plan(target, context)
+            settings = json.loads(
+                (build_root / "apple-build-settings.json").read_text(encoding="utf-8")
+            )
+
+        base = settings["build_params"]["base"]
+        self.assertIn("--skip_tests", base)
+        self.assertIn("--cmake_extra_defines=onnxruntime_BUILD_UNIT_TESTS=OFF", base)
 
     def test_android_ndk_environment_must_match_cataloged_revision(self) -> None:
         target = Catalog.load().target("android")

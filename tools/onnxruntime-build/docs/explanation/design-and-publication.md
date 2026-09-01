@@ -126,6 +126,14 @@ uses `windows-2022`, initializes the Visual Studio 2022 x64 developer
 environment, and proves `cl.exe` and `dumpbin.exe` are available before the
 build. These checks fail closed if hosted-runner toolchains drift.
 
+The automatic macOS static-library builds preserve a macOS 11.0 deployment
+floor and use package-only validation. Microsoft unit-test targets are not
+built because ONNX Runtime v1.29.0's test-only Xcode 16.4 standard-library path
+requires macOS 13.3. This exception does not alter the runtime sources or raise
+the artifact floor, and it does not apply to native Linux or Windows CPU builds.
+The completed macOS archive must still pass architecture, linkage,
+minimum-platform, package, and basic C API compile/link/run validation.
+
 Each family workflow can also be dispatched manually, but exposes no target,
 runner, version, source-revision, or test-policy input. Manual execution is thus
 bounded by the same committed source lock, target set, toolchain, and validation

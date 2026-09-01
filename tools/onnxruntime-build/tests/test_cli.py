@@ -62,6 +62,14 @@ class CliTest(unittest.TestCase):
             result.stdout,
         )
 
+    def test_macos_static_plan_reports_package_only_validation(self) -> None:
+        result = self.run_cli("build", "osx-arm64-static_lib", "--plan")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Microsoft tests: SKIPPED (target uses package-only validation)",
+            result.stdout,
+        )
+
     def test_cuda_plan_does_not_enable_tensorrt(self) -> None:
         result = self.run_cli("build", "linux-x64-gpu_cuda12", "--plan")
         self.assertEqual(result.returncode, 0, result.stderr)

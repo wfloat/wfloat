@@ -157,7 +157,12 @@ class Catalog:
                 raise CatalogError(
                     f"target {target_id} validation may contain only the enforced test_policy"
                 )
-            if validation["test_policy"] not in {"native", "cross", "gpu-compile"}:
+            if validation["test_policy"] not in {
+                "native",
+                "cross",
+                "gpu-compile",
+                "package-only",
+            }:
                 raise CatalogError(f"target {target_id} has an unknown Microsoft test policy")
             package = target["package"]
             if package.get("kind") != "xcframework" and not package.get("headers_dir"):

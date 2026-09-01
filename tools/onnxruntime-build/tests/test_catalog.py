@@ -117,6 +117,31 @@ class CatalogTest(unittest.TestCase):
                 with self.subTest(target=target["id"]):
                     self.assertEqual(target["toolchain"], expected)
 
+    def test_macos_static_uses_package_only_validation(self) -> None:
+        for target_id in [
+            "osx-arm64-static_lib",
+            "osx-x86_64-static_lib",
+            "osx-universal2-static_lib",
+        ]:
+            with self.subTest(target=target_id):
+                self.assertEqual(
+                    self.catalog.target(target_id)["validation"]["test_policy"],
+                    "package-only",
+                )
+
+        self.assertEqual(
+            self.catalog.target("osx-arm64")["validation"]["test_policy"],
+            "native",
+        )
+        self.assertEqual(
+            self.catalog.target("linux-x64-glibc2_17")["validation"]["test_policy"],
+            "native",
+        )
+        self.assertEqual(
+            self.catalog.target("win-x64-static_lib-mt")["validation"]["test_policy"],
+            "native",
+        )
+
     def test_cuda_compatibility_is_exact(self) -> None:
         cuda12 = self.catalog.target("linux-x64-gpu_cuda12")["toolchain"]
         cuda13 = self.catalog.target("win-x64-gpu_cuda13")["toolchain"]

@@ -124,9 +124,7 @@ def apple_settings(target: dict, jobs: int, run_tests: bool) -> dict:
 
 
 def plan(target: dict, context: BuildContext) -> CommandPlan:
-    run_tests = target["validation"]["test_policy"] == "native" and tests_enabled(
-        target, context.skip_tests
-    )
+    run_tests = tests_enabled(target, context.skip_tests)
     settings_path = context.build_root / "apple-build-settings.json"
     if not context.plan:
         context.build_root.mkdir(parents=True, exist_ok=True)
@@ -150,8 +148,6 @@ def plan(target: dict, context: BuildContext) -> CommandPlan:
     if target["linkage"] == "shared":
         command.append("--build_dynamic_framework")
     command.append(str(settings_path))
-    if target["validation"]["test_policy"] != "native":
-        print("Microsoft tests: SKIPPED (XCFramework slices are cross-compiled; package metadata is validated)")
     return CommandPlan({"apple": context.build_root}, [command])
 
 

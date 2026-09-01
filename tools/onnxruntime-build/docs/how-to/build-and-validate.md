@@ -122,6 +122,13 @@ xcodebuild -version
 The builder preflight requires that exact selection. It uses Microsoft's Apple
 framework assembler for XCFramework and traditional static packages. iOS
 device and simulator slices are built with an explicit 13.0 deployment target.
+Traditional macOS static packages retain an explicit 11.0 deployment target
+and do not build Microsoft's unit-test executables. ONNX Runtime v1.29.0's test
+sources reach Xcode 16.4 floating-point `std::to_chars`, which is available only
+from macOS 13.3; raising the shipped artifact floor for that test-only dependency
+would violate the package contract. Archive validation still checks the Mach-O
+minimum, architecture, linkage, headers and libraries, then performs the
+available basic C API compile/link/run check.
 
 ### Linux glibc targets
 

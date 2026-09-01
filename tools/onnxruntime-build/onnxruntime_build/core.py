@@ -147,7 +147,11 @@ def tests_enabled(target: dict, skip_tests: bool) -> bool:
         return False
     policy = target["validation"]["test_policy"]
     if policy != "native":
-        reason = "cross-compiled target" if policy == "cross" else "GPU runtime requires matching hardware"
+        reason = {
+            "cross": "cross-compiled target",
+            "gpu-compile": "GPU runtime requires matching hardware",
+            "package-only": "target uses package-only validation",
+        }[policy]
         print(f"Microsoft tests: SKIPPED ({reason}); compilation/package validation remains enabled")
         return False
     architectures = target_architectures(target)

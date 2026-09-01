@@ -102,8 +102,15 @@ provenance sidecar in the package.
 | `native` | Run Microsoft's applicable tests when target architecture matches the host |
 | `cross` | Report Microsoft target tests skipped; validate package metadata and link where possible |
 | `gpu-compile` | Build and validate provider files/linkage; report runtime validation separately unless matching hardware is available |
+| `package-only` | Do not build Microsoft test targets; require package metadata and available compile/link/run validation |
 
 The validator never converts a skipped test into a pass.
+
+The traditional macOS static-library targets use `package-only`. They preserve
+the macOS 11.0 artifact floor instead of compiling Microsoft's v1.29.0 test
+executables, whose Xcode 16.4 standard-library path requires floating-point
+`std::to_chars` introduced in macOS 13.3. Linux and Windows native CPU targets
+remain `native`; this exception does not disable their Microsoft tests.
 
 ## Automatic CI evidence targets
 
