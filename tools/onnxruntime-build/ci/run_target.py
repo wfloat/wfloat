@@ -10,11 +10,8 @@ from pathlib import Path
 
 BUILDER_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = BUILDER_ROOT.parents[1]
-# Keep this wrapper independent from builder-package imports: the public
-# launcher must perform its clean-tree check before recipe code is imported.
-# A contract test keeps these execution constants synchronized with the recipe.
-STATIC_CLANG_RELEASE = "v21.1.8.1"
-STATIC_CLANG_MANIFEST_SHA256 = "a6f87a4af8d72192219602f252d7debdf7c1e73ca4b28a2f99f2832a3ac0b487"
+GCC_PREFIX = "/tmp/wfloat-gcc-11.4.0"
+GCC_INSTALLER = BUILDER_ROOT / "ci" / "install_gcc.py"
 MANYLINUX_IMAGES = {
     "linux-x64-glibc2_17": (
         "quay.io/pypa/manylinux2014_x86_64@"
@@ -25,6 +22,37 @@ MANYLINUX_IMAGES = {
         "sha256:1145c233b5693c770b878d51e64261603b0d374942ff134d589656799f72e9f9"
     ),
 }
+
+
+def _require_clean_executable_paths() -> None:
+    try:
+        relative_builder = BUILDER_ROOT.relative_to(REPOSITORY)
+        status = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain=v1",
+                "--ignored=matching",
+                "--untracked-files=all",
+                "--",
+                str(relative_builder / "onnxruntime_build"),
+                str(relative_builder / "ci"),
+            ],
+            cwd=REPOSITORY,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        raise RuntimeError(
+            f"unable to verify executable builder paths before installing GCC: {error}"
+        ) from error
+    if status:
+        raise RuntimeError(
+            "dirty, untracked, or ignored files are present in executable builder paths; "
+            "remove them before installing GCC:\n" + "\n".join(status)
+        )
 
 
 def command_for(arguments: list[str]) -> list[str]:
@@ -54,41 +82,46 @@ def command_for(arguments: list[str]) -> list[str]:
     ]
     build = arguments[0] == "build"
     if build:
+        container_installer = Path("/workspace") / GCC_INSTALLER.relative_to(REPOSITORY)
         installer = [
-            "/opt/_internal/build_scripts/install-static-clang-helper.sh",
-            "-v",
-            STATIC_CLANG_RELEASE,
-            "-c",
-            STATIC_CLANG_MANIFEST_SHA256,
+            "/opt/python/cp312-cp312/bin/python",
+            "-I",
+            "-B",
+            str(container_installer),
+            "--prefix",
+            GCC_PREFIX,
+            "--jobs",
+            "4",
         ]
         container_command = [
-            "setpriv",
-            f"--reuid={uid}",
-            f"--regid={gid}",
-            "--clear-groups",
-            "--",
             "env",
             "HOME=/tmp/wfloat-builder-home",
             "GIT_CONFIG_COUNT=1",
             "GIT_CONFIG_KEY_0=safe.directory",
             "GIT_CONFIG_VALUE_0=/workspace",
-            "CC=/opt/clang/bin/clang",
-            "CXX=/opt/clang/bin/clang++",
-            "AR=/opt/clang/bin/llvm-ar",
-            "NM=/opt/clang/bin/llvm-nm",
-            "RANLIB=/opt/clang/bin/llvm-ranlib",
-            "STRIP=/opt/clang/bin/strip",
-            "LDFLAGS=-fuse-ld=lld",
+            f"CC={GCC_PREFIX}/bin/gcc",
+            f"CXX={GCC_PREFIX}/bin/g++",
+            f"AR={GCC_PREFIX}/bin/gcc-ar",
+            f"NM={GCC_PREFIX}/bin/gcc-nm",
+            f"RANLIB={GCC_PREFIX}/bin/gcc-ranlib",
+            "STRIP=strip",
             *container_command,
         ]
-        shell_command = f"{shlex.join(installer)} && exec {shlex.join(container_command)}"
+        runtime_paths = f"{GCC_PREFIX}/lib64:{GCC_PREFIX}/lib"
+        shell_command = (
+            f"{shlex.join(installer)} && "
+            f"export LD_LIBRARY_PATH={shlex.quote(runtime_paths)}"
+            "${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} && "
+            f"exec {shlex.join(container_command)}"
+        )
     else:
         shell_command = shlex.join(container_command)
     return [
         "docker",
         "run",
         "--rm",
-        *([] if build else ["--user", f"{uid}:{gid}"]),
+        "--user",
+        f"{uid}:{gid}",
         "--env",
         "HOME=/tmp/wfloat-builder-home",
         "--env",
@@ -108,9 +141,11 @@ def command_for(arguments: list[str]) -> list[str]:
     ]
 
 
-def main() -> int:
-    arguments = sys.argv[1:]
+def main(arguments: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if arguments is None else arguments
     try:
+        if arguments and arguments[0] == "build":
+            _require_clean_executable_paths()
         command = command_for(arguments)
     except (RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

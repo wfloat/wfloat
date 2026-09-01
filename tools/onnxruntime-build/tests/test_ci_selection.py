@@ -4,6 +4,7 @@ import fnmatch
 import importlib.util
 import os
 import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -48,6 +49,7 @@ def _workflow_selects(text: str, changed_path: str) -> bool:
 
 
 RUNNER = _load("run_target", ROOT / "ci" / "run_target.py")
+GCC_INSTALLER = _load("install_gcc", ROOT / "ci" / "install_gcc.py")
 
 FAMILIES = {
     "onnxruntime-builder-android.yml": {
@@ -238,6 +240,7 @@ class WorkflowTopologyTest(unittest.TestCase):
 
         linux = (WORKFLOWS / "onnxruntime-builder-linux.yml").read_text(encoding="utf-8")
         self.assertIn('\"tools/onnxruntime-build/ci/run_target.py\"', linux)
+        self.assertIn('\"tools/onnxruntime-build/ci/install_gcc.py\"', linux)
         self.assertEqual(linux.count('manylinux: "true"'), 2)
 
     def test_android_workflow_installs_the_cataloged_toolchain(self) -> None:
@@ -279,6 +282,42 @@ class WorkflowTopologyTest(unittest.TestCase):
 
 
 class CiRunnerTest(unittest.TestCase):
+    def test_clean_guard_covers_ci_and_rejects_a_dirty_installer(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["git", "status"],
+            0,
+            stdout=" M tools/onnxruntime-build/ci/install_gcc.py\n",
+        )
+        with mock.patch.object(
+            RUNNER.subprocess, "run", return_value=completed
+        ) as run, self.assertRaisesRegex(RuntimeError, "before installing GCC"):
+            RUNNER._require_clean_executable_paths()
+
+        checked_paths = run.call_args.args[0]
+        self.assertIn("tools/onnxruntime-build/ci", checked_paths)
+        self.assertIn("tools/onnxruntime-build/onnxruntime_build", checked_paths)
+
+    def test_dirty_installer_is_rejected_before_container_execution(self) -> None:
+        with (
+            mock.patch.object(
+                RUNNER,
+                "_require_clean_executable_paths",
+                side_effect=RuntimeError(
+                    "dirty, untracked, or ignored files are present in executable builder paths"
+                ),
+            ) as clean,
+            mock.patch.object(RUNNER, "command_for") as command_for,
+            mock.patch.object(RUNNER.subprocess, "run") as run,
+            mock.patch("builtins.print") as printed,
+        ):
+            result = RUNNER.main(["build", "linux-x64-glibc2_17", "--jobs", "4"])
+
+        self.assertEqual(result, 2)
+        clean.assert_called_once_with()
+        command_for.assert_not_called()
+        run.assert_not_called()
+        self.assertIn("dirty, untracked, or ignored", str(printed.call_args))
+
     def test_manylinux_wrapper_matches_the_cataloged_toolchain(self) -> None:
         catalog = Catalog.load()
         for target_id, image in RUNNER.MANYLINUX_IMAGES.items():
@@ -286,12 +325,16 @@ class CiRunnerTest(unittest.TestCase):
                 toolchain = catalog.target(target_id)["toolchain"]
                 self.assertEqual(image, toolchain["container_image"])
                 self.assertEqual(
-                    RUNNER.STATIC_CLANG_RELEASE,
-                    toolchain["compiler_release"],
+                    GCC_INSTALLER.GCC_VERSION,
+                    toolchain["compiler_version"],
                 )
                 self.assertEqual(
-                    RUNNER.STATIC_CLANG_MANIFEST_SHA256,
-                    toolchain["compiler_manifest_sha256"],
+                    GCC_INSTALLER.GCC_SOURCE_URL,
+                    toolchain["compiler_source"],
+                )
+                self.assertEqual(
+                    GCC_INSTALLER.GCC_SOURCE_SHA512,
+                    toolchain["compiler_source_sha512"],
                 )
 
     def test_manylinux_targets_run_in_the_matching_container(self) -> None:
@@ -307,16 +350,18 @@ class CiRunnerTest(unittest.TestCase):
         self.assertIn(RUNNER.MANYLINUX_IMAGES["linux-aarch64-glibc2_17"], arm64)
         self.assertIn("@sha256:", RUNNER.MANYLINUX_IMAGES["linux-x64-glibc2_17"])
         self.assertIn("@sha256:", RUNNER.MANYLINUX_IMAGES["linux-aarch64-glibc2_17"])
-        self.assertNotIn("--user", x64)
+        self.assertIn("--user", x64)
         self.assertIn("--user", arm64)
+        self.assertIn("501:20", x64)
         self.assertIn("501:20", arm64)
-        self.assertIn(RUNNER.STATIC_CLANG_RELEASE, x64[-1])
-        self.assertIn(RUNNER.STATIC_CLANG_MANIFEST_SHA256, x64[-1])
-        self.assertIn("setpriv --reuid=501 --regid=20 --clear-groups", x64[-1])
-        self.assertIn("CC=/opt/clang/bin/clang", x64[-1])
-        self.assertIn("CXX=/opt/clang/bin/clang++", x64[-1])
-        self.assertIn("STRIP=/opt/clang/bin/strip", x64[-1])
-        self.assertIn("LDFLAGS=-fuse-ld=lld", x64[-1])
+        self.assertIn("tools/onnxruntime-build/ci/install_gcc.py", x64[-1])
+        self.assertIn(GCC_INSTALLER.GCC_VERSION, x64[-1])
+        self.assertNotIn("setpriv", x64[-1])
+        self.assertIn(f"CC={RUNNER.GCC_PREFIX}/bin/gcc", x64[-1])
+        self.assertIn(f"CXX={RUNNER.GCC_PREFIX}/bin/g++", x64[-1])
+        self.assertIn(f"LD_LIBRARY_PATH={RUNNER.GCC_PREFIX}/lib64", x64[-1])
+        self.assertNotIn("/opt/clang", x64[-1])
+        self.assertNotIn("-fuse-ld=lld", x64[-1])
 
     def test_other_targets_use_the_public_launcher_with_current_python(self) -> None:
         command = RUNNER.command_for(["build", "win-x64-static_lib-mt"])

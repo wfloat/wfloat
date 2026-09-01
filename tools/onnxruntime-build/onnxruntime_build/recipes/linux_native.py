@@ -19,11 +19,14 @@ from ..core import (
 )
 
 
-STATIC_CLANG_RELEASE = "v21.1.8.1"
-STATIC_CLANG_VERSION = "21.1.8"
-STATIC_CLANG_MANIFEST_SHA256 = "a6f87a4af8d72192219602f252d7debdf7c1e73ca4b28a2f99f2832a3ac0b487"
+GCC_VERSION = "11.4.0"
+GCC_SOURCE_URL = "https://gcc.gnu.org/pub/gcc/releases/gcc-11.4.0/gcc-11.4.0.tar.xz"
+GCC_SOURCE_SHA512 = (
+    "a5018bf1f1fa25ddf33f46e720675d261987763db48e7a5fdf4c26d3150a8abcb"
+    "82fdc413402df1c32f2e6b057d9bae6bdfa026defc4030e10144a8532e60f14"
+)
 MANYLINUX2014_IMAGES = {
-    # Pin manifests so the sysroot, GCC 10 runtime, and supporting tools cannot
+    # Pin manifests so the sysroot and supporting tools cannot
     # change underneath a committed artifact-builder revision.
     "x86_64": (
         "quay.io/pypa/manylinux2014_x86_64@"
@@ -48,11 +51,11 @@ def _target(architecture: str, glibc: str, linkage: str) -> dict:
         toolchain.update(
             {
                 "container_image": MANYLINUX2014_IMAGES[architecture],
-                "compiler": "clang",
-                "compiler_release": STATIC_CLANG_RELEASE,
-                "compiler_version": STATIC_CLANG_VERSION,
-                "compiler_manifest_sha256": STATIC_CLANG_MANIFEST_SHA256,
-                "linker": "lld",
+                "compiler": "gcc",
+                "compiler_version": GCC_VERSION,
+                "compiler_source": GCC_SOURCE_URL,
+                "compiler_source_sha512": GCC_SOURCE_SHA512,
+                "linker": "bfd",
             }
         )
     return {
@@ -102,14 +105,12 @@ def _tool_version(command: str, label: str, pattern: str) -> str:
     return match.group(1)
 
 
-def _require_static_clang(target: dict) -> None:
+def _require_gcc_toolchain(target: dict) -> None:
     toolchain = target["toolchain"]
     expected = toolchain["compiler_version"]
     tools = [
-        (os.environ.get("CC", "cc"), "C compiler", r"clang version ([0-9]+\.[0-9]+\.[0-9]+)"),
-        (os.environ.get("CXX", "c++"), "C++ compiler", r"clang version ([0-9]+\.[0-9]+\.[0-9]+)"),
-        (os.environ.get("AR", "llvm-ar"), "archiver", r"LLVM version ([0-9]+\.[0-9]+\.[0-9]+)"),
-        ("ld.lld", "linker", r"LLD ([0-9]+\.[0-9]+\.[0-9]+)"),
+        (os.environ.get("CC", "cc"), "C compiler", r"gcc .*?([0-9]+\.[0-9]+\.[0-9]+)"),
+        (os.environ.get("CXX", "c++"), "C++ compiler", r"g\+\+ .*?([0-9]+\.[0-9]+\.[0-9]+)"),
     ]
     for command, label, pattern in tools:
         actual = _tool_version(command, label, pattern)
@@ -117,7 +118,12 @@ def _require_static_clang(target: dict) -> None:
             raise BuildError(f"{target['id']} requires {label} {expected}; {command} reports {actual}")
 
     architecture_flags = (
-        ["-march=armv8.2-a+bf16", "-march=armv8.2-a+fp16"]
+        [
+            "-march=armv8.2-a+bf16",
+            "-march=armv8.2-a+dotprod",
+            "-march=armv8.2-a+fp16",
+            "-march=armv8.2-a+i8mm",
+        ]
         if target["architecture"] == "aarch64"
         else [None]
     )
@@ -128,12 +134,17 @@ def _require_static_clang(target: dict) -> None:
         temporary = Path(temporary_name)
         source = temporary / "probe.cc"
         source.write_text(
-            "#include <string>\nint main() { return std::string{\"wfloat\"}.empty(); }\n",
+            "#include <memory>\n"
+            "int main() {\n"
+            "  auto value = std::make_unique_for_overwrite<int>();\n"
+            "  *value = 0;\n"
+            "  return *value;\n"
+            "}\n",
             encoding="utf-8",
         )
         for index, architecture_flag in enumerate(architecture_flags):
             output = temporary / f"probe-{index}"
-            command = [compiler, "-std=c++20", "-fuse-ld=lld"]
+            command = [compiler, "-std=c++20"]
             if architecture_flag:
                 command.append(architecture_flag)
             command.extend([str(source), "-o", str(output)])
@@ -170,8 +181,8 @@ def preflight(target: dict, _source_dir) -> None:
             f"{target['id']} must be built in glibc {expected}; host reports {actual or 'unknown'}. "
             f"Run the same command in {image}."
         )
-    if target["toolchain"].get("compiler") == "clang":
-        _require_static_clang(target)
+    if target["toolchain"].get("compiler") == "gcc":
+        _require_gcc_toolchain(target)
 
 
 def plan(target: dict, context: BuildContext) -> CommandPlan:

@@ -108,13 +108,14 @@ Windows x64 static with `/MT`. Some live consumers still pin older artifacts,
 so this list must not be read as a statement that every consumer already uses
 v1.29.0. The two Linux targets run inside the same manylinux2014 environment
 family used by Wfloat's wheel matrix. Their exact architecture-specific
-container manifests, PyPA-cataloged static-Clang release, and installer-manifest
-checksum are cataloged with the Linux recipe and consumed by
-`ci/run_target.py`. The compiler is installed before mounted repository code
-runs as root inside the container; the wrapper then drops to the hosted runner's
-UID/GID before starting the public builder. The recipe verifies Clang/LLVM
-21.1.8 and its
-compile/link capabilities; package validation independently enforces the
+container manifests, GNU GCC 11.4.0 source URL, and GNU-published SHA-512 are
+cataloged with the Linux recipe and consumed by `ci/run_target.py`. The compiler
+is built from the verified GNU release inside the ephemeral container as the
+hosted runner's unprivileged UID/GID. The host wrapper proves the executable
+builder paths are clean before the repository-owned installer runs, and the
+public launcher checks them again inside the container. The recipe verifies
+GCC/G++ 11.4.0, C++20 library support, and the required AArch64 assembler modes;
+package validation independently enforces the
 architecture-specific manylinux symbol, forbidden-symbol, and direct-dependency
 policy. Each architecture is a separate job so native tests can run where
 applicable and one 14 GB runner does not hold multiple architecture build

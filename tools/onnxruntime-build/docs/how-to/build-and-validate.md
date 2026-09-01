@@ -148,18 +148,20 @@ command inside that container; do not copy package contents from another
 distributor.
 
 The two automatic glibc 2.17 jobs use architecture-matched manylinux2014 images
-pinned by manifest digest. Inside each image, `ci/run_target.py` installs the
-PyPA-cataloged static-Clang release `v21.1.8.1` through PyPA's
-checksum-verifying helper and pins the helper's `sha256sums.txt` digest. The
-build uses Clang/LLVM 21.1.8,
-LLVM's archiver and LLD, while retaining the image's glibc 2.17 sysroot and GCC
-10 libstdc++/libgcc compatibility runtime. Before Microsoft configure runs, the
-recipe requires those exact tool versions, performs a C++ compile/link probe,
-and on AArch64 separately proves both `-march=armv8.2-a+bf16` and
-`-march=armv8.2-a+fp16`. This satisfies ONNX Runtime's compiler and assembler
-requirements without replacing the compatibility runtime. The completed ELF
-still has to pass the symbol and dependency policy; the selected compiler is
-not treated as proof of runtime compatibility.
+pinned by manifest digest. Inside each image, `ci/run_target.py` invokes
+`ci/install_gcc.py` as the hosted runner's unprivileged UID/GID. That installer
+downloads GCC 11.4.0 from GNU over HTTPS, verifies GNU's published SHA-512,
+downloads only the GMP, MPFR, and MPC releases named by the verified GCC
+archive, verifies their embedded SHA-512 values, and builds C/C++ into the
+container's temporary directory. No third-party compiler image or moving
+package repository is used. Before Microsoft configure runs, the recipe
+requires GCC/G++ 11.4.0, proves `std::make_unique_for_overwrite` under C++20,
+and on AArch64 separately proves all four Microsoft build modes:
+`-march=armv8.2-a+bf16`,
+`-march=armv8.2-a+dotprod`, `-march=armv8.2-a+fp16`, and
+`-march=armv8.2-a+i8mm`. The completed ELF still has to pass the symbol,
+dependency, and runtime policy; the selected compiler is not treated as proof
+of glibc 2.17 or libstdc++ compatibility.
 
 For a cross-compiled ARM or AArch64 build, provide target compilers, an exact
 sysroot, and a host `protoc`:
@@ -271,7 +273,7 @@ Some live consumers still pin older artifacts, so membership is not a claim of
 current deployment or verification. The glibc 2.17 Linux builds run in
 architecture-matched manylinux2014 containers. Their exact manifests are pinned
 with the Linux recipe and consumed by `ci/run_target.py`; changing an image,
-compiler release, or installer checksum is therefore a reviewable source change
+compiler release, source checksum, or installer is therefore a reviewable source change
 rather than an implicit consequence of a moving tag. Each build revalidates its
 completed zip, uploads it to GitHub Actions with three-day retention, and then
 removes `.out` from the runner. Publication to Wfloat's immutable R2 registry

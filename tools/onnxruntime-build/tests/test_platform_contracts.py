@@ -9,7 +9,7 @@ from unittest import mock
 from onnxruntime_build.catalog import Catalog
 from onnxruntime_build.core import BuildError
 from onnxruntime_build.recipes.apple_xcframework import apple_preflight
-from onnxruntime_build.recipes.linux_native import _require_static_clang
+from onnxruntime_build.recipes.linux_native import _require_gcc_toolchain
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,41 +58,48 @@ class AppleToolchainTest(unittest.TestCase):
 
 
 class LinuxToolchainTest(unittest.TestCase):
-    def test_static_clang_preflight_proves_both_aarch64_feature_modes(self) -> None:
+    def test_gcc_preflight_proves_cxx20_and_all_aarch64_feature_modes(self) -> None:
         target = Catalog.load().target("linux-aarch64-glibc2_17")
-        completed = subprocess.CompletedProcess(["clang++"], 0, stdout="")
+        completed = subprocess.CompletedProcess(["g++"], 0, stdout="")
         with mock.patch.dict(
             os.environ,
-            {"CC": "clang", "CXX": "clang++", "AR": "llvm-ar"},
+            {"CC": "gcc", "CXX": "g++"},
             clear=True,
         ), mock.patch(
             "onnxruntime_build.recipes.linux_native._tool_version",
-            side_effect=["21.1.8", "21.1.8", "21.1.8", "21.1.8"],
+            side_effect=["11.4.0", "11.4.0"],
         ), mock.patch(
             "onnxruntime_build.recipes.linux_native.shutil.which",
-            return_value="/opt/clang/bin/clang++",
+            return_value="/tmp/wfloat-gcc-11.4.0/bin/g++",
         ), mock.patch(
             "onnxruntime_build.recipes.linux_native.subprocess.run",
             return_value=completed,
         ) as run:
-            _require_static_clang(target)
+            _require_gcc_toolchain(target)
 
         probes = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(probes), 2)
-        self.assertIn("-march=armv8.2-a+bf16", probes[0])
-        self.assertNotIn("-march=armv8.2-a+fp16", probes[0])
-        self.assertIn("-march=armv8.2-a+fp16", probes[1])
-        self.assertNotIn("-march=armv8.2-a+bf16", probes[1])
+        expected_flags = [
+            "-march=armv8.2-a+bf16",
+            "-march=armv8.2-a+dotprod",
+            "-march=armv8.2-a+fp16",
+            "-march=armv8.2-a+i8mm",
+        ]
+        self.assertEqual(len(probes), len(expected_flags))
+        for index, expected in enumerate(expected_flags):
+            self.assertIn(expected, probes[index])
+            for other in set(expected_flags) - {expected}:
+                self.assertNotIn(other, probes[index])
         self.assertTrue(all("-std=c++20" in probe for probe in probes))
-        self.assertTrue(all("-fuse-ld=lld" in probe for probe in probes))
+        self.assertTrue(all("-fuse-ld=lld" not in probe for probe in probes))
 
-    def test_static_clang_preflight_rejects_toolchain_drift(self) -> None:
+    def test_gcc_preflight_rejects_toolchain_drift(self) -> None:
         target = Catalog.load().target("linux-x64-glibc2_17")
         with mock.patch(
             "onnxruntime_build.recipes.linux_native._tool_version",
-            side_effect=["21.1.8", "20.1.8"],
-        ), self.assertRaisesRegex(BuildError, "requires C\\+\\+ compiler 21.1.8"):
-            _require_static_clang(target)
+            side_effect=["11.4.0", "12.1.0"],
+        ), self.assertRaisesRegex(BuildError, "requires C\\+\\+ compiler 11.4.0"):
+            _require_gcc_toolchain(target)
+
 
 class WasmConsumerContractTest(unittest.TestCase):
     def test_live_consumer_uses_only_the_published_registry_pin(self) -> None:

@@ -13,8 +13,9 @@ The implementer used only:
   release-package contracts;
 - platform SDK, compiler, CMake, execution-provider, and archive-format
   documentation;
-- PyPA manylinux images, static-Clang installation helper, and auditwheel
-  manylinux policy data;
+- PyPA manylinux images and auditwheel manylinux policy data;
+- GNU's GCC 11.4.0 release, published SHA-512, prerequisite checksums, and
+  installation documentation;
 - Wfloat's current public source and consumer build contracts; and
 - Wfloat's independent-implementation specification describing target names,
   required files, architectures, linkage, and consumer behavior.
@@ -121,10 +122,17 @@ three-day inspection retention. That short-lived CI copy is not registry
 publication; publication remains a separate, explicitly approved operation.
 
 The automatic glibc 2.17 builds use architecture-specific manylinux2014 image
-digests plus PyPA-cataloged static-Clang release `v21.1.8.1`. The committed
-SHA-256 for that release's checksum manifest is verified by the installer
-before the architecture-specific archive is accepted. The recipe then proves
-exact Clang/LLVM 21.1.8 tools and required AArch64 feature modes. The resulting
-shared library must separately satisfy Wfloat's committed manylinux symbol
-allow-sets, forbidden-symbol rules, and direct dependency allowlist; toolchain
-selection alone does not establish ABI compatibility.
+digests plus GCC 11.4.0 built from GNU's release archive. The installer verifies
+GNU's published archive SHA-512 and the GMP, MPFR, and MPC SHA-512 values
+carried by that verified release before building the C/C++ toolchain into
+the ephemeral container's temporary directory. It runs as the hosted runner's
+unprivileged UID/GID, does not use a third-party compiler image or moving
+package repository, and disables GCC's three-stage bootstrap to keep the
+per-build toolchain construction bounded. Before invoking that repository-owned
+installer, the host wrapper rejects dirty, untracked, or ignored executable
+builder paths; the public launcher repeats the check inside the container. The
+recipe then proves the exact GCC/G++ version, required C++20 library feature,
+and AArch64 feature modes. The
+resulting shared library must separately satisfy Wfloat's committed manylinux
+symbol allow-sets, forbidden-symbol rules, direct dependency allowlist, and
+runtime smoke; toolchain selection alone does not establish ABI compatibility.
