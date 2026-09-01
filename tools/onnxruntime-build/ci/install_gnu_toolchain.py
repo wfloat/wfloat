@@ -214,8 +214,8 @@ def install(prefix: Path, jobs: int) -> None:
             ],
             binutils_build_dir,
         )
-        _run(["make", f"-j{jobs}"], binutils_build_dir)
-        _run(["make", "install-strip"], binutils_build_dir)
+        _run(["make", f"-j{jobs}", "MAKEINFO=/bin/true"], binutils_build_dir)
+        _run(["make", "MAKEINFO=/bin/true", "install-strip"], binutils_build_dir)
 
         gcc_archive = workspace / GCC_ARCHIVE
         _download(GCC_SOURCE_URL, gcc_archive, GCC_SOURCE_SHA512)

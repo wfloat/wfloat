@@ -155,7 +155,9 @@ committed SHA-512 values, and configures GCC to use the newly built GNU
 assembler and linker. It downloads only the GMP, MPFR, and MPC releases named
 by the verified GCC archive and verifies their embedded SHA-512 values. The
 toolchain is built into the container's temporary directory; no third-party
-compiler image or moving package repository is used.
+compiler image or moving package repository is used. The build keeps GNU's
+bundled Info manuals instead of requiring Texinfo to regenerate documentation;
+all compiler and binutils program targets are still built.
 
 Before Microsoft configure runs, the recipe requires GCC/G++ 11.4.0 and every
 exported GNU binutils program at version 2.42 from the cataloged prefix. This

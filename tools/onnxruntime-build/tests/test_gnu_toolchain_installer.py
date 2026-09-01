@@ -183,8 +183,10 @@ class GnuToolchainInstallerTest(unittest.TestCase):
         self.assertIn("--disable-gprofng", binutils_configure)
         self.assertIn("--disable-shared", binutils_configure)
         self.assertIn("--enable-deterministic-archives", binutils_configure)
-        self.assertEqual(commands[1], ["make", "-j4"])
-        self.assertEqual(commands[2], ["make", "install-strip"])
+        self.assertEqual(commands[1], ["make", "-j4", "MAKEINFO=/bin/true"])
+        self.assertEqual(
+            commands[2], ["make", "MAKEINFO=/bin/true", "install-strip"]
+        )
         self.assertEqual(
             commands[3], ["./contrib/download_prerequisites", "--no-isl"]
         )

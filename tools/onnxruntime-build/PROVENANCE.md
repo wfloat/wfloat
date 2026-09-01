@@ -134,6 +134,8 @@ directory. GCC is configured to select the pinned assembler and linker. The
 installer runs as the hosted runner's unprivileged UID/GID, does not use a
 third-party compiler image or moving package repository, and disables GCC's
 three-stage bootstrap to keep per-build toolchain construction bounded.
+The binutils build also declines to regenerate the release archive's bundled
+Info manuals; this does not omit any compiler or binutils program.
 
 Before invoking that repository-owned installer, the host wrapper rejects
 dirty, untracked, or ignored executable builder paths; the public launcher
