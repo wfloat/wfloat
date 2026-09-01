@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from onnxruntime_build.catalog import Catalog
+
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parents[1]
@@ -157,7 +159,12 @@ class WorkflowTopologyTest(unittest.TestCase):
             ),
             2,
         )
-        self.assertIn("builder=(python tools/onnxruntime-build/ci/run_target.py)", text)
+        self.assertEqual(
+            text.count(
+                "builder=(python -I -B tools/onnxruntime-build/ci/run_target.py)"
+            ),
+            2,
+        )
         self.assertIn('"${builder[@]}" build', text)
         self.assertIn('"${builder[@]}" validate', text)
         self.assertIn(
@@ -272,6 +279,21 @@ class WorkflowTopologyTest(unittest.TestCase):
 
 
 class CiRunnerTest(unittest.TestCase):
+    def test_manylinux_wrapper_matches_the_cataloged_toolchain(self) -> None:
+        catalog = Catalog.load()
+        for target_id, image in RUNNER.MANYLINUX_IMAGES.items():
+            with self.subTest(target=target_id):
+                toolchain = catalog.target(target_id)["toolchain"]
+                self.assertEqual(image, toolchain["container_image"])
+                self.assertEqual(
+                    RUNNER.STATIC_CLANG_RELEASE,
+                    toolchain["compiler_release"],
+                )
+                self.assertEqual(
+                    RUNNER.STATIC_CLANG_MANIFEST_SHA256,
+                    toolchain["compiler_manifest_sha256"],
+                )
+
     def test_manylinux_targets_run_in_the_matching_container(self) -> None:
         with mock.patch.object(os, "getuid", return_value=501), mock.patch.object(
             os, "getgid", return_value=20
@@ -285,7 +307,16 @@ class CiRunnerTest(unittest.TestCase):
         self.assertIn(RUNNER.MANYLINUX_IMAGES["linux-aarch64-glibc2_17"], arm64)
         self.assertIn("@sha256:", RUNNER.MANYLINUX_IMAGES["linux-x64-glibc2_17"])
         self.assertIn("@sha256:", RUNNER.MANYLINUX_IMAGES["linux-aarch64-glibc2_17"])
-        self.assertIn("501:20", x64)
+        self.assertNotIn("--user", x64)
+        self.assertIn("--user", arm64)
+        self.assertIn("501:20", arm64)
+        self.assertIn(RUNNER.STATIC_CLANG_RELEASE, x64[-1])
+        self.assertIn(RUNNER.STATIC_CLANG_MANIFEST_SHA256, x64[-1])
+        self.assertIn("setpriv --reuid=501 --regid=20 --clear-groups", x64[-1])
+        self.assertIn("CC=/opt/clang/bin/clang", x64[-1])
+        self.assertIn("CXX=/opt/clang/bin/clang++", x64[-1])
+        self.assertIn("STRIP=/opt/clang/bin/strip", x64[-1])
+        self.assertIn("LDFLAGS=-fuse-ld=lld", x64[-1])
 
     def test_other_targets_use_the_public_launcher_with_current_python(self) -> None:
         command = RUNNER.command_for(["build", "win-x64-static_lib-mt"])

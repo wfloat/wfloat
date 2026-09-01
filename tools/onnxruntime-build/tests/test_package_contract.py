@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import plistlib
 import stat
+import subprocess
 import tempfile
 import unittest
 import zipfile
-import plistlib
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +15,7 @@ from onnxruntime_build.validate import (
     _android_readelf,
     _architecture_matches,
     _check_apple_minimum,
+    _check_manylinux_abi,
     _object_archive_members,
     _smoke_test,
     validate_archive,
@@ -61,6 +63,123 @@ class PackageContractTest(unittest.TestCase):
             )
         self.assertEqual(len(messages), 3)
         self.assertTrue(messages[0].startswith("PASS"))
+
+    def test_manylinux_2_17_accepts_exact_x64_symbol_boundaries(self) -> None:
+        versions = "\n".join(
+            f"Name: {version} Flags: none"
+            for version in [
+                "GLIBC_2.17",
+                "GLIBCXX_3.4.19",
+                "CXXABI_1.3.7",
+                "CXXABI_TM_1",
+                "GCC_4.8.0",
+                "ZLIB_1.2.5.2",
+            ]
+        )
+        dynamic = "\n".join(
+            f"(NEEDED) Shared library: [{library}]"
+            for library in ["libstdc++.so.6", "libm.so.6", "libc.so.6", "libz.so.1"]
+        )
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output", side_effect=[versions, dynamic, ""]
+        ):
+            result = _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "x86_64")
+        self.assertIn("GLIBCXX=3.4.19", result)
+        self.assertIn("CXXABI=1.3.7+TM_1", result)
+
+    def test_manylinux_2_17_rejects_each_x64_symbol_policy_violation(self) -> None:
+        violations = [
+            "GLIBC_2.18",
+            "GLIBCXX_3.4.20",
+            "CXXABI_1.3.8",
+            "GCC_4.9.0",
+            "LIBATOMIC_1.0",
+            "ZLIB_9.9.9",
+        ]
+        for violation in violations:
+            with self.subTest(violation=violation), mock.patch(
+                "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+            ), mock.patch(
+                "onnxruntime_build.validate._tool_output",
+                return_value=f"Name: GLIBC_2.17 Flags: none\nName: {violation} Flags: none",
+            ), self.assertRaisesRegex(ValidationError, violation):
+                _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "x86_64")
+
+    def test_manylinux_2_17_aarch64_contract_rejects_glibc_2_18(self) -> None:
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output",
+            return_value="Name: GLIBC_2.18 Flags: none",
+        ), self.assertRaisesRegex(ValidationError, "GLIBC_2.18"):
+            _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "aarch64")
+
+    def test_manylinux_2_17_accepts_aarch64_specific_runtime_symbols(self) -> None:
+        versions = "\n".join(
+            f"Name: {version} Flags: none"
+            for version in ["GLIBC_2.17", "GCC_4.7.0", "LIBATOMIC_1.0"]
+        )
+        dynamic = "\n".join(
+            f"(NEEDED) Shared library: [{library}]"
+            for library in ["libatomic.so.1", "libc.so.6"]
+        )
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output", side_effect=[versions, dynamic, ""]
+        ):
+            _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "aarch64")
+
+    def test_manylinux_2_28_accepts_exact_x64_symbol_boundaries(self) -> None:
+        versions = "\n".join(
+            f"Name: {version} Flags: none"
+            for version in [
+                "GLIBC_2.28",
+                "GLIBCXX_3.4.24",
+                "CXXABI_1.3.11",
+                "CXXABI_FLOAT128",
+                "GCC_7.0.0",
+                "LIBATOMIC_1.2",
+                "ZLIB_1.2.9",
+            ]
+        )
+        dynamic = "\n".join(
+            f"(NEEDED) Shared library: [{library}]"
+            for library in ["libatomic.so.1", "libmvec.so.1", "libc.so.6", "libz.so.1"]
+        )
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output", side_effect=[versions, dynamic, ""]
+        ):
+            _check_manylinux_abi(Path("libonnxruntime.so"), "2.28", "x86_64")
+
+    def test_manylinux_rejects_forbidden_undefined_symbols(self) -> None:
+        versions = "Name: GLIBC_2.17 Flags: none"
+        dynamic = "(NEEDED) Shared library: [libc.so.6]"
+        symbols = (
+            "12: 0000000000000000 0 FUNC GLOBAL DEFAULT UND "
+            "__cxa_thread_atexit_impl@GLIBC_2.17 (2)"
+        )
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output",
+            side_effect=[versions, dynamic, symbols],
+        ), self.assertRaisesRegex(ValidationError, "__cxa_thread_atexit_impl"):
+            _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "x86_64")
+
+    def test_manylinux_rejects_dependency_outside_the_policy(self) -> None:
+        versions = "Name: GLIBC_2.17 Flags: none"
+        dynamic = "(NEEDED) Shared library: [libunexpected.so.1]"
+        with mock.patch(
+            "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/readelf"
+        ), mock.patch(
+            "onnxruntime_build.validate._tool_output", side_effect=[versions, dynamic]
+        ), self.assertRaisesRegex(ValidationError, "libunexpected.so.1"):
+            _check_manylinux_abi(Path("libonnxruntime.so"), "2.17", "x86_64")
 
     def test_android_readelf_is_discovered_inside_selected_ndk(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
@@ -270,6 +389,35 @@ class PackageContractTest(unittest.TestCase):
             ):
                 result = _smoke_test(target, root, source_dir)
         self.assertEqual(result, "PASS compile/link smoke (WebAssembly final link)")
+
+    def test_linux_smoke_does_not_inherit_the_build_toolchain_runtime(self) -> None:
+        target = self.catalog.target("linux-x64-glibc2_17")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name) / "package"
+            (root / "include").mkdir(parents=True)
+            (root / "lib").mkdir()
+            (root / "lib" / "libonnxruntime.so").write_bytes(b"shared")
+            executions: list[dict | None] = []
+
+            def fake_run(*_arguments, **keywords):
+                executions.append(keywords.get("env"))
+                return subprocess.CompletedProcess([], 0)
+
+            with mock.patch.dict(
+                "os.environ", {"LD_LIBRARY_PATH": "/opt/rh/devtoolset-10/lib64"}
+            ), mock.patch(
+                "onnxruntime_build.validate._host_architecture", return_value="x86_64"
+            ), mock.patch(
+                "onnxruntime_build.validate.shutil.which", return_value="/usr/bin/c++"
+            ), mock.patch(
+                "onnxruntime_build.validate._tool_output", return_value=""
+            ), mock.patch(
+                "onnxruntime_build.validate.subprocess.run", side_effect=fake_run
+            ):
+                result = _smoke_test(target, root, None)
+
+        self.assertEqual(result, "PASS compile/link/run smoke")
+        self.assertEqual(executions[-1]["LD_LIBRARY_PATH"], str(root / "lib"))
 
 
 if __name__ == "__main__":

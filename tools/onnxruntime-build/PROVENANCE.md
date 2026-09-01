@@ -13,6 +13,8 @@ The implementer used only:
   release-package contracts;
 - platform SDK, compiler, CMake, execution-provider, and archive-format
   documentation;
+- PyPA manylinux images, static-Clang installation helper, and auditwheel
+  manylinux policy data;
 - Wfloat's current public source and consumer build contracts; and
 - Wfloat's independent-implementation specification describing target names,
   required files, architectures, linkage, and consumer behavior.
@@ -117,3 +119,12 @@ artifact from another build environment or distributor is not claimed or
 required. GitHub Actions revalidates a completed zip before uploading it with a
 three-day inspection retention. That short-lived CI copy is not registry
 publication; publication remains a separate, explicitly approved operation.
+
+The automatic glibc 2.17 builds use architecture-specific manylinux2014 image
+digests plus PyPA-cataloged static-Clang release `v21.1.8.1`. The committed
+SHA-256 for that release's checksum manifest is verified by the installer
+before the architecture-specific archive is accepted. The recipe then proves
+exact Clang/LLVM 21.1.8 tools and required AArch64 feature modes. The resulting
+shared library must separately satisfy Wfloat's committed manylinux symbol
+allow-sets, forbidden-symbol rules, and direct dependency allowlist; toolchain
+selection alone does not establish ABI compatibility.

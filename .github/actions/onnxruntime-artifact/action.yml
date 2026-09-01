@@ -21,7 +21,7 @@ runs:
       run: |
         builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)
         if [[ "${MANYLINUX}" == "true" ]]; then
-          builder=(python tools/onnxruntime-build/ci/run_target.py)
+          builder=(python -I -B tools/onnxruntime-build/ci/run_target.py)
         fi
         "${builder[@]}" build "${TARGET}" --jobs 4
 
@@ -43,7 +43,7 @@ runs:
 
         builder=(python -I -B tools/onnxruntime-build/onnxruntime-build)
         if [[ "${MANYLINUX}" == "true" ]]; then
-          builder=(python tools/onnxruntime-build/ci/run_target.py)
+          builder=(python -I -B tools/onnxruntime-build/ci/run_target.py)
         fi
         "${builder[@]}" validate "${TARGET}" "${archives[0]}"
 

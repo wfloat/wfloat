@@ -236,12 +236,162 @@ def _check_linkage(binary: Path, target: dict) -> str:
     return description
 
 
-def _check_glibc(binary: Path, maximum: str) -> str:
+_MANYLINUX_LIBRARIES = {
+    "libatomic.so.1",
+    "libgcc_s.so.1",
+    "libstdc++.so.6",
+    "libm.so.6",
+    "libanl.so.1",
+    "libdl.so.2",
+    "librt.so.1",
+    "libc.so.6",
+    "libnsl.so.1",
+    "libutil.so.1",
+    "libpthread.so.0",
+    "libX11.so.6",
+    "libXext.so.6",
+    "libXrender.so.1",
+    "libICE.so.6",
+    "libSM.so.6",
+    "libGL.so.1",
+    "libgobject-2.0.so.0",
+    "libgthread-2.0.so.0",
+    "libglib-2.0.so.0",
+    "libresolv.so.2",
+    "libexpat.so.1",
+    "libz.so.1",
+}
+
+
+def _numeric_versions(prefix: str, first: int, last: int) -> set[str]:
+    return {prefix, *(f"{prefix}.{value}" for value in range(first, last + 1))}
+
+
+_CXXABI_2_17 = _numeric_versions("1.3", 1, 7) | {"TM_1"}
+_CXXABI_2_28 = _numeric_versions("1.3", 1, 11) | {"TM_1"}
+_GLIBCXX_2_17 = _numeric_versions("3.4", 1, 19)
+_GLIBCXX_2_28 = _numeric_versions("3.4", 1, 24)
+_ZLIB_2_17 = {
+    "1.2.0",
+    "1.2.0.2",
+    "1.2.0.8",
+    "1.2.2",
+    "1.2.2.3",
+    "1.2.2.4",
+    "1.2.3.3",
+    "1.2.3.4",
+    "1.2.3.5",
+    "1.2.5.1",
+    "1.2.5.2",
+}
+_ZLIB_2_28 = _ZLIB_2_17 | {"1.2.7.1", "1.2.9"}
+_MANYLINUX_SYMBOLS = {
+    ("2.17", "x86_64"): {
+        "CXXABI": _CXXABI_2_17,
+        "GCC": {"3.0", "3.3", "3.3.1", "3.4", "3.4.2", "3.4.4", "4.0.0", "4.2.0", "4.3.0", "4.7.0", "4.8.0"},
+        "GLIBC": {"2.2.5", "2.2.6", "2.3", "2.3.2", "2.3.3", "2.3.4", *[f"2.{value}" for value in range(4, 18)]},
+        "GLIBCXX": _GLIBCXX_2_17,
+        "LIBATOMIC": set(),
+        "ZLIB": _ZLIB_2_17,
+    },
+    ("2.17", "aarch64"): {
+        "CXXABI": _CXXABI_2_17,
+        "GCC": {"3.0", "3.3", "3.3.1", "3.4", "3.4.2", "3.4.4", "4.0.0", "4.2.0", "4.3.0", "4.5.0", "4.7.0"},
+        # Wfloat's contract is explicitly glibc 2.17, so it is stricter than
+        # auditwheel's unusual AArch64 allowance for GLIBC_2.18.
+        "GLIBC": {"2.0", "2.17"},
+        "GLIBCXX": _GLIBCXX_2_17,
+        "LIBATOMIC": {"1.0"},
+        "ZLIB": _ZLIB_2_17,
+    },
+    ("2.28", "x86_64"): {
+        "CXXABI": _CXXABI_2_28 | {"FLOAT128"},
+        "GCC": {"3.0", "3.3", "3.3.1", "3.4", "3.4.2", "3.4.4", "4.0.0", "4.2.0", "4.3.0", "4.7.0", "4.8.0", "7.0.0"},
+        "GLIBC": {"2.2.5", "2.2.6", "2.3", "2.3.2", "2.3.3", "2.3.4", *[f"2.{value}" for value in range(4, 19)], *[f"2.{value}" for value in range(22, 29)]},
+        "GLIBCXX": _GLIBCXX_2_28,
+        "LIBATOMIC": {"1.0", "1.1", "1.2"},
+        "ZLIB": _ZLIB_2_28,
+    },
+    ("2.28", "aarch64"): {
+        "CXXABI": _CXXABI_2_28,
+        "GCC": {"3.0", "3.3", "3.3.1", "3.4", "3.4.2", "3.4.4", "4.0.0", "4.2.0", "4.3.0", "4.5.0", "4.7.0", "7.0.0"},
+        "GLIBC": {"2.0", "2.17", "2.18", *[f"2.{value}" for value in range(22, 29)]},
+        "GLIBCXX": _GLIBCXX_2_28,
+        "LIBATOMIC": {"1.0", "1.1", "1.2"},
+        "ZLIB": _ZLIB_2_28,
+    },
+}
+
+_ZLIB_FORBIDDEN_SYMBOLS = {
+    "_dist_code",
+    "_length_code",
+    "_tr_align",
+    "_tr_flush_block",
+    "_tr_init",
+    "_tr_stored_block",
+    "_tr_tally",
+    "adler32_default",
+    "bi_windup",
+    "crc32_acle",
+    "crc32_combine_gen",
+    "crc32_combine_gen64",
+    "crc32_combine_op",
+    "crc32_le_vgfm_16",
+    "crc32_neon",
+    "crc32_vpmsum",
+    "crc32_z_default",
+    "crc_fold_512to32",
+    "crc_fold_copy",
+    "crc_fold_init",
+    "deflate_copyright",
+    "deflate_medium",
+    "fill_window",
+    "flush_pending",
+    "gzflags",
+    "inflate_copyright",
+    "inflate_fast",
+    "inflate_table",
+    "longest_match",
+    "slide_hash_sse",
+    "static_ltree",
+    "uncompress2",
+    "x86_check_features",
+    "x86_cpu_has_pclmul",
+    "x86_cpu_has_sse2",
+    "x86_cpu_has_sse42",
+    "sse2_slide_hash",
+    "z_errmsg",
+    "z_vstring",
+    "zcalloc",
+    "zcfree",
+}
+_MANYLINUX_FORBIDDEN_SYMBOLS = {
+    "2.17": _ZLIB_FORBIDDEN_SYMBOLS
+    | {
+        "__cxa_thread_atexit_impl",
+        "__issignaling",
+        "__issignalingf",
+        "__issignalingl",
+        "pthread_getattr_default_np",
+        "pthread_setattr_default_np",
+    },
+    "2.28": _ZLIB_FORBIDDEN_SYMBOLS,
+}
+
+
+def _readelf() -> str:
     readelf = shutil.which("readelf") or shutil.which("llvm-readelf")
     if not readelf:
         raise ValidationError("readelf or llvm-readelf is required for ELF validation")
-    output = _tool_output([readelf, "--version-info", str(binary)])
-    versions = {(int(major), int(minor)) for major, minor in re.findall(r"GLIBC_([0-9]+)\.([0-9]+)", output)}
+    return readelf
+
+
+def _check_glibc(binary: Path, maximum: str) -> str:
+    output = _tool_output([_readelf(), "--version-info", str(binary)])
+    versions = {
+        (int(major), int(minor))
+        for major, minor in re.findall(r"Name:\s+GLIBC_([0-9]+)\.([0-9]+)\b", output)
+    }
     if not versions:
         raise ValidationError(f"unable to find GLIBC symbol versions in {binary}")
     found = max(versions)
@@ -251,6 +401,63 @@ def _check_glibc(binary: Path, maximum: str) -> str:
             f"{binary} requires GLIBC_{found[0]}.{found[1]}, exceeding target maximum GLIBC_{maximum}"
         )
     return f"GLIBC_{found[0]}.{found[1]}"
+
+
+def _check_manylinux_abi(binary: Path, maximum: str, architecture: str) -> str:
+    architecture = "x86_64" if architecture == "x64" else architecture
+    policy = _MANYLINUX_SYMBOLS.get((maximum, architecture))
+    if policy is None:
+        return _check_glibc(binary, maximum)
+
+    readelf = _readelf()
+    version_output = _tool_output([readelf, "--version-info", str(binary)])
+    requirements: dict[str, set[str]] = {}
+    for namespace, version in re.findall(
+        r"Name:\s+(GLIBCXX|GLIBC|CXXABI|GCC|LIBATOMIC|ZLIB)_([^\s]+)", version_output
+    ):
+        requirements.setdefault(namespace, set()).add(version)
+    if not requirements.get("GLIBC"):
+        raise ValidationError(f"unable to find GLIBC symbol-version requirements in {binary}")
+    violations = {
+        namespace: sorted(versions - policy[namespace])
+        for namespace, versions in requirements.items()
+        if versions - policy[namespace]
+    }
+    if violations:
+        details = ", ".join(
+            f"{namespace}_{version}"
+            for namespace, versions in sorted(violations.items())
+            for version in versions
+        )
+        raise ValidationError(
+            f"{binary} exceeds the glibc {maximum} {architecture} symbol policy: {details}"
+        )
+
+    dynamic_output = _tool_output([readelf, "--dynamic", str(binary)])
+    dependencies = set(re.findall(r"\(NEEDED\).*?Shared library:\s*\[([^]]+)\]", dynamic_output))
+    libraries = _MANYLINUX_LIBRARIES | ({"libmvec.so.1"} if maximum == "2.28" else set())
+    unexpected = sorted(dependencies - libraries)
+    if unexpected:
+        raise ValidationError(
+            f"{binary} has dependencies outside the glibc {maximum} policy: {', '.join(unexpected)}"
+        )
+
+    symbol_output = _tool_output([readelf, "--dyn-syms", "--wide", str(binary)])
+    undefined_symbols: set[str] = set()
+    for line in symbol_output.splitlines():
+        fields = line.split(maxsplit=7)
+        if len(fields) == 8 and fields[6] == "UND":
+            undefined_symbols.add(fields[7].split()[0].split("@", 1)[0])
+    forbidden = sorted(undefined_symbols & _MANYLINUX_FORBIDDEN_SYMBOLS[maximum])
+    if forbidden:
+        raise ValidationError(
+            f"{binary} uses symbols forbidden by the glibc {maximum} policy: {', '.join(forbidden)}"
+        )
+    inspected = ", ".join(
+        f"{namespace}={'+'.join(sorted(versions))}"
+        for namespace, versions in sorted(requirements.items())
+    )
+    return inspected
 
 
 def _android_readelf(ndk_version: str | None = None) -> str:
@@ -500,7 +707,11 @@ def _validate_standard_metadata(
             if not _architecture_matches(architecture, description):
                 raise ValidationError(f"{primary} has wrong architecture for {architecture}: {description}")
     if target["platform"] == "linux" and target.get("toolchain", {}).get("glibc") and target["linkage"] == "shared":
-        _check_glibc(primary, target["toolchain"]["glibc"])
+        _check_manylinux_abi(
+            primary,
+            target["toolchain"]["glibc"],
+            target["architecture"],
+        )
     if target["platform"] == "android":
         _check_android_api(primary, target["toolchain"]["android_api"])
     if target["platform"] == "macos":
@@ -609,7 +820,9 @@ def _smoke_test(target: dict, root: Path, source_dir: Path | None) -> str:
         if len(target["providers"]) == 1 or set(target["providers"]) <= {"cpu", "coreml", "xnnpack"}:
             environment = os.environ.copy()
             if target["linkage"] == "shared" and target["platform"] == "linux":
-                environment["LD_LIBRARY_PATH"] = str(lib_dir) + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
+                # Do not let a build-container toolchain runtime mask a package
+                # that cannot load against the target environment's libraries.
+                environment["LD_LIBRARY_PATH"] = str(lib_dir)
             subprocess.run([str(output)], env=environment, check=True)
             return "PASS compile/link/run smoke"
         return "PASS compile/link smoke (GPU runtime not executed)"

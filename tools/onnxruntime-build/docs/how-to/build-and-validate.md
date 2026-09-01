@@ -127,13 +127,32 @@ device and simulator slices are built with an explicit 13.0 deployment target.
 
 Run each glibc family in a matching cataloged glibc environment. The command
 rejects a native host whose glibc version does not equal the target environment.
-Shared-package validation also reads symbol-version metadata and rejects a
-library whose required glibc version is too new.
+For x86-64 and AArch64 shared packages, validation applies the
+architecture-specific manylinux symbol allow-set for `GLIBC`, `GLIBCXX`,
+`CXXABI`, `GCC`, `LIBATOMIC`, and `ZLIB`. It also rejects direct ELF
+dependencies outside the corresponding manylinux system-library allowlist and
+undefined symbols forbidden by the policy. Wfloat's glibc 2.17 AArch64 contract
+deliberately rejects `GLIBC_2.18` even though current auditwheel policy has an
+architecture-specific exception for it.
 
 When rejecting a mismatched host, the recipe names the standard manylinux
 container for that x86-64 or AArch64 glibc 2.17/2.28 build. Run the same public
 command inside that container; do not copy package contents from another
 distributor.
+
+The two automatic glibc 2.17 jobs use architecture-matched manylinux2014 images
+pinned by manifest digest. Inside each image, `ci/run_target.py` installs the
+PyPA-cataloged static-Clang release `v21.1.8.1` through PyPA's
+checksum-verifying helper and pins the helper's `sha256sums.txt` digest. The
+build uses Clang/LLVM 21.1.8,
+LLVM's archiver and LLD, while retaining the image's glibc 2.17 sysroot and GCC
+10 libstdc++/libgcc compatibility runtime. Before Microsoft configure runs, the
+recipe requires those exact tool versions, performs a C++ compile/link probe,
+and on AArch64 separately proves both `-march=armv8.2-a+bf16` and
+`-march=armv8.2-a+fp16`. This satisfies ONNX Runtime's compiler and assembler
+requirements without replacing the compatibility runtime. The completed ELF
+still has to pass the symbol and dependency policy; the selected compiler is
+not treated as proof of runtime compatibility.
 
 For a cross-compiled ARM or AArch64 build, provide target compilers, an exact
 sysroot, and a host `protoc`:
@@ -209,9 +228,9 @@ Use the same target identifier that built the package:
 
 Validation checks archive identity and extraction safety, the single top-level
 directory, notices, headers, required core/provider libraries, architecture,
-ABI, linkage, minimum-platform metadata, glibc or CRT metadata where
-applicable, and a C API compile/link smoke when the runner can exercise the
-target.
+ABI, linkage, minimum-platform metadata, Linux symbol-version and dependency
+policy or Windows CRT metadata where applicable, and a C API compile/link smoke
+when the runner can exercise the target.
 
 Use `--skip-smoke` only when the target cannot be linked on the validation
 runner. The command records that step as skipped; it does not report a pass.
@@ -244,9 +263,9 @@ Android, iOS, Web, Linux x86-64/AArch64, macOS arm64/x86-64, and Windows x64.
 Some live consumers still pin older artifacts, so membership is not a claim of
 current deployment or verification. The glibc 2.17 Linux builds run in
 architecture-matched manylinux2014 containers. Their exact manifests are pinned
-in `ci/run_target.py`; changing a Linux build environment is therefore a
-reviewable source change rather than an implicit consequence of a moving image
-tag. Each build revalidates its completed zip, uploads it to GitHub Actions with
-three-day retention, and then removes `.out` from the runner. Publication to
-Wfloat's immutable R2 registry remains a separate, explicitly approved
-operation.
+with the Linux recipe and consumed by `ci/run_target.py`; changing an image,
+compiler release, or installer checksum is therefore a reviewable source change
+rather than an implicit consequence of a moving tag. Each build revalidates its
+completed zip, uploads it to GitHub Actions with three-day retention, and then
+removes `.out` from the runner. Publication to Wfloat's immutable R2 registry
+remains a separate, explicitly approved operation.

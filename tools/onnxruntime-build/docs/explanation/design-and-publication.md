@@ -107,11 +107,18 @@ x86-64/AArch64 shared with the glibc 2.17 floor, macOS arm64/x86-64 static, and
 Windows x64 static with `/MT`. Some live consumers still pin older artifacts,
 so this list must not be read as a statement that every consumer already uses
 v1.29.0. The two Linux targets run inside the same manylinux2014 environment
-family used by Wfloat's wheel matrix. The exact architecture-specific container
-manifests are pinned in `ci/run_target.py`, preventing a moving image tag from
-silently changing the compiler or sysroot. Each architecture is a separate job
-so native tests can run where applicable and one 14 GB runner does not hold
-multiple architecture build trees.
+family used by Wfloat's wheel matrix. Their exact architecture-specific
+container manifests, PyPA-cataloged static-Clang release, and installer-manifest
+checksum are cataloged with the Linux recipe and consumed by
+`ci/run_target.py`. The compiler is installed before mounted repository code
+runs as root inside the container; the wrapper then drops to the hosted runner's
+UID/GID before starting the public builder. The recipe verifies Clang/LLVM
+21.1.8 and its
+compile/link capabilities; package validation independently enforces the
+architecture-specific manylinux symbol, forbidden-symbol, and direct-dependency
+policy. Each architecture is a separate job so native tests can run where
+applicable and one 14 GB runner does not hold multiple architecture build
+trees.
 
 Apple jobs select `/Applications/Xcode_16.4.app/Contents/Developer` and require
 Xcode 16.4 build 16F6 on both `macos-15` arm64 and `macos-15-intel`. Windows
