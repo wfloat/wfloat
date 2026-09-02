@@ -260,15 +260,30 @@ def _zip_tree(root: Path, archive: Path) -> None:
             info.create_system = 3
             if path.is_symlink():
                 info.external_attr = (stat.S_IFLNK | 0o777) << 16
-                output.writestr(info, os.readlink(path))
+                output.writestr(
+                    info,
+                    os.readlink(path),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
             elif path.is_dir():
                 info.external_attr = (stat.S_IFDIR | 0o755) << 16
-                output.writestr(info, b"")
+                output.writestr(
+                    info,
+                    b"",
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
             else:
                 mode = 0o755 if os.access(path, os.X_OK) else 0o644
                 info.external_attr = (stat.S_IFREG | mode) << 16
                 with path.open("rb") as stream:
-                    output.writestr(info, stream.read())
+                    output.writestr(
+                        info,
+                        stream.read(),
+                        compress_type=zipfile.ZIP_DEFLATED,
+                        compresslevel=9,
+                    )
 
 
 def package_target(

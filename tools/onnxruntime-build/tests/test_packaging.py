@@ -3,16 +3,35 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from onnxruntime_build.package import (
     PackageError,
     _copy_standard_libraries,
     _copy_toolchain_runtime_notices,
+    _zip_tree,
 )
 
 
 class PackagingTest(unittest.TestCase):
+    def test_zip_tree_deflates_regular_file_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            root = temporary / "onnxruntime-fixture"
+            root.mkdir()
+            contents = b"compressible fixture\n" * 1024
+            (root / "library.a").write_bytes(contents)
+            archive = temporary / "onnxruntime-fixture.zip"
+
+            _zip_tree(root, archive)
+
+            with zipfile.ZipFile(archive) as package:
+                member = package.getinfo("onnxruntime-fixture/library.a")
+                self.assertEqual(member.compress_type, zipfile.ZIP_DEFLATED)
+                self.assertLess(member.compress_size, member.file_size)
+                self.assertEqual(package.read(member), contents)
+
     def test_static_toolchain_runtime_notices_are_copied(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             temporary = Path(temporary_name)
