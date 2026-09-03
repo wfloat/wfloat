@@ -21,10 +21,9 @@ wfloat/
   vendor/
 ```
 
-`tools/onnxruntime-build/` contains Wfloat's independent, public system for
-building ONNX Runtime C and C++ artifacts across the platforms supported by
-the vendored Sherpa integration. SDK builds consume only explicitly published,
-SHA-pinned artifacts; the builder itself never publishes them.
+[`tools/onnxruntime-build/`](tools/onnxruntime-build/README.md) builds the ONNX
+Runtime C and C++ artifacts used by Wfloat and Sherpa. Consumers select
+immutable published artifacts with reviewed URL and SHA-256 pins.
 
 ## Current Native Status
 
