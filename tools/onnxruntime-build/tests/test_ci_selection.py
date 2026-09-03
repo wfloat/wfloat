@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parents[1]
 WORKFLOWS = REPOSITORY / ".github" / "workflows"
 ARTIFACT_ACTION = REPOSITORY / ".github" / "actions" / "onnxruntime-artifact" / "action.yml"
+PUBLISH_WORKFLOW = WORKFLOWS / "onnxruntime-publish.yml"
 EXPECTED_AUTOMATIC_TARGETS = {
     "android",
     "ios-static-xcframework",
@@ -33,6 +34,7 @@ def _load(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -59,6 +61,7 @@ FAMILIES = {
         "runners": {"ubuntu-24.04"},
         "recipes": {"android.py"},
         "action_calls": 1,
+        "publisher_needs": "needs: android",
     },
     "onnxruntime-builder-apple.yml": {
         "targets": {
@@ -69,24 +72,28 @@ FAMILIES = {
         "runners": {"macos-15", "macos-15-intel"},
         "recipes": {"apple_xcframework.py", "macos_static.py"},
         "action_calls": 2,
+        "publisher_needs": "needs: [arm, intel]",
     },
     "onnxruntime-builder-linux.yml": {
         "targets": {"linux-x64-glibc2_17", "linux-aarch64-glibc2_17"},
         "runners": {"ubuntu-24.04", "ubuntu-24.04-arm"},
         "recipes": {"linux_native.py"},
         "action_calls": 2,
+        "publisher_needs": "needs: [x86_64, aarch64]",
     },
     "onnxruntime-builder-windows.yml": {
         "targets": {"win-x64-static_lib-mt"},
         "runners": {"windows-2022"},
         "recipes": {"windows_cpu.py"},
         "action_calls": 1,
+        "publisher_needs": "needs: x64_static_mt",
     },
     "onnxruntime-builder-wasm.yml": {
         "targets": {"wasm-static_lib-simd"},
         "runners": {"ubuntu-24.04"},
         "recipes": {"wasm.py"},
         "action_calls": 1,
+        "publisher_needs": "needs: simd_static",
     },
 }
 
@@ -138,22 +145,78 @@ class WorkflowTopologyTest(unittest.TestCase):
         self.assertEqual(len(all_targets), len(set(all_targets)))
         self.assertEqual(set(all_targets), EXPECTED_AUTOMATIC_TARGETS)
 
-    def test_workflows_are_read_only_and_remote_actions_are_immutable(self) -> None:
+    def test_workflows_use_narrow_permissions_and_remote_actions_are_immutable(self) -> None:
         workflow_paths = [WORKFLOWS / "onnxruntime-builder-contracts.yml"] + [
             WORKFLOWS / name for name in FAMILIES
         ]
-        for path in [*workflow_paths, ARTIFACT_ACTION]:
+        for path in [*workflow_paths, PUBLISH_WORKFLOW, ARTIFACT_ACTION]:
             with self.subTest(path=path.name):
                 text = path.read_text(encoding="utf-8")
                 if path in workflow_paths:
                     self.assertIn("permissions:\n  contents: read", text)
+                if path.name == "onnxruntime-builder-contracts.yml":
                     self.assertNotIn("id-token: write", text)
-                self.assertNotIn("publish", text.lower())
+                    self.assertNotIn("\n  publish:\n", text)
+                elif path in workflow_paths:
+                    self.assertEqual(text.count("id-token: write"), 1)
+                elif path == PUBLISH_WORKFLOW:
+                    self.assertEqual(text.count("id-token: write"), 1)
+                else:
+                    self.assertNotIn("publish", text.lower())
                 for line in text.splitlines():
                     if "uses:" not in line or "uses: ./" in line:
                         continue
                     reference = line.split("uses:", 1)[1].strip().split()[0]
                     self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_each_family_calls_the_shared_publisher_only_on_main(self) -> None:
+        condition = (
+            "if: ${{ always() && github.event_name == 'push' && "
+            "github.ref == 'refs/heads/main' }}"
+        )
+        for name, expected in FAMILIES.items():
+            with self.subTest(workflow=name):
+                text = (WORKFLOWS / name).read_text(encoding="utf-8")
+                self.assertEqual(text.count("\n  publish:\n"), 1)
+                self.assertIn(expected["publisher_needs"], text)
+                self.assertIn(condition, text)
+                self.assertIn("actions: read", text)
+                self.assertIn("id-token: write", text)
+                self.assertEqual(
+                    text.count("uses: ./.github/workflows/onnxruntime-publish.yml"),
+                    1,
+                )
+                self.assertNotIn("actions/download-artifact@", text)
+                self.assertNotIn("publish-onnxruntime-artifacts.py", text)
+                self.assertNotIn("environment:", text)
+                self.assertNotIn("x-amz-meta-sha256", text)
+                self.assertNotIn("secrets.", text)
+
+    def test_shared_publisher_downloads_only_current_run_artifacts(self) -> None:
+        text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("on:\n  workflow_call:\n", text)
+        self.assertNotIn("pull_request:", text)
+        self.assertNotIn("workflow_dispatch:", text)
+        self.assertNotIn("\n  push:\n", text)
+        self.assertIn("runs-on: ubuntu-24.04", text)
+        self.assertIn("actions: read", text)
+        self.assertIn("contents: read", text)
+        self.assertIn("id-token: write", text)
+        self.assertIn(
+            "actions/download-artifact@"
+            "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+            text,
+        )
+        self.assertIn("pattern: onnxruntime-*", text)
+        self.assertIn("merge-multiple: true", text)
+        self.assertIn(
+            "python -I -B scripts/publish-onnxruntime-artifacts.py "
+            ".onnxruntime-artifacts",
+            text,
+        )
+        self.assertNotIn("environment:", text)
+        self.assertNotIn("x-amz-meta-sha256", text)
+        self.assertNotIn("secrets.", text)
 
     def test_shared_action_builds_revalidates_and_briefly_retains_archives(self) -> None:
         text = ARTIFACT_ACTION.read_text(encoding="utf-8")
@@ -190,6 +253,12 @@ class WorkflowTopologyTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('\"tools/onnxruntime-build/**\"', contracts)
+        self.assertEqual(
+            contracts.count('\"scripts/publish-onnxruntime-artifacts.py\"'), 2
+        )
+        self.assertEqual(
+            contracts.count('\".github/workflows/onnxruntime-publish.yml\"'), 2
+        )
         self.assertIn('\".github/workflows/onnxruntime-builder-*.yml\"', contracts)
         self.assertIn('\".github/actions/onnxruntime-artifact/**\"', contracts)
 
@@ -217,6 +286,18 @@ class WorkflowTopologyTest(unittest.TestCase):
                     2,
                 )
                 self.assertTrue(_workflow_selects(family, validator))
+                self.assertFalse(
+                    _workflow_selects(
+                        family,
+                        "scripts/publish-onnxruntime-artifacts.py",
+                    )
+                )
+                self.assertFalse(
+                    _workflow_selects(
+                        family,
+                        ".github/workflows/onnxruntime-publish.yml",
+                    )
+                )
                 for recipe in expected["recipes"]:
                     recipe_path = (
                         "tools/onnxruntime-build/onnxruntime_build/recipes/"
@@ -276,7 +357,7 @@ class WorkflowTopologyTest(unittest.TestCase):
         self.assertEqual(apple.count("Build version 16F6"), 2)
         self.assertEqual(apple.count('echo "DEVELOPER_DIR=${DEVELOPER_DIR}"'), 2)
 
-    def test_all_ci_execution_paths_are_part_of_builder_identity(self) -> None:
+    def test_all_artifact_build_execution_paths_are_part_of_builder_identity(self) -> None:
         build_source = (ROOT / "onnxruntime_build" / "build.py").read_text(
             encoding="utf-8"
         )

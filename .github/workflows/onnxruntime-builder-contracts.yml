@@ -10,8 +10,10 @@ on:
       - "vendor/sherpa-onnx/wasm/speech/CMakeLists.txt"
       - "vendor/sherpa-onnx/wasm/wasm-common.cmake"
       - "scripts/ensure-emscripten.sh"
+      - "scripts/publish-onnxruntime-artifacts.py"
       - ".github/actions/onnxruntime-artifact/**"
       - ".github/workflows/onnxruntime-builder-*.yml"
+      - ".github/workflows/onnxruntime-publish.yml"
   pull_request:
     branches:
       - main
@@ -21,8 +23,10 @@ on:
       - "vendor/sherpa-onnx/wasm/speech/CMakeLists.txt"
       - "vendor/sherpa-onnx/wasm/wasm-common.cmake"
       - "scripts/ensure-emscripten.sh"
+      - "scripts/publish-onnxruntime-artifacts.py"
       - ".github/actions/onnxruntime-artifact/**"
       - ".github/workflows/onnxruntime-builder-*.yml"
+      - ".github/workflows/onnxruntime-publish.yml"
   workflow_dispatch:
 
 permissions:

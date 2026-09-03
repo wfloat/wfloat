@@ -57,3 +57,13 @@ jobs:
       - uses: ./.github/actions/onnxruntime-artifact
         with:
           target: wasm-static_lib-simd
+
+  publish:
+    name: Publish successful WebAssembly artifacts
+    needs: simd_static
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/onnxruntime-publish.yml
