@@ -113,7 +113,6 @@ def _target(architecture: str, glibc: str, linkage: str) -> dict:
         "validation": {
             "test_policy": "package-only" if glibc == "2.17" else "native"
         },
-        "verification": "unverified",
     }
 
 

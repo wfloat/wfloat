@@ -42,7 +42,6 @@ def _linux_target(architecture: str, generation: str) -> dict:
             ],
         },
         "validation": {"test_policy": "gpu-compile"},
-        "verification": "unverified",
     }
 
 
@@ -68,7 +67,6 @@ def _windows_target(generation: str) -> dict:
             ],
         },
         "validation": {"test_policy": "gpu-compile"},
-        "verification": "unverified",
     }
 
 

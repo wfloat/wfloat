@@ -102,14 +102,6 @@ def build_target(
     _, builder_revision = _builder_revision(require_clean=not plan)
     build_root = work_dir.resolve() / target_id / version / builder_revision
 
-    if target["verification"] == "unverified":
-        print(
-            f"Target verification: UNVERIFIED ({recipe.name} command and package contract are implemented, "
-            "but no completed artifact evidence is recorded)"
-        )
-    else:
-        print("Target verification: VERIFIED by completed local artifact evidence")
-
     if plan:
         planned_source = source_dir.resolve() if source_dir else Path("/microsoft/onnxruntime")
         context = BuildContext(planned_source, build_root, jobs, skip_tests, True)
@@ -117,7 +109,6 @@ def build_target(
         plan_output = {
             "target": target_id,
             "recipe": recipe.name,
-            "verification": target["verification"],
             "version": version,
             "source_revision": source_revision,
             "outputs": {key: str(path) for key, path in command_plan.outputs.items()},

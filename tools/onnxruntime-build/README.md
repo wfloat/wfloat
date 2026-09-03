@@ -21,8 +21,7 @@ packages and validates its output. `validate` checks an existing archive. Use
 `--help` for all options.
 
 A build refuses uncommitted builder or workflow changes because the first 12
-characters of the Wfloat commit identify its output. The target list marks a
-target `verified` only after Wfloat accepts completed artifact evidence.
+characters of the Wfloat commit identify its output.
 
 ## Publication
 

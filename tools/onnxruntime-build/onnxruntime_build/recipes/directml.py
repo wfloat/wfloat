@@ -17,7 +17,6 @@ TARGETS = {
             "required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib", "lib/DirectML.dll"],
         },
         "validation": {"test_policy": "gpu-compile"},
-        "verification": "unverified",
     }
 }
 

@@ -76,7 +76,6 @@ def _list_targets(catalog: Catalog, platform: str | None, as_json: bool) -> int:
         "ARCHITECTURE(S)",
         "LINKAGE",
         "PROVIDERS",
-        "VERIFICATION",
     )
     rows: list[tuple[str, ...]] = []
     for target in targets:
@@ -89,7 +88,6 @@ def _list_targets(catalog: Catalog, platform: str | None, as_json: bool) -> int:
                 ",".join(architectures),
                 target["linkage"],
                 ",".join(target["providers"]),
-                target["verification"],
             )
         )
     widths = [max(len(headings[index]), *(len(row[index]) for row in rows)) for index in range(len(headings))]

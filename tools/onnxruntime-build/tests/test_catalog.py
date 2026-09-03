@@ -172,17 +172,6 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(self.catalog.target("win-x64-static_lib-mt")["crt"], "mt")
         self.assertEqual(self.catalog.target("win-x64-static_lib-md")["crt"], "md")
 
-    def test_only_completed_artifact_contracts_are_marked_verified(self) -> None:
-        verified = {
-            target["id"]
-            for target in self.catalog.targets()
-            if target["verification"] == "verified"
-        }
-        self.assertEqual(
-            verified,
-            {"android"},
-        )
-
     def test_unavailable_rocm_and_openharmony_contracts_are_not_build_targets(self) -> None:
         self.assertNotIn("linux-x64-rocm", self.catalog.target_ids)
         self.assertFalse(any(target.startswith("ohos-") for target in self.catalog.target_ids))

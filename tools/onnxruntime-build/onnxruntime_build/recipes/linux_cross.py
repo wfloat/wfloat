@@ -19,7 +19,6 @@ _COMMON = {
     "providers": ["cpu"],
     "package": {"kind": "standard", "headers_dir": "include"},
     "validation": {"test_policy": "cross"},
-    "verification": "unverified",
 }
 
 

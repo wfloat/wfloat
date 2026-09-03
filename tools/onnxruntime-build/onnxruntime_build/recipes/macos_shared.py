@@ -17,7 +17,6 @@ _COMMON = {
         "required_libraries": ["lib/libonnxruntime.dylib"],
     },
     "validation": {"test_policy": "native"},
-    "verification": "unverified",
 }
 
 

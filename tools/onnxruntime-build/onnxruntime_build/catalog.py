@@ -137,7 +137,6 @@ class Catalog:
                 "providers",
                 "package",
                 "validation",
-                "verification",
             }
             missing = required - target.keys()
             if missing:
@@ -148,10 +147,6 @@ class Catalog:
                 raise CatalogError(f"target {target_id} references unknown recipe {target['recipe']!r}")
             if target["family"] != target["family"].lower():
                 raise CatalogError(f"target {target_id} has a non-lowercase family")
-            if target["verification"] not in {"verified", "unverified"}:
-                raise CatalogError(
-                    f"target {target_id} verification must be 'verified' or 'unverified'"
-                )
             validation = target["validation"]
             if set(validation) != {"test_policy"}:
                 raise CatalogError(

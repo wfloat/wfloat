@@ -22,7 +22,6 @@ _COMMON = {
     "toolchain": dict(APPLE_TOOLCHAIN),
     "package": {"kind": "xcframework", "bundle": "onnxruntime.xcframework"},
     "validation": {"test_policy": "cross"},
-    "verification": "unverified",
 }
 
 

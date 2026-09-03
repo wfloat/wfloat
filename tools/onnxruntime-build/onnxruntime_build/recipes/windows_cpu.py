@@ -31,7 +31,6 @@ def _target(architecture: str, linkage: str, crt: str) -> dict:
         "crt": crt,
         "package": package,
         "validation": {"test_policy": "native"},
-        "verification": "unverified",
     }
 
 

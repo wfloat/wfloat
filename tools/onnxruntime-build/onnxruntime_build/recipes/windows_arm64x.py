@@ -17,7 +17,6 @@ TARGETS = {
             "required_libraries": ["lib/onnxruntime.dll", "lib/onnxruntime.lib"],
         },
         "validation": {"test_policy": "cross"},
-        "verification": "unverified",
     }
 }
 

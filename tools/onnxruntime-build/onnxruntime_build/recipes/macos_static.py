@@ -17,7 +17,6 @@ _COMMON = {
         "required_libraries": ["lib/libonnxruntime.a"],
     },
     "validation": {"test_policy": "package-only"},
-    "verification": "unverified",
 }
 
 

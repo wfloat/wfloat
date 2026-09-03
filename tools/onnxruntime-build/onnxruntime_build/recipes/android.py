@@ -13,7 +13,6 @@ _COMMON = {
     "providers": ["cpu", "nnapi", "xnnpack"],
     "toolchain": {"android_api": 21, "nnapi_min_api": 27, "ndk": "28.0.13004108"},
     "validation": {"test_policy": "cross"},
-    "verification": "unverified",
 }
 
 
@@ -23,7 +22,6 @@ TARGETS = {
         "linkage": "shared",
         "architectures": ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"],
         "package": {"kind": "android", "headers_dir": "headers", "library": "libonnxruntime.so"},
-        "verification": "verified",
     },
 }
 for _abi in ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]:
