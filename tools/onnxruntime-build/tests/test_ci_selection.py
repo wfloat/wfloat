@@ -187,7 +187,7 @@ class WorkflowTopologyTest(unittest.TestCase):
                     1,
                 )
                 self.assertNotIn("actions/download-artifact@", text)
-                self.assertNotIn("publish-onnxruntime-artifacts.py", text)
+                self.assertNotIn("publish_onnxruntime_artifacts.py", text)
                 self.assertNotIn("environment:", text)
                 self.assertNotIn("x-amz-meta-sha256", text)
                 self.assertNotIn("secrets.", text)
@@ -210,7 +210,7 @@ class WorkflowTopologyTest(unittest.TestCase):
         self.assertIn("pattern: onnxruntime-*", text)
         self.assertIn("merge-multiple: true", text)
         self.assertIn(
-            "python -I -B scripts/publish-onnxruntime-artifacts.py "
+            "python -I -B scripts/publish_onnxruntime_artifacts.py "
             ".onnxruntime-artifacts",
             text,
         )
@@ -254,7 +254,7 @@ class WorkflowTopologyTest(unittest.TestCase):
         )
         self.assertIn('\"tools/onnxruntime-build/**\"', contracts)
         self.assertEqual(
-            contracts.count('\"scripts/publish-onnxruntime-artifacts.py\"'), 2
+            contracts.count('\"scripts/publish_onnxruntime_artifacts.py\"'), 2
         )
         self.assertEqual(
             contracts.count('\".github/workflows/onnxruntime-publish.yml\"'), 2
@@ -289,7 +289,7 @@ class WorkflowTopologyTest(unittest.TestCase):
                 self.assertFalse(
                     _workflow_selects(
                         family,
-                        "scripts/publish-onnxruntime-artifacts.py",
+                        "scripts/publish_onnxruntime_artifacts.py",
                     )
                 )
                 self.assertFalse(

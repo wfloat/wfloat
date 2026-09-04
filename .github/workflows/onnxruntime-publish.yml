@@ -29,4 +29,4 @@ jobs:
           merge-multiple: true
 
       - name: Publish and verify immutable registry objects
-        run: python -I -B scripts/publish-onnxruntime-artifacts.py .onnxruntime-artifacts
+        run: python -I -B scripts/publish_onnxruntime_artifacts.py .onnxruntime-artifacts

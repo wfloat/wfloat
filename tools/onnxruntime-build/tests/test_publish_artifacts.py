@@ -17,7 +17,7 @@ except ImportError:
 
 PUBLISHER = test_ci_selection._load(
     "publish_artifacts",
-    test_ci_selection.REPOSITORY / "scripts" / "publish-onnxruntime-artifacts.py",
+    test_ci_selection.REPOSITORY / "scripts" / "publish_onnxruntime_artifacts.py",
 )
 SHA = "a" * 40
 BUILDER = SHA[:12]
@@ -152,18 +152,25 @@ class BrokerAndSigningTest(unittest.TestCase):
                 with self.assertRaisesRegex(PUBLISHER.PublicationError, "different object key"):
                     PUBLISHER.request_publication_grant(artifact, "token", {})
 
-    def test_aws_cli_receives_temporary_credentials_without_putting_them_on_the_command(self) -> None:
+    def test_aws_cli_receives_temporary_credentials_without_github_oidc_access(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             artifact = _artifact(_archive(Path(temporary), "linux-x64-glibc2_17"))
             completed = subprocess.CompletedProcess([], 0, "{}", "")
-            with mock.patch.object(
-                PUBLISHER.subprocess, "run", return_value=completed
-            ) as run:
-                PUBLISHER._aws_request(
-                    "put-object",
-                    _grant(artifact),
-                    ["--body", str(artifact.path), "--if-none-match", "*"],
-                )
+            with mock.patch.dict(
+                PUBLISHER.os.environ,
+                {
+                    "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example/token",
+                    "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+                },
+            ):
+                with mock.patch.object(
+                    PUBLISHER.subprocess, "run", return_value=completed
+                ) as run:
+                    PUBLISHER._aws_request(
+                        "put-object",
+                        _grant(artifact),
+                        ["--body", str(artifact.path), "--if-none-match", "*"],
+                    )
         command = run.call_args.args[0]
         environment = run.call_args.kwargs["env"]
         self.assertIn("--endpoint-url", command)
@@ -176,6 +183,8 @@ class BrokerAndSigningTest(unittest.TestCase):
         self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "secret")
         self.assertEqual(environment["AWS_SESSION_TOKEN"], "session")
         self.assertEqual(environment["AWS_REQUEST_CHECKSUM_CALCULATION"], "when_required")
+        self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_URL", environment)
+        self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_TOKEN", environment)
 
 
 class PublicationTest(unittest.TestCase):

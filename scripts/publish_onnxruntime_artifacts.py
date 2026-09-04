@@ -295,6 +295,8 @@ def request_publication_grant(
 
 def _aws_environment(grant: PublicationGrant) -> dict[str, str]:
     environment = os.environ.copy()
+    environment.pop("ACTIONS_ID_TOKEN_REQUEST_URL", None)
+    environment.pop("ACTIONS_ID_TOKEN_REQUEST_TOKEN", None)
     environment.update(
         {
             "AWS_ACCESS_KEY_ID": grant.credential.access_key_id,
