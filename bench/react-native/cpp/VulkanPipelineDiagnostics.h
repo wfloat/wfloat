@@ -1,0 +1,25 @@
+#pragma once
+#include "VulkanFields.h"
+#include <vector>
+#include <chrono>
+namespace bench {
+inline std::string pipelineExecutableDiagnostics(VkDevice device,VkPipeline pipeline) {
+  auto properties=(PFN_vkGetPipelineExecutablePropertiesKHR)vkGetDeviceProcAddr(device,"vkGetPipelineExecutablePropertiesKHR");auto statistics=(PFN_vkGetPipelineExecutableStatisticsKHR)vkGetDeviceProcAddr(device,"vkGetPipelineExecutableStatisticsKHR");
+  if(!properties||!statistics)return jsonObject({{"error",jsonString("enabled executable-query functions unavailable")}});
+  VkPipelineInfoKHR info{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};info.pipeline=pipeline;uint32_t total=0;auto code=properties(device,&info,&total,nullptr);const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+  if(code!=VK_SUCCESS)return jsonObject({{"returnCode",std::to_string(code)}});
+  std::vector<VkPipelineExecutablePropertiesKHR> values(std::min(total,16U));for(auto &v:values)v.sType=VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR;uint32_t count=values.size();code=properties(device,&info,&count,values.data());std::string rows="[";bool limited=total>values.size();
+  if(code==VK_SUCCESS||code==VK_INCOMPLETE)for(uint32_t i=0;i<std::min<uint32_t>(count,values.size());++i){if(std::chrono::steady_clock::now()>=deadline){limited=true;break;}if(i)rows+=',';VkPipelineExecutableInfoKHR executable{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};executable.pipeline=pipeline;executable.executableIndex=i;uint32_t n=0;auto sc=statistics(device,&executable,&n,nullptr);std::vector<VkPipelineExecutableStatisticKHR> stats(std::min(n,256U));for(auto&v:stats)v.sType=VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR;uint32_t used=stats.size();if(sc==VK_SUCCESS)sc=statistics(device,&executable,&used,stats.data());std::string fields="[";
+    if(sc==VK_SUCCESS||sc==VK_INCOMPLETE)for(uint32_t j=0;j<std::min<uint32_t>(used,stats.size());++j){if(j)fields+=',';const auto &v=stats[j];std::string value="null";switch(v.format){case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:value=jsonInteger(v.value.b32);break;case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:value=jsonInteger(v.value.i64);break;case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:value=jsonInteger(v.value.u64);break;case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:value=jsonReal(v.value.f64);break;default:break;}fields+=jsonObject({{"name",jsonString(v.name)},{"description",jsonString(v.description)},{"format",jsonInteger(v.format)},{"value",value}});}fields+=']';const auto &v=values[i];
+    rows+=jsonObject({{"index",jsonInteger(i)},{"name",jsonString(v.name)},{"description",jsonString(v.description)},{"stages",jsonInteger(v.stages)},{"subgroupSize",jsonInteger(v.subgroupSize)},{"statisticsReturnCode",std::to_string(sc)},{"reportedStatistics",jsonInteger(n)},{"statisticsComplete",sc==VK_SUCCESS&&n<=stats.size()?"true":"false"},{"statistics",fields}});
+  }rows+=']';return jsonObject({{"scope",jsonString("compile-time diagnostics for owned compute pipeline, not runtime counters")},{"returnCode",std::to_string(code)},{"reportedExecutables",jsonInteger(total)},{"boundedScanLimitReached",limited?"true":"false"},{"executables",rows}});
+}
+inline std::string calibratedTimestamps(VkInstance instance,VkPhysicalDevice physical,VkDevice device) {
+  auto enumerate=(PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT)vkGetInstanceProcAddr(instance,"vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");auto sample=(PFN_vkGetCalibratedTimestampsEXT)vkGetDeviceProcAddr(device,"vkGetCalibratedTimestampsEXT");
+  if(!enumerate||!sample)return jsonObject({{"error",jsonString("enabled calibrated timestamp functions unavailable")}});
+  uint32_t total=0;auto code=enumerate(physical,&total,nullptr);if(code!=VK_SUCCESS)return jsonObject({{"returnCode",std::to_string(code)}});std::vector<VkTimeDomainEXT> domains(std::min(total,16U));uint32_t count=domains.size();code=enumerate(physical,&count,domains.data());
+  if(code!=VK_SUCCESS&&code!=VK_INCOMPLETE)return jsonObject({{"returnCode",std::to_string(code)}});count=std::min<uint32_t>(count,domains.size());if(!count)return jsonObject({{"domains","[]"},{"reportedDomains",jsonInteger(total)}});
+  std::vector<VkCalibratedTimestampInfoEXT> infos(count);std::vector<uint64_t> ticks(count);for(uint32_t i=0;i<count;++i){infos[i].sType=VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;infos[i].timeDomain=domains[i];}uint64_t deviation=0;const auto sampled=sample(device,count,infos.data(),ticks.data(),&deviation);std::string rows="[";for(uint32_t i=0;i<count;++i){if(i)rows+=',';rows+=jsonObject({{"timeDomain",jsonInteger(domains[i])},{"ticks",sampled==VK_SUCCESS?jsonInteger(ticks[i]):"null"}});}rows+=']';
+  return jsonObject({{"enumerationReturnCode",std::to_string(code)},{"sampleReturnCode",std::to_string(sampled)},{"reportedDomains",jsonInteger(total)},{"complete",code==VK_SUCCESS&&total<=domains.size()?"true":"false"},{"maximumDeviationNanoseconds",sampled==VK_SUCCESS?jsonInteger(deviation):"null"},{"domains",rows}});
+}
+}

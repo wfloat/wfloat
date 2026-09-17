@@ -1,0 +1,54 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+react {
+    autolinkLibrariesWithApp()
+}
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+    namespace "com.wfloat.bench"
+
+    defaultConfig {
+        applicationId "com.wfloat.bench"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 176
+        versionName "0.0.176"
+        testInstrumentationRunner (project.findProperty("benchTestRunner") ?: "com.wfloat.bench.NetworkTransferInstrumentation")
+    }
+    externalNativeBuild {
+        cmake { path "src/main/jni/CMakeLists.txt" }
+    }
+    // Use the Android plugin's locally generated debug key; never version signing keys.
+    buildTypes {
+        debug { signingConfig signingConfigs.debug }
+        // Standalone prototype APK for local/device-farm testing; not production signing.
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+    // The controlled network check must exclude Metro/debugger traffic.
+    testBuildType "release"
+    // Optional, separately compiled native scheduler probe goes only in the test APK.
+    if (project.hasProperty("benchSwitchesProbeLibs")) {
+        sourceSets.androidTest.jniLibs.srcDir project.property("benchSwitchesProbeLibs")
+    }
+    if (project.hasProperty("benchCpuPlacementProbeLibs")) {
+        sourceSets.androidTest.jniLibs.srcDir project.property("benchCpuPlacementProbeLibs")
+    }
+    if (project.hasProperty("benchSchedulerProbeLibs")) {
+        sourceSets.androidTest.jniLibs.srcDir project.property("benchSchedulerProbeLibs")
+    }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    implementation("com.facebook.react:react-android")
+    implementation("com.facebook.react:hermes-android")
+}

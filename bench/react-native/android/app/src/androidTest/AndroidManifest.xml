@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Test APK only: selectable diagnostics share the installed app's collectors. -->
+    <instrumentation android:name="com.wfloat.bench.ThreadPlacementInstrumentation" android:targetPackage="com.wfloat.bench" />
+    <instrumentation android:name="com.wfloat.bench.ThreadPriorityInstrumentation" android:targetPackage="com.wfloat.bench" />
+    <instrumentation android:name="com.wfloat.bench.ThreadSchedulerInstrumentation" android:targetPackage="com.wfloat.bench" />
+    <instrumentation android:name="com.wfloat.bench.ThreadStatesInstrumentation" android:targetPackage="com.wfloat.bench" />
+    <instrumentation android:name="com.wfloat.bench.ThreadAffinityInstrumentation" android:targetPackage="com.wfloat.bench" />
+    <instrumentation android:name="com.wfloat.bench.ThreadSwitchesInstrumentation" android:targetPackage="com.wfloat.bench" />
+    <instrumentation android:name="com.wfloat.bench.ThreadGetterAffinityInstrumentation" android:targetPackage="com.wfloat.bench" />
+</manifest>
