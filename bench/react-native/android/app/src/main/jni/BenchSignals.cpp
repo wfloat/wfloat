@@ -50,6 +50,15 @@ Java_com_wfloat_bench_BenchSignalsNative_pageProbe(JNIEnv *env,jobject) {
 }
 
 #include "../../../../../cpp/AndroidResourceSources.h"
+#include "../../../../../cpp/EglFrameProbe.h"
+#include <android/native_window_jni.h>
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_wfloat_bench_BenchSignalsNative_eglFrameProbe(JNIEnv *env,jobject,jobject surface) {
+  struct Window {ANativeWindow *value;~Window(){if(value)ANativeWindow_release(value);}} window{ANativeWindow_fromSurface(env,surface)};
+  if(env->ExceptionCheck())return nullptr;
+  try{return env->NewStringUTF(bench::eglFrameProbe(window.value).c_str());}
+  catch(const std::exception &e){env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),e.what());return nullptr;}
+}
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_wfloat_bench_BenchSignalsNative_resources(JNIEnv *env,jobject) {
   try {return env->NewStringUTF(bench::androidResourceSources().c_str());}

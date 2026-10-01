@@ -25,6 +25,7 @@ internal object BenchSignalsNative {
   external fun kgslCounters(): String
   external fun gpuProbe(): String
   external fun glesProbe(): String
+  external fun eglFrameProbe(surface: android.view.Surface): String
   external fun networkDriver(name:String): String
   external fun socketProbe(): String
   external fun netlinkInterfaces(stats:Boolean,extended:Boolean): String

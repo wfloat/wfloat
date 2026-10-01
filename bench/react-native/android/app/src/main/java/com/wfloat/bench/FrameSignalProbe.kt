@@ -14,6 +14,7 @@ import org.json.JSONObject
 internal class FrameSignalProbe {
   private val handler=Handler(Looper.getMainLooper())
   private val lock=Any()
+  private val eglPresentation=EglFrameSignalProbe()
   private val presentation=if(Build.VERSION.SDK_INT>=35)PresentationSignalProbe() else null
   private var active=false
   private var generation=0
@@ -22,13 +23,14 @@ internal class FrameSignalProbe {
   private var frameCallback:Choreographer.FrameCallback?=null
   private var vsyncCallback:Any?=null
   private var state=JSONObject().put("state","not_requested")
-  fun snapshot():JSONObject=synchronized(lock){JSONObject(state.toString()).put("presentationProbe",presentation?.snapshot()?:JSONObject().put("state","API 35 required"))}
+  fun snapshot():JSONObject=synchronized(lock){JSONObject(state.toString()).put("eglPresentationProbe",eglPresentation.snapshot()).put("presentationProbe",presentation?.snapshot()?:JSONObject().put("state","API 35 required"))}
   fun start(w:Window)=handler.post {
     stopOnMain("replaced")
     val token=++generation
     synchronized(lock){state=JSONObject().put("state","recording").put("startedAtMs",System.currentTimeMillis()).put("scope","app window frame timing and callback scheduling").put("frames",JSONArray()).put("vsyncs",JSONArray())}
     active=true;window=w
     presentation?.start(w)
+    eglPresentation.start(w)
     val callback=Window.OnFrameMetricsAvailableListener {_,metrics,dropped ->
       if(active) synchronized(lock) {
         val rows=state.getJSONArray("frames")
@@ -55,6 +57,7 @@ internal class FrameSignalProbe {
     handler.postDelayed({if(generation==token)stopOnMain("completed")},3000)
   }
   private fun stopOnMain(reason:String) {
+    eglPresentation.stop(reason)
     presentation?.stop(reason)
     if(!active)return;active=false;++generation
     listener?.let {window?.removeOnFrameMetricsAvailableListener(it)};listener=null;window=null

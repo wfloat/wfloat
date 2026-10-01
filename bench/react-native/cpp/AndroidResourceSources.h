@@ -5,6 +5,8 @@
 #include "MountedFilesystemSources.h"
 #include "FileResourceSources.h"
 #include "ResourceUsageSources.h"
+#include "IntervalTimerSources.h"
+#include "AndroidExecutionPolicySources.h"
 #include <malloc.h>
 #include <sys/resource.h>
 #include <sys/sysinfo.h>
@@ -28,8 +30,8 @@ inline std::string androidResourceSources() {
   const int resources[]={RLIMIT_AS,RLIMIT_CORE,RLIMIT_CPU,RLIMIT_DATA,RLIMIT_FSIZE,RLIMIT_LOCKS,RLIMIT_MEMLOCK,RLIMIT_MSGQUEUE,RLIMIT_NICE,RLIMIT_NOFILE,RLIMIT_NPROC,RLIMIT_RSS,RLIMIT_RTPRIO,RLIMIT_RTTIME,RLIMIT_SIGPENDING,RLIMIT_STACK};
   const char *names[]={"AS","CORE","CPU","DATA","FSIZE","LOCKS","MEMLOCK","MSGQUEUE","NICE","NOFILE","NPROC","RSS","RTPRIO","RTTIME","SIGPENDING","STACK"};
   for(size_t i=0;i<sizeof(resources)/sizeof(resources[0]);++i){if(i)limits+=',';rlimit v{};const int e=getrlimit(resources[i],&v)==0?0:errno;limits+=jsonObject({{"name",jsonString(names[i])},{"errno",std::to_string(e)},{"soft",e?"null":jsonInteger(v.rlim_cur)},{"hard",e?"null":jsonInteger(v.rlim_max)}});}limits+=']';
-  std::string clocks="[";const clockid_t ids[]={CLOCK_REALTIME,CLOCK_MONOTONIC,CLOCK_MONOTONIC_RAW,CLOCK_BOOTTIME,CLOCK_PROCESS_CPUTIME_ID,CLOCK_THREAD_CPUTIME_ID,CLOCK_REALTIME_COARSE,CLOCK_MONOTONIC_COARSE};
-  const char *clockNames[]={"REALTIME","MONOTONIC","MONOTONIC_RAW","BOOTTIME","PROCESS_CPUTIME_ID","THREAD_CPUTIME_ID","REALTIME_COARSE","MONOTONIC_COARSE"};
+  std::string clocks="[";const clockid_t ids[]={CLOCK_TAI,CLOCK_REALTIME,CLOCK_MONOTONIC,CLOCK_MONOTONIC_RAW,CLOCK_BOOTTIME,CLOCK_PROCESS_CPUTIME_ID,CLOCK_THREAD_CPUTIME_ID,CLOCK_REALTIME_COARSE,CLOCK_MONOTONIC_COARSE};
+  const char *clockNames[]={"TAI","REALTIME","MONOTONIC","MONOTONIC_RAW","BOOTTIME","PROCESS_CPUTIME_ID","THREAD_CPUTIME_ID","REALTIME_COARSE","MONOTONIC_COARSE"};
   for(size_t i=0;i<sizeof(ids)/sizeof(ids[0]);++i){if(i)clocks+=',';timespec t{},r{};const int te=clock_gettime(ids[i],&t)==0?0:errno,re=clock_getres(ids[i],&r)==0?0:errno;clocks+=jsonObject({{"name",jsonString(clockNames[i])},{"timeErrno",std::to_string(te)},{"resolutionErrno",std::to_string(re)},{"seconds",te?"null":jsonInteger(t.tv_sec)},{"nanoseconds",te?"null":jsonInteger(t.tv_nsec)},{"resolutionSeconds",re?"null":jsonInteger(r.tv_sec)},{"resolutionNanoseconds",re?"null":jsonInteger(r.tv_nsec)}});}clocks+=']';
   struct sysinfo si{};const int se=sysinfo(&si)==0?0:errno;
   const auto system=jsonObject({{"errno",std::to_string(se)},{"uptime",se?"null":jsonInteger(si.uptime)},{"load1",se?"null":jsonInteger(si.loads[0])},{"load5",se?"null":jsonInteger(si.loads[1])},{"load15",se?"null":jsonInteger(si.loads[2])},{"loadShift",std::to_string(SI_LOAD_SHIFT)},{"totalram",se?"null":jsonInteger(si.totalram)},{"freeram",se?"null":jsonInteger(si.freeram)},{"sharedram",se?"null":jsonInteger(si.sharedram)},{"bufferram",se?"null":jsonInteger(si.bufferram)},{"totalswap",se?"null":jsonInteger(si.totalswap)},{"freeswap",se?"null":jsonInteger(si.freeswap)},{"procs",se?"null":jsonInteger(si.procs)},{"totalhigh",se?"null":jsonInteger(si.totalhigh)},{"freehigh",se?"null":jsonInteger(si.freehigh)},{"mem_unit",se?"null":jsonInteger(si.mem_unit)}});
@@ -46,6 +48,6 @@ inline std::string androidResourceSources() {
   std::string controls="[";const int options[]={PR_GET_TIMERSLACK,PR_GET_NO_NEW_PRIVS,PR_GET_SECCOMP,PR_GET_DUMPABLE,PR_GET_THP_DISABLE,PR_GET_TAGGED_ADDR_CTRL,PR_SVE_GET_VL,PR_SME_GET_VL};const char *optionNames[]={"PR_GET_TIMERSLACK","PR_GET_NO_NEW_PRIVS","PR_GET_SECCOMP","PR_GET_DUMPABLE","PR_GET_THP_DISABLE","PR_GET_TAGGED_ADDR_CTRL","PR_SVE_GET_VL","PR_SME_GET_VL"};
   for(size_t i=0;i<8;++i){if(i)controls+=',';errno=0;const long value=syscall(__NR_prctl,options[i],0UL,0UL,0UL,0UL);const int e=value<0?errno:0;controls+=jsonObject({{"name",jsonString(optionNames[i])},{"errno",std::to_string(e)},{"value",e?"null":jsonInteger(value)}});}controls+=']';
   struct utsname unameValue{};const int ue=uname(&unameValue)==0?0:errno;
-  return jsonObject({{"clockDiscipline",clockDisciplineSource()},{"statxFiles",fileResourceSources(false)},{"fileCache",fileResourceSources(true)},{"mountedFilesystems",mountedFilesystemSources()},{"posixResourceLimits",posixResourceLimits("/data")},{"rusageChildren",scopedResourceUsage(RUSAGE_CHILDREN)},{"rusageCallingThread",scopedResourceUsage(RUSAGE_THREAD)},{"auxv",aux},{"prctlCallingThread",controls},{"unameMachine",ue?"null":jsonString(unameValue.machine)},{"unameErrno",std::to_string(ue)},{"mallinfo2",heap},{"malloc_info",xml},{"getrlimit",limits},{"rlimInfinity",jsonInteger(RLIM_INFINITY)},{"clocks",clocks},{"sysinfo",system},{"callingThreadScheduler",scheduler},{"statfs",filesystem}});
+  return jsonObject({{"intervalTimers",intervalTimerSources()},{"executionPolicy",androidExecutionPolicySources([](int option,unsigned long selector)->long{return syscall(__NR_prctl,option,selector,0UL,0UL,0UL);},gettid())},{"clockDiscipline",clockDisciplineSource()},{"statxFiles",fileResourceSources(false)},{"fileCache",fileResourceSources(true)},{"mountedFilesystems",mountedFilesystemSources()},{"posixResourceLimits",posixResourceLimits("/data")},{"rusageChildren",scopedResourceUsage(RUSAGE_CHILDREN)},{"rusageCallingThread",scopedResourceUsage(RUSAGE_THREAD)},{"auxv",aux},{"prctlCallingThread",controls},{"unameMachine",ue?"null":jsonString(unameValue.machine)},{"unameErrno",std::to_string(ue)},{"mallinfo2",heap},{"malloc_info",xml},{"getrlimit",limits},{"rlimInfinity",jsonInteger(RLIM_INFINITY)},{"clocks",clocks},{"sysinfo",system},{"callingThreadScheduler",scheduler},{"statfs",filesystem}});
 }
 }

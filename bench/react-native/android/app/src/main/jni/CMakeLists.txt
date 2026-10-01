@@ -47,4 +47,4 @@ add_library(bench_signals SHARED BenchSignals.cpp)
 target_compile_features(bench_signals PRIVATE cxx_std_17)
 target_compile_options(bench_signals PRIVATE -O2 -fexceptions -Wall -Wextra)
 
-target_link_libraries(bench_signals vulkan EGL GLESv3)
+target_link_libraries(bench_signals vulkan EGL GLESv3 android)

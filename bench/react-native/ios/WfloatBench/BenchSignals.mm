@@ -49,6 +49,7 @@ static NSString *signedExact(int64_t n) { return [NSString stringWithFormat:@"%l
 #include "VolumeResourceSources.h"
 #include "AllocatorZoneSources.h"
 #include "../../cpp/PosixResourceLimits.h"
+#include "../../cpp/IntervalTimerSources.h"
 #include "CoalitionSources.h"
 struct MetricKitCapture {
   bench::SourceCapture writer{32*1024*1024,128*1024*1024,"metrickit"};
@@ -694,6 +695,7 @@ RCT_EXPORT_METHOD(read:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectB
       [rows addObject:@{@"name":names[i],@"seconds":code?(id)NSNull.null:signedExact(value.tv_sec),@"nanoseconds":code?(id)NSNull.null:signedExact(value.tv_nsec),@"errno":@(saved),@"resolutionSeconds":rc?(id)NSNull.null:signedExact(resolution.tv_sec),@"resolutionNanoseconds":rc?(id)NSNull.null:signedExact(resolution.tv_nsec),@"resolutionErrno":@(re)}];}
     record(@"clock_gettime_and_resolution",@"system_process_and_calling_collector_thread",start,@{@"clocks":rows},nil);
   }
+  {const double start=stamp();const auto raw=bench::intervalTimerSources();NSError *error=nil;NSDictionary *values=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:raw.data() length:raw.size()] options:0 error:&error];record(@"getitimer",@"process_interval_timers",start,values,error.localizedDescription);}
   {const double start=stamp();NSURL *url=[NSURL fileURLWithPath:NSHomeDirectory()];NSMutableArray *rows=[NSMutableArray new];
     for(NSURLResourceKey key in @[NSURLVolumeTotalCapacityKey,NSURLVolumeAvailableCapacityKey,NSURLVolumeAvailableCapacityForImportantUsageKey,NSURLVolumeAvailableCapacityForOpportunisticUsageKey,NSURLVolumeMaximumFileSizeKey,NSURLVolumeIsReadOnlyKey,NSURLVolumeSupportsSparseFilesKey,NSURLVolumeSupportsVolumeSizesKey]) {
       id value=nil;NSError *error=nil;BOOL success=[url getResourceValue:&value forKey:key error:&error];[rows addObject:@{@"key":key,@"value":[value isKindOfClass:NSNumber.class]?[value stringValue]:(value?:NSNull.null),@"success":@(success),@"error":error.localizedDescription?:NSNull.null}];

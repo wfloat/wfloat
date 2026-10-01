@@ -16,8 +16,8 @@ android {
         applicationId "com.wfloat.bench"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 176
-        versionName "0.0.176"
+        versionCode 177
+        versionName "0.0.177"
         testInstrumentationRunner (project.findProperty("benchTestRunner") ?: "com.wfloat.bench.NetworkTransferInstrumentation")
     }
     externalNativeBuild {

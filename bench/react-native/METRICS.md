@@ -402,3 +402,35 @@ Sources: [Android transaction statistics](https://developer.android.com/referenc
 [Linux sync-file implementation](https://github.com/torvalds/linux/blob/master/drivers/dma-buf/sync_file.c),
 [XNU clock queries](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_ntptime.c),
 [AOSP app syscall blocklist](https://android.googlesource.com/platform/bionic/+/main/libc/SECCOMP_BLOCKLIST_APP.TXT).
+
+### Final timer, execution-policy and EGL review
+
+| Platform/source | Retained observations |
+|---|---|
+| Both: `getitimer` | REAL, VIRTUAL and PROF process timers: remaining seconds/microseconds and reload seconds/microseconds, with per-query monotonic bounds and native errors. These count down elapsed, user CPU, and user+system CPU time respectively. No timer is armed or changed. Not a JavaScript/dispatch timer inventory or wakeup count. |
+| Android: execution-policy getters | CPU accounting mode; store-bypass, indirect-branch and L1D-flush speculation policy; process-wide KSM merge-any policy; private futex hash capacity; calling-thread rseq slice-extension policy. Exact native results and errno; old kernels may reject newer options. Policy is not measured overhead, KSM savings or lock contention. L1D-flush ENABLE/DISABLE mitigation meaning differs from the other speculation selectors. |
+| Android: `CLOCK_TAI` | Native seconds/nanoseconds and resolution alongside the existing clock records. Kernel-maintained TAI may have no configured UTC offset; successful access does not establish synchronization or atomic-clock accuracy. |
+| Android: EGL window timestamps | Existing explicit frame probe adds an owned 2×2 surface. Three compositor predictions and nine per-frame timestamps cover queue/request, render completion, latch, first/last composition, compositor GPU completion, display presentation, dequeue readiness and reads done. Immediate and delayed snapshots preserve support/errors, pending `-2`, invalid `-1`, and valid zero for composition without GPU rendering. Predictions are distinct from observations; final-frame reuse events can remain pending. |
+
+The EGL surface is removed on completion, timeout or cancellation. One native job
+may run at a time; driver calls themselves cannot be forcibly interrupted. It
+enables timestamp collection only on that owned surface, without changing the app
+renderer or global counter settings. These additions do not add dashboard cards.
+`PR_GET_TIMING` is a fixed statistical-accounting mode in the reviewed Linux
+implementation, not a measurement of accounting resolution or precision.
+
+Validation: Pixel 9/Android 16 returned all three compositor predictions and seven
+positive per-frame timestamps; dequeue-ready and reads-done remained pending.
+All process timers and TAI were readable. Store-bypass policy returned native bits
+`3`; other speculation selectors returned `ENODEV`, and KSM/futex/rseq getters
+returned `EINVAL`. iOS simulator timers were readable; standalone native tests
+verified armed-timer preservation. These results do not imply support on every OS.
+
+Sources: [Apple interval timers](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getitimer.2.html),
+[Linux timer implementation](https://github.com/torvalds/linux/blob/master/kernel/time/itimer.c),
+[Linux speculation semantics](https://docs.kernel.org/userspace-api/spec_ctrl.html),
+[Android/Linux prctl ABI](https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/include/uapi/linux/prctl.h),
+[Linux getter implementations](https://github.com/torvalds/linux/blob/master/kernel/sys.c),
+[futex capacity getter](https://github.com/torvalds/linux/blob/master/kernel/futex/core.c),
+[rseq policy getter](https://github.com/torvalds/linux/blob/master/kernel/rseq.c),
+[EGL timestamp specification](https://registry.khronos.org/EGL/extensions/ANDROID/EGL_ANDROID_get_frame_timestamps.txt).
