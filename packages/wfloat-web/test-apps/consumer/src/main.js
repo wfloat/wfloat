@@ -1,4 +1,12 @@
 import {
+  loadLanguageModel,
+  loadTextToSpeech,
+  loadSpeechToText,
+  loadStreamingSpeechToText,
+  downloadModel,
+  deleteModelAssets,
+  defineTool,
+  toolResult,
   SPEAKER_IDS,
   VALID_EMOTIONS,
   VALID_SIDS,
@@ -10,6 +18,14 @@ import {
 } from "@wfloat/wfloat-web";
 
 window.__wfloatSmoke = {
+  loadLanguageModel,
+  loadTextToSpeech,
+  loadSpeechToText,
+  loadStreamingSpeechToText,
+  downloadModel,
+  deleteModelAssets,
+  defineTool,
+  toolResult,
   createMicrophoneCapture,
   loadLlmModel,
   loadSttModel,

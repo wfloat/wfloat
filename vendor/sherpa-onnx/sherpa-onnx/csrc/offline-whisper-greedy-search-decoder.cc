@@ -268,6 +268,9 @@ OfflineWhisperGreedySearchDecoder::Decode(Ort::Value cross_k,
   }
 
   std::vector<OfflineWhisperDecoderResult> ans(1);
+  // Segment-only decoding also needs the real duration to close a trailing
+  // segment without an explicit end token. It does not collect attention.
+  ans[0].num_audio_frames = num_feature_frames / 2;
 
   const auto &id2lang = model_->GetID2Lang();
   if (id2lang.count(initial_tokens[1])) {
@@ -289,8 +292,6 @@ OfflineWhisperGreedySearchDecoder::Decode(Ort::Value cross_k,
     ans[0].attention_n_heads = attention_n_heads;
     ans[0].attention_n_tokens = n_tokens;
     ans[0].attention_n_frames = attention_n_frames;
-    // Actual audio frames for clipping (encoder downsamples by factor of 2)
-    ans[0].num_audio_frames = num_feature_frames / 2;
 
     // Flatten to (n_heads, n_tokens, n_frames)
     ans[0].attention_weights.resize(attention_n_heads * n_tokens *

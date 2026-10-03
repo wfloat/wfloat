@@ -19,3 +19,7 @@ the flat iOS XCFramework layout consumed by the package.
 Keep package-facing integration outside this directory when practical. Refresh
 this import semantically so these build contracts remain intact as upstream
 APIs and layouts change.
+
+Web STT integration also retains the actual audio frame count for Whisper
+segment-only timestamps, independently of attention collection. Upstream's
+trailing-segment duration fallback otherwise receives zero frames in that mode.
