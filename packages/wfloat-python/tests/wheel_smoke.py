@@ -1,5 +1,7 @@
 import platform
+import re
 import subprocess
+from pathlib import Path
 
 import wfloat
 from wfloat import _core
@@ -30,6 +32,18 @@ def main() -> None:
     bridge = _load_library()
     if bridge.wfloat_python_llm_abi_version() != 1:
         raise AssertionError("Unexpected Python LLM bridge ABI")
+
+    if platform.system() == "Linux":
+        # A repaired wheel must not load both its bundled engine and an
+        # auditwheel-grafted copy. Duplicate C++ globals can crash at exit.
+        paths = {line.split()[-1] for line in Path("/proc/self/maps").read_text().splitlines()
+                 if "/" in line}
+        for name in ("libllama", "libggml", "libggml-base", "libggml-cpu"):
+            copies = {path for path in paths
+                      if re.fullmatch(re.escape(name) + r"(?:-[0-9a-f]+)?\.so(?:\.[0-9.]+)?",
+                                      Path(path).name)}
+            if len(copies) > 1:
+                raise AssertionError(f"Multiple copies of {name} loaded: {sorted(copies)}")
 
     if platform.system() == "Darwin":
         undefined_symbols = subprocess.check_output(

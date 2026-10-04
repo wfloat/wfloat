@@ -131,6 +131,15 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
     if sys.platform != "win32":
         configure.append("-DCMAKE_BUILD_TYPE=Release")
 
+    if sys.platform.startswith("linux"):
+        # Every bundled library is flattened into wfloat/native. Absolute build
+        # RPATHs let auditwheel resolve a second copy outside the wheel, mixing
+        # original and grafted llama/ggml libraries in the same process.
+        configure.extend([
+            "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON",
+            "-DCMAKE_INSTALL_RPATH=$ORIGIN",
+        ])
+
     if sys.platform == "darwin":
         configure.append(
             f"-DCMAKE_OSX_DEPLOYMENT_TARGET={MACOS_DEPLOYMENT_TARGET}"

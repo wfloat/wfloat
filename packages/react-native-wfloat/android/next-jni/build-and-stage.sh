@@ -4,8 +4,18 @@ set -euo pipefail
 android_dir="$(cd "$(dirname "$0")/.." && pwd)"
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
 android_ndk="${ANDROID_NDK_HOME:-$android_sdk/ndk/26.1.10909125}"
-cmake_bin="${CMAKE_BIN:-$android_sdk/cmake/3.22.1/bin/cmake}"
-ninja_bin="${NINJA_BIN:-$android_sdk/cmake/3.22.1/bin/ninja}"
+find_build_tool() {
+  local name="$1" override="$2" bundled="$android_sdk/cmake/3.22.1/bin/$1"
+  if [ -n "$override" ]; then
+    command -v "$override"
+  elif [ -x "$bundled" ]; then
+    echo "$bundled"
+  else
+    command -v "$name"
+  fi
+}
+cmake_bin="$(find_build_tool cmake "${CMAKE_BIN:-}")" || { echo "CMake not found; install it or set CMAKE_BIN" >&2; exit 1; }
+ninja_bin="$(find_build_tool ninja "${NINJA_BIN:-}")" || { echo "Ninja not found; install it or set NINJA_BIN" >&2; exit 1; }
 case "$(uname -s)" in Darwin) ndk_host=darwin-x86_64 ;; Linux) ndk_host=linux-x86_64 ;; *) echo "Unsupported build host" >&2; exit 1 ;; esac
 strip_bin="$android_ndk/toolchains/llvm/prebuilt/$ndk_host/bin/llvm-strip"
 if [ "$#" -eq 0 ]; then set -- arm64-v8a armeabi-v7a x86_64 x86; fi
