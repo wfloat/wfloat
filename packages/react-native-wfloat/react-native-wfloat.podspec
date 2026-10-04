@@ -21,10 +21,14 @@ Pod::Spec.new do |s|
   s.source       = { :git => "https://github.com/wfloat/wfloat.git", :tag => "#{s.version}" }
 
   s.vendored_frameworks = "ios/onnxruntime.xcframework", "ios/sherpa-onnx.xcframework", "ios/wfloat-core-llm.xcframework"
+  # NextRuntime and its vendor dependencies must be staged in the matching native
+  # artifact by the repository build; npm consumers never compile vendor sources.
   s.source_files = "ios/**/*.{h,m,mm,cpp}"
-  s.frameworks = "Accelerate"
+  s.exclude_files = "ios/tests/**/*", "ios/build*/**/*"
+  s.frameworks = "Accelerate", "AVFoundation", "UIKit"
   s.libraries = "AppleArchive"
   s.pod_target_xcconfig = {
+    "CLANG_CXX_LANGUAGE_STANDARD" => "c++17",
     "HEADER_SEARCH_PATHS" => wfloat_header_search_paths
   }
   # s.private_header_files = "ios/**/*.h"

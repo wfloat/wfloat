@@ -11,6 +11,8 @@ class WfloatPackage : BaseReactPackage() {
   override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule? {
     return if (name == WfloatModule.NAME) {
       WfloatModule(reactContext)
+    } else if (name == WfloatNextModule.NAME) {
+      WfloatNextModule(reactContext)
     } else {
       null
     }
@@ -27,6 +29,9 @@ class WfloatPackage : BaseReactPackage() {
         true,  // hasConstants
         false,  // isCxxModule
         true // isTurboModule
+      )
+      moduleInfos[WfloatNextModule.NAME] = ReactModuleInfo(
+        WfloatNextModule.NAME, WfloatNextModule.NAME, false, false, false, false, true
       )
       moduleInfos
     }

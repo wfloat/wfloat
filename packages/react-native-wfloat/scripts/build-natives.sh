@@ -6,7 +6,8 @@ PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 SHERPA_DIR="${REPO_ROOT}/vendor/sherpa-onnx"
 ANDROID_LLM_JNI_DIR="${PACKAGE_DIR}/android/llm-jni"
-IOS_LLM_BUILD_SCRIPT="${SCRIPT_DIR}/build-ios-llm-xcframework.sh"
+IOS_LLM_BUILD_SCRIPT="${SCRIPT_DIR}/build-ios-next-xcframework.sh"
+ANDROID_NEXT_BUILD_SCRIPT="${PACKAGE_DIR}/android/next-jni/build-and-stage.sh"
 ANDROID_ABIS=()
 BUILD_JOBS="${WFLOAT_BUILD_JOBS:-4}"
 
@@ -181,7 +182,7 @@ if [[ "${build_ios}" == true ]]; then
   echo "Building iOS sherpa-onnx XCFrameworks..."
   (cd "${SHERPA_DIR}" && ./build-ios.sh)
 
-  echo "Building iOS wfloat-core LLM XCFramework..."
+  echo "Building combined legacy/new iOS runtime XCFramework..."
   bash "${IOS_LLM_BUILD_SCRIPT}"
 fi
 
@@ -214,6 +215,10 @@ EOF
   fi
 
   build_android_llm_jni "${ndk_dir}" "${ANDROID_ABIS[@]}"
+
+  # The next JNI target links the staged matching speech/ORT libraries.
+  bash "${SCRIPT_DIR}/stage-natives.sh" android --speech-only
+  ANDROID_NDK_HOME="${ndk_dir}" bash "${ANDROID_NEXT_BUILD_SCRIPT}" "${ANDROID_ABIS[@]}"
 fi
 
 echo

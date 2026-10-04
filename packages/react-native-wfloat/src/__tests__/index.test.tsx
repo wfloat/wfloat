@@ -1,3 +1,4 @@
+jest.mock('../NativeWfloat', () => ({ __esModule: true, default: {} }));
 import {
   SPEAKER_IDS,
   VALID_EMOTIONS,

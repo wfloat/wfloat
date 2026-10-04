@@ -2,6 +2,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Example app opts into background audio to exercise continue policies. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -10,6 +16,9 @@
       android:allowBackup="false"
       android:theme="@style/AppTheme"
       android:supportsRtl="true">
+      <service android:name="com.wfloat.WfloatNextAudioService"
+               android:exported="false"
+               android:foregroundServiceType="microphone|mediaPlayback" />
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

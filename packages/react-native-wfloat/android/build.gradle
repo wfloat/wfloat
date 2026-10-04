@@ -47,6 +47,8 @@ def supportsNamespace() {
   return (major == 7 && minor >= 3) || major >= 8
 }
 
+def nextFromSource = project.findProperty("wfloatNextBuildFromSource") == "true"
+
 android {
   if (supportsNamespace()) {
     namespace "com.wfloat"
@@ -60,7 +62,23 @@ android {
 
   compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
 
+  // Common Runtime is built once, with the already-staged speech libraries.
+  if (nextFromSource) {
+    externalNativeBuild { cmake { path "next-jni/CMakeLists.txt" } }
+    // Checkout builds produce this library; consumers use the staged copy.
+    sourceSets.main.jniLibs.exclude "**/libwfloat-next-jni.so"
+  }
   defaultConfig {
+    consumerProguardFiles "consumer-rules.pro"
+    if (nextFromSource) {
+      externalNativeBuild {
+        cmake {
+          arguments "-DANDROID_STL=c++_shared"
+          targets "wfloat-next-jni"
+        }
+      }
+    }
+    ndk { abiFilters(*reactNativeArchitectures()) }
     minSdkVersion getExtOrIntegerDefault("minSdkVersion")
     targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
     buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
@@ -88,12 +106,7 @@ android {
 
   sourceSets {
     main {
-      if (isNewArchitectureEnabled()) {
-          java.srcDirs += [
-            "generated/java",
-            "generated/jni"
-          ]
-      }
+      java.srcDirs += ["generated/java"]
     }
   }
 }

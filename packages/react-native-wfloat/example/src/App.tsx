@@ -27,7 +27,7 @@ import {
   type TtsModel,
   type TtsProgressEvent,
   type VadModel,
-  type VadSession,
+  type LegacyVadSession as VadSession,
 } from '@wfloat/react-native-wfloat';
 
 type ExampleStatus = 'idle' | 'loading' | 'ready' | 'running';

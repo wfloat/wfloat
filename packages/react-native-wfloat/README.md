@@ -1,313 +1,144 @@
 # @wfloat/react-native-wfloat
 
-`@wfloat/react-native-wfloat` adds Wfloat text-to-speech, speech-to-text, and
-voice activity detection to React Native apps on iOS and Android.
+On-device text generation, text-to-speech, speech recognition and voice activity detection for React Native. Native modules require a native app build; Expo Go is not supported.
 
 ## Install
 
-```bash
+```sh
 npm install @wfloat/react-native-wfloat
+cd ios && pod install
 ```
 
-```bash
-yarn add @wfloat/react-native-wfloat
-```
+Android uses React Native autolinking. Development/testing baseline: React Native 0.76.5 with Hermes and the New Architecture. Physical-device audio routes and background behavior require device testing before release.
 
-## iOS setup
-
-Install CocoaPods dependencies from your app's `ios/` directory:
-
-```bash
-cd ios
-pod install
-cd ..
-```
-
-React Native autolinking handles Android integration after the package is installed.
-
-## Quick start
-
-Your `modelId` is the Wfloat model identifier you want to load, for example
-`wfloat/wfloat-tts`.
-
-```tsx
-import { loadTtsModel } from '@wfloat/react-native-wfloat';
-
-const modelId = 'wfloat/wfloat-tts';
-
-const tts = await loadTtsModel(modelId, {
-  onProgress(event) {
-    if (event.status === 'downloading') {
-      console.log('Downloading', Math.round(event.progress * 100) + '%');
-      return;
-    }
-
-    if (event.status === 'loading') {
-      console.log('Initializing native runtime');
-      return;
-    }
-
-    console.log('Model ready');
-  },
-});
-
-const result = await tts.synthesize({
-  text: "All systems are stable. You can begin the launch sequence.",
-  voice: 'narrator_woman',
-  emotion: 'neutral',
-  intensity: 0.5,
-  speed: 1,
-  silencePaddingSec: 0.1,
-  onProgress(event) {
-    console.log('progress', event.progress);
-    console.log('isPlaying', event.isPlaying);
-    console.log('highlight', event.textHighlightStart, event.textHighlightEnd);
-    console.log('chunkText', event.text);
-  },
-  onFinishedPlaying() {
-    console.log('Playback finished');
-  },
-});
-
-console.log(result.audio.sampleRate, result.audio.durationSec);
-console.log(result.timeline.chunks);
-```
-
-## STT quick start
-
-Offline STT with Whisper:
-
-```tsx
-import { loadSttModel } from '@wfloat/react-native-wfloat';
-
-const stt = await loadSttModel('openai/whisper-tiny-en', {
-  language: 'en',
-});
-
-const result = await stt.transcribe({
-  audio: pcmSamples,
-  sampleRate: 16000,
-});
-
-console.log(result.text);
-```
-
-Offline STT from the microphone:
-
-```tsx
-import { loadSttModel } from '@wfloat/react-native-wfloat';
-
-const stt = await loadSttModel('openai/whisper-tiny-en', {
-  language: 'en',
-});
-
-await stt.startMicrophone();
-
-// later, from a Stop button click
-const clip = await stt.stopMicrophone();
-const result = await stt.transcribe(clip);
-
-console.log(result.text);
-```
-
-Streaming STT with Zipformer:
-
-```tsx
-import { loadSttModel } from '@wfloat/react-native-wfloat';
-
-const stt = await loadSttModel('k2-fsa/streaming-zipformer-en');
-const session = await stt.createSession();
-
-await session.startMicrophone({
-  onResult(partial) {
-    console.log(partial.text);
-  },
-});
-
-// later, from a Stop button click
-await session.stopMicrophone();
-
-const finalResult = await session.finish();
-console.log(finalResult.text);
-await session.close();
-```
-
-## VAD quick start
-
-```tsx
-import { loadVadModel } from '@wfloat/react-native-wfloat';
-
-const vad = await loadVadModel('silero-vad');
-
-const result = await vad.detect({
-  audio: pcmSamples,
-  sampleRate: 16000,
-});
-
-console.log(result.segments.length);
-console.log(result.speechRatio);
-```
-
-`detect(...)` expects mono PCM samples. If you are using the package-owned
-offline STT microphone helper, the recorded clip can be passed directly:
-
-```tsx
-const stt = await loadSttModel('openai/whisper-tiny-en');
-await stt.startMicrophone();
-const clip = await stt.stopMicrophone();
-
-const vad = await loadVadModel('silero-vad');
-const result = await vad.detect(clip);
-```
-
-Live VAD from the microphone:
-
-```tsx
-const vad = await loadVadModel('silero-vad');
-
-const session = await vad.createSession({
-  onSpeechStart(event) {
-    console.log('speech started near', event.startSec);
-  },
-  onSpeechEnd(segment) {
-    console.log('speech segment', segment.startSec, segment.endSec);
-  },
-});
-
-await session.startMicrophone();
-
-// later, from a Stop button click
-const stats = await session.stopMicrophone();
-console.log(stats.speechEndCount, stats.maxNormalizedRms);
-await session.close();
-```
-
-The React Native package owns the native microphone capture path for live VAD.
-Apps do not need to write Objective-C++, Swift, Java, or Kotlin microphone
-bridges. Native code records mono PCM, normalizes it to 16 kHz, feeds exact
-Sherpa VAD windows, and flushes the detector when the microphone stops.
-
-## API overview
-
-- `loadTtsModel(modelId, { onProgress })` loads the model for the current
-  device. The first load downloads the model and native support assets for the
-  platform.
-- `loadSttModel(modelId, { onProgress })` loads the STT model for the current
-  device. Offline families use `transcribe(...)`; streaming families use
-  `createSession()`.
-- `loadVadModel(modelId, { onProgress })` loads a VAD model for the current
-  device. Use `detect(...)` for one-shot audio or `createSession()` for live
-  microphone speech boundaries.
-- `tts.synthesize(options)` generates a single utterance and returns structured
-  metadata about the audio and timeline.
-- `tts.synthesizeDialogue(options)` generates multi-speaker dialogue and
-  returns structured timeline metadata with `segmentIndex`.
-- `stt.transcribe(options)` runs one-shot STT for offline-capable models like
-  Whisper.
-- `stt.createSession()` opens a streaming session for streaming-capable models
-  like Zipformer.
-- `vad.detect({ audio, sampleRate })` returns speech segment timing, sample
-  ranges, segment audio, and `speechRatio`.
-- `vad.createSession({ onSpeechStart, onSpeechEnd })` creates a live VAD
-  session. `session.startMicrophone()` starts package-owned microphone capture;
-  `session.stopMicrophone()` stops capture, flushes the detector, and returns
-  capture stats.
-- `stt.startMicrophone()` / `stt.stopMicrophone()` record microphone audio for
-  one-shot offline STT.
-- `session.startMicrophone({ onResult })` / `session.stopMicrophone()` capture
-  microphone audio and feed a streaming STT session.
-- `session.push(...)` and `session.getResult()` remain available for advanced
-  callers that already own their audio pipeline.
-- `tts.pause()` and `tts.play()` control playback for the active request.
-
-## Progress callbacks
-
-`loadTtsModel(...)`, `loadSttModel(...)`, and `loadVadModel(...)` emit:
+## Load and retain models
 
 ```ts
-{ status: "downloading", progress: number }
-{ status: "loading" }
-{ status: "completed" }
+import { downloadModel, loadTextToSpeech, deleteModelAssets } from '@wfloat/react-native-wfloat';
+
+const controller = new AbortController();
+await downloadModel('wfloat/wfloat-tts', {
+  signal: controller.signal,
+  onProgress(event) {
+    if (event.phase === 'downloading') {
+      console.log(event.progress, event.bytesPerSecond, event.estimatedTimeRemainingMs);
+    }
+  },
+});
+const speech = await loadTextToSpeech('wfloat/wfloat-tts');
+// Later: await speech.unload(); // release the model, retain downloaded assets
+// await deleteModelAssets('wfloat/wfloat-tts'); // remove its private assets
 ```
 
-`synthesize(...)` and `synthesizeDialogue(...)` emit:
+Loaders also download missing assets and accept `signal` and `onProgress`. Verified cached assets skip the downloading phase. Files live in durable app-private storage excluded from backups. Shared downloads retain separate caller cancellation; shared runtime assets are kept when deleting one model. Separate loaded model instances have independent ownership.
+
+## Speech generation and playback
 
 ```ts
-{
-  progress: number;
-  isPlaying: boolean;
-  textHighlightStart: number;
-  textHighlightEnd: number;
-  text: string;
-  textHighlightSegment?: number;
-}
-```
-
-## Dialogue example
-
-```tsx
-const result = await tts.synthesizeDialogue({
-  silenceBetweenSegmentsSec: 0.2,
-  onProgress(event) {
-    console.log(event.progress);
-  },
-  onFinishedPlaying() {
-    console.log('Dialogue finished');
-  },
-  segments: [
-    {
-      text: 'We only get one pass at this.',
-      voice: 'narrator_man',
-      emotion: 'neutral',
-    },
-    {
-      text: "Then let's make the first pass count.",
-      voice: 'strong_hero_woman',
-      emotion: 'joy',
-      intensity: 0.65,
-    },
-  ],
+const playback = speech.speak('Hello.', {
+  onPlayback(event) { console.log(event.state, event.highlight); },
 });
+// playback.pause(); playback.resume(); playback.cancel();
 
-console.log(result.timeline.chunks);
+const generation = speech.generate('Audio your application can also consume.');
+const result = await generation.result();
+console.log(result.audio.samples, result.audio.sampleRate, result.timeline);
+generation.speak({ onPlayback: event => console.log(event.state) });
+// After every use: generation.dispose();
 ```
 
-## Useful exports
+`generateDialogue()` and `speakDialogue()` accept segments with text and optional voice/emotion/speed settings. Generation retains audio for replay and `result()`; direct speech releases played audio. Call `unload()` when finished with the model.
 
-The package also exports `SPEAKER_IDS`, `VALID_EMOTIONS`, and `VALID_SIDS` for
-building voice pickers and validating user input.
+## Text generation
 
-## Notes
+```ts
+import { loadLanguageModel } from '@wfloat/react-native-wfloat';
 
-- React Native currently returns structured audio metadata
-  (`sampleRate` and `durationSec`) plus the timeline. It does not currently
-  expose raw PCM samples to JavaScript the way the web package can.
-- Current React Native STT families:
-  - `openai/whisper-tiny-en` for offline `transcribe(...)`
-  - `k2-fsa/streaming-zipformer-en` for streaming `createSession()`
-- Current React Native VAD families:
-  - `silero-vad` for one-shot `detect(...)` and live `createSession()`
-- Current React Native LLM baseline:
-  - `smollm2-360m-instruct-q4_k_m` for local GGUF text generation through
-    `llama.cpp`
-- React Native currently keeps one native STT model loaded at a time. Loading
-  an offline model replaces any streaming model, and loading a streaming model
-  replaces any offline model.
-- Microphone capture helpers are package-owned on iOS and Android. Android
-  requests `RECORD_AUDIO` at runtime before native capture starts.
-- When testing the example app from the Android Emulator, forward Metro with
-  `adb reverse tcp:8081 tcp:8081`. iOS Simulator can usually reach the Mac host
-  through `localhost` directly.
-- Android Emulator microphone testing requires host microphone input to be
-  enabled in the emulator's extended controls. If permission is granted but STT
-  hears silence, check `Extended controls > Microphone > Virtual microphone
-  uses host audio input`, then restart the emulator if needed.
-- Android Emulator LLM performance is only a rough correctness signal. Some
-  AVDs report a single CPU core, so the native llama.cpp path clamps requested
-  threads to reported hardware concurrency to avoid oversubscribing the emulator.
-  Real Android device throughput should still be tested on physical hardware
-  before making product performance decisions.
+const model = await loadLanguageModel('HuggingFaceTB/SmolLM2-360M-Instruct');
+const generation = model.generate([{ role: 'user', content: 'Hello!' }], {
+  maxTokensPerRound: 128,
+  onText: text => console.log(text),
+});
+const result = await generation.result();
+console.log(result.text, result.stopReason);
+// generation.cancel(); // stop ongoing work; tools receive its AbortSignal
+await model.unload();
+```
 
-## Contributing
+Tools, reasoning callbacks and structured output follow the redesigned web contracts. Structured output and tools cannot be combined in one request. Independent background generation jobs are not promised.
 
-Maintainer and local development notes live in [CONTRIBUTING.md](CONTRIBUTING.md).
+## Transcribe audio
+
+```ts
+import { loadSpeechToText } from '@wfloat/react-native-wfloat';
+
+const stt = await loadSpeechToText('openai/whisper-tiny-en');
+const transcription = stt.transcribe({ uri: 'file:///path/to/recording.wav' });
+console.log((await transcription.result()).text);
+// Also accepts { samples: Float32Array, sampleRate: number }, including TTS result.audio.
+await stt.unload();
+```
+
+Wfloat decodes supported native audio formats and normalizes channels/sample rate. Android document-provider `content://` URIs require an accessible URI grant. Download remote audio in your application first.
+
+## Live recognition and shared microphone
+
+```ts
+import { loadStreamingSpeechToText, loadVoiceActivityDetection,
+  createMicrophoneCapture } from '@wfloat/react-native-wfloat';
+
+const stt = await loadStreamingSpeechToText('k2-fsa/streaming-zipformer-en');
+const vad = await loadVoiceActivityDetection('snakers4/silero-vad');
+const transcript = await stt.createSession({
+  onTranscript: event => console.log(event.id, event.text, event.isFinal),
+  onError: error => console.error(error, error.partialResult),
+});
+const detection = await vad.createSession({
+  returnAudio: true,
+  onSpeechEnd: segment => console.log(segment.startMs, segment.endMs, segment.audio),
+  onError: error => console.error(error, error.partialResult),
+});
+const mic = createMicrophoneCapture({
+  voiceProcessing: true,
+  backgroundBehavior: 'pauseUntilResumed',
+  onCaptureState: event => console.log(event.state),
+});
+await transcript.attachMicrophone(mic);
+await detection.attachMicrophone(mic);
+await mic.start(); // Call from your recording control; prompts if necessary.
+// After returning from background: await mic.start();
+// Finish: await mic.stop(); await transcript.finish(); await detection.finish();
+// Then unload both models.
+```
+
+For one consumer, use `await session.startMicrophone(options)` instead. `session.finish()` stops its owned mic; shared captures remain explicitly owned by your application. `mic.stop()` is terminal. Sessions can also accept raw audio through `push()`; acceptance is not a backpressure guarantee. STT warns when unprocessed audio accumulates; configure `maxBufferedAudioMs` on the session if your app requires a hard limit.
+
+`vad.detect(audio, { returnAudio: true }).result()` retains completed clips in its result. Live VAD delivers clips through `onSpeechEnd`; its final result contains timing ranges without accumulating all session audio.
+
+## Mobile audio policy
+
+Microphone and speech playback accept `backgroundBehavior`:
+
+- `pauseUntilResumed` (default): pause when backgrounded; resume explicitly.
+- `pauseAndAutoResume`: pause when backgrounded and resume on foreground return.
+- `continue`: opt into background capture/playback with native configuration below.
+
+OS audio interruptions require explicit resume. A surviving capture/session retains state; captured-audio time excludes gaps. Process termination destroys live handles. JavaScript callback delivery may be delayed while backgrounded.
+
+Playback accepts `audioFocus`: `interruptOthers` (default), `duckOthers`, or `mixWithOthers`. Microphone `voiceProcessing` defaults to false; enabling it requests native echo/noise processing. Unsupported processing warns and continues capture. It does not implement turn taking or TTS interruption.
+
+Simultaneous playback must use the same `audioFocus`. If starting or resuming speech conflicts with playback already active, that speech reports `failed` through `onPlayback`; existing playback continues unchanged. Loaded models, generation without playback, prepared playback and paused handles do not cause conflicts. An active playback retains its focus policy through temporary buffering gaps until paused or ended.
+
+### Permissions and background setup
+
+- iOS recording requires `NSMicrophoneUsageDescription` in the app's Info.plist. Continued background audio also requires `UIBackgroundModes` containing `audio`.
+- Android recording requires `RECORD_AUDIO`; Wfloat requests runtime permission when capture starts. Continued background audio additionally requires the relevant foreground-service declaration/permissions. Copy applicable entries from [the manifest example](android/AndroidManifest.background.example.xml). A foreground-service notification is shown while active.
+- Foreground-only apps do not need background capabilities. Requesting `continue` without required setup fails clearly.
+
+Background recording must be started while the app is eligible to acquire microphone access. Hardware routes, interruptions and OS restrictions still apply; no permanent background execution or restoration after termination is guaranteed.
+
+## Legacy API and development
+
+Earlier `loadTtsModel`, `loadSttModel` and `loadVadModel` exports remain available during migration; their behavior is documented in [the legacy guide](LEGACY_API.md). Avoid mixing legacy and redesigned audio controllers in the same workflow.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build setup. The example app contains explicit native smoke-test controls. Android emulator audio requires host microphone input enabled; emulator performance is not a physical-device benchmark.
