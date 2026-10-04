@@ -146,6 +146,13 @@ int32_t wfloat_stt_model_create_session(
     const wfloat_stt_model_t *model,
     wfloat_stt_session_t **out_session);
 
+/* Configure online hotwords between operations (no active sessions).
+ * Nonempty newline-separated phrases require a matching scored BPE vocabulary
+ * file and enable modified beam search. Empty hotwords restore greedy search.
+ * Replacement is transactional; failure leaves the previous recognizer intact. */
+int32_t wfloat_stt_model_configure_hotwords(
+    wfloat_stt_model_t *model, const char *hotwords, const char *bpe_vocab_path);
+
 int32_t wfloat_stt_session_push_audio(
     wfloat_stt_session_t *session,
     const float *samples,

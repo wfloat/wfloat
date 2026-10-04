@@ -1,7 +1,6 @@
 # Contributing
 
-`wfloat` is the Python client for `wfloat-tts`, Wfloat's on-device text-to-speech
-model.
+`wfloat` is the synchronous Python SDK for local language, TTS, STT and VAD models.
 
 Product context:
 
@@ -23,7 +22,7 @@ This repo should stay focused on the Python experience.
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
-python3 -m pip install setuptools wheel build twine
+python3 -m pip install setuptools wheel build twine numpy pytest "pydantic>=2,<3"
 ```
 
 Install `wfloat`:
@@ -35,6 +34,8 @@ python3 -m pip install -e .
 Release wheels bundle the matching `wfloat-core` native runtime inside the
 `wfloat` package. In this monorepo, local development can point at a freshly
 built runtime shared library with `WFLOAT_CORE_LIBRARY`.
+The structured LLM runtime also uses `WFLOAT_LLM_LIBRARY`; both libraries are
+built by the package's wheel build.
 
 ## Build release artifacts
 
@@ -53,8 +54,15 @@ That produces platform-specific release artifacts:
 Unit tests do not require native runtime binaries:
 
 ```bash
-PYTHONPATH=python python3 -m unittest discover -s tests -v
+PYTHONPATH=python python3 -m pytest tests -q
 ```
+
+For real inference tests, predownload the registry's SmolLM2-360M, wfloat-tts,
+Whisper tiny.en, English streaming Zipformer, and Silero models. Set
+`WFLOAT_TEST_MODEL_CACHE` to that cache, `WFLOAT_TEST_TTS_CACHE` to the same cache,
+`WFLOAT_TEST_GGUF` to the SmolLM2 GGUF, and both library paths above. Native tests
+skip when their fixtures are unavailable; unit tests use deterministic backends
+to exercise failures, scheduling and cancellation.
 
 You can also run a smoke check:
 
@@ -78,5 +86,6 @@ tests all supported platform wheels before uploading `wfloat` to PyPI.
 ## Notes for changes
 
 - Keep docs short and user-facing.
-- Describe this package as the Python way to run `wfloat-tts` locally.
+- Keep ordinary inference synchronous and streams lazy. Do not add audio-device capture/playback or mandatory Pydantic dependencies.
+- Preserve inline callback exceptions, cancellation outcomes and ownership of returned NumPy samples.
 - If voices, emotions, or examples change, check the model card and docs first.

@@ -8,6 +8,9 @@ on:
     paths:
       - "CMakeLists.txt"
       - "native/wfloat-core/**"
+      - "native/wfloat-python-llm/**"
+      - "packages/react-native-wfloat/cpp/LlmRuntime.cpp"
+      - "packages/react-native-wfloat/cpp/Backend.h"
       - "packages/wfloat-python/**"
       - "vendor/**"
       - ".github/workflows/python-wheel-ci.yml"
@@ -17,6 +20,9 @@ on:
     paths:
       - "CMakeLists.txt"
       - "native/wfloat-core/**"
+      - "native/wfloat-python-llm/**"
+      - "packages/react-native-wfloat/cpp/LlmRuntime.cpp"
+      - "packages/react-native-wfloat/cpp/Backend.h"
       - "packages/wfloat-python/**"
       - "vendor/**"
       - ".github/workflows/python-wheel-ci.yml"
@@ -26,18 +32,35 @@ permissions:
 
 jobs:
   unit_tests:
-    name: Unit tests
-    runs-on: ubuntu-latest
+    name: Unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.9"
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.11"
+          - os: macos-14
+            python: "3.11"
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
+
+      - name: Install Python test dependencies
+        run: python -m pip install numpy pytest "pydantic>=2,<3"
 
       - name: Run unit tests
-        run: PYTHONPATH=packages/wfloat-python/python python -m unittest discover -s packages/wfloat-python/tests -v
+        env:
+          PYTHONPATH: packages/wfloat-python/python
+        run: python -m pytest packages/wfloat-python/tests -q
 
   build_wheels:
     name: Build wheel (${{ matrix.os }})

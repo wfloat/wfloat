@@ -1,228 +1,221 @@
-# wfloat
+# Wfloat for Python
 
-`wfloat` is the Python package for Wfloat's on-device model families, including
-TTS, STT, VAD, and LLM.
+Run language, speech synthesis, speech recognition and voice activity models locally.
+The Python surface is synchronous: ordinary calls return results, streams use `for`,
+and live recognition sessions accept application-supplied audio. Wfloat does not open
+microphones or play sound in this release.
 
-It runs inference locally in Python instead of calling a hosted inference API.
-The TTS model supports 20 voices with emotion and intensity control.
+## Installation
 
-If you're building for the browser, use
-[`@wfloat/wfloat-web`](https://github.com/wfloat/wfloat-web). If you're
-building for React Native, use
-[`@wfloat/react-native-wfloat`](https://github.com/wfloat/react-native-wfloat).
-
-Browser demo to hear how it sounds: https://wfloat.com/demo
-
-## Install
-
-```bash
+```sh
 pip install wfloat
+# Optional: Pydantic models and dataclasses as tool/output schemas.
+pip install 'wfloat[schemas]'
 ```
 
-## Usage
+NumPy provides the audio array representation. Pydantic is optional; plain JSON
+Schema does not require it. Native model runtimes are bundled in platform wheels.
+A source checkout requires a native build; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Language generation
 
 ```python
-import wfloat
+from wfloat import load_language_model
 
-tts = wfloat.load_tts_model("wfloat/wfloat-tts")
+messages = [{"role": "user", "content": "Explain tides briefly."}]
+with load_language_model("HuggingFaceTB/SmolLM2-360M-Instruct") as model:
+    result = model.generate(messages, max_tokens_per_round=256)
+    print(result.text)
+    print(result.stop_reason, result.usage.output_tokens)
+    messages.extend(result.new_messages)
+```
 
-result = tts.synthesize(
-    text="No, no, that's not possible.",
-    voice="mad_scientist_woman",
-    emotion="surprise",
-    intensity=0.7,
+The main input can be positional or named. Configuration arguments are keyword-only.
+`unload()` releases a model explicitly; the model context manager does the same on
+exit. Unloading does not delete downloaded model files.
+
+### Streaming
+
+```python
+with load_language_model("HuggingFaceTB/SmolLM2-360M-Instruct") as model:
+    with model.generate_stream(messages) as stream:
+        for event in stream:
+            if event.type == "text":
+                print(event.text, end="", flush=True)
+        result = stream.result()
+```
+
+Streams are lazy and single-pass. Requesting the next event advances inference;
+`result()` drives any remaining work and returns the cached completed LLM result.
+Reasoning, round boundaries and tool activity are separate typed events. A round's
+text can be intermediate commentary; `result.text` is the latest round's text, not
+all rounds concatenated or a guarantee of a finished answer. Check `stop_reason`.
+Generated history messages have ISO 8601 UTC `created_at` strings. Result
+`duration_ms` measures the operation after it begins, including managed tool waits.
+Same-model operations from different threads queue in FIFO order. Close or finish
+a stream before starting another operation on its driving thread. An executor
+must not call its own active model synchronously.
+
+Callbacks run inline on the thread driving the operation. Keep them short; their
+exceptions propagate unchanged after cleanup. `KeyboardInterrupt` also propagates.
+
+## Tools and structured output
+
+Use `define_tool` with an explicit name, input schema, and optional executor.
+All tools in one operation must have executors, or all must be manual. Plain JSON
+Schema produces validated dictionary arguments. With the optional schemas extra,
+Pydantic models and dataclasses produce validated instances. Annotate executor
+parameters for editor typing.
+
+A tool can declare a keyword-only `context` parameter to receive `ToolContext` and
+its `cancel_event`. Tool executors may run on background threads even though the
+public SDK is synchronous. Execution order/concurrency and execution timing are
+separate options. Managed tool events are notifications, not approval checkpoints.
+Manual applications can execute calls early from notifications or after inspecting
+`result.tool_calls`; don't execute a call twice when it appears in both places.
+
+Structured output accepts the same schema choices. It cannot be combined with
+nonempty tools in the initial surface. Validation failure after normal completion
+raises `GenerationError`; an expected early stop may have no validated output.
+`output=None` can mean JSON null or absent output: use `stop_reason` to decide whether
+your application accepts the result. There is no automatic conversation compaction.
+
+```python
+from wfloat import define_tool, StructuredOutput, tool_result
+
+weather = define_tool(
+    "weather",
+    {"type": "object", "properties": {"city": {"type": "string"}},
+     "required": ["city"], "additionalProperties": False},
+    execute=lambda args: {"city": args["city"], "temperature_c": 18},
 )
+result = model.generate(messages, tools=[weather], max_rounds=20)
 
-print(result.model_id)
-print(result.timeline.chunks[0].text)
+# Manual alternative: omit execute. Your application performs the action.
+manual_weather = define_tool("weather", weather.json_schema)
+result = model.generate(messages, tools=[manual_weather])
+messages.extend(result.new_messages)
+for call in result.tool_calls:
+    messages.append(tool_result(call, {"temperature_c": 18}))
+reply = model.generate(messages, tools=[manual_weather])
+
+# Constrain the answer instead of using tools in this operation.
+result = model.generate(messages, structured_output=StructuredOutput(
+    schema={"type": "object", "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"], "additionalProperties": False},
+))
+print(result.output)
 ```
 
-For multi-speaker dialogue:
+Schemas describe the model's JSON input/output. Optional Pydantic validators and
+transforms run afterwards; a valid JSON shape does not guarantee those validators
+accept it. `max_correction_attempts` defaults to zero. Unsupported JSON Schema
+keywords are rejected explicitly rather than silently ignored.
+
+## Speech generation
 
 ```python
-import wfloat
+from wfloat import load_text_to_speech
 
-tts = wfloat.load_tts_model("wfloat/wfloat-tts")
-
-result = tts.synthesize_dialogue(
-    segments=[
-        {
-            "voice": "wise_elder_man",
-            "text": "Rain taps against the tavern shutters as you step inside.",
-            "emotion": "neutral",
-            "intensity": 0.5,
-        },
-        {
-            "voice": "strong_hero_man",
-            "text": "You're late. Two bandits stole the king's map over three hours ago.",
-            "emotion": "fear",
-            "intensity": 0.6,
-        },
-        {
-            "voice": "strong_hero_man",
-            "text": "They fled north, up into the woods.",
-            "emotion": "neutral",
-            "intensity": 0.5,
-        },
-    ],
-    silence_between_segments_sec=0.35,
-)
-
-result.audio.save("dialogue.wav")
+with load_text_to_speech("wfloat/wfloat-tts") as tts:
+    result = tts.generate("Hello")
+    result.audio.save("hello.wav")
 ```
 
-The older `load(...)`, `generate(...)`, and `generate_dialogue(...)` names are
-still available as compatibility aliases.
-
-## STT Usage
-
-The shared Python entrypoint is `load_stt_model(...)`, with
-`load_whisper_tiny_en(...)` as a convenience wrapper for offline STT:
+For long speech, consume `generate_stream()` chunks incrementally. The SDK does not
+retain the complete streamed recording. Each chunk carries audio, its offset and
+available text alignment metadata. Retained chunks remain valid after advancing
+or unloading. Returned audio uses owned, mono `float32` NumPy arrays.
+Playback belongs to the application.
 
 ```python
-import wfloat
-
-stt = wfloat.load_stt_model(
-    "openai/whisper-tiny-en",
-)
-
-result = stt.transcribe(audio="/path/to/audio.wav")
-print(result.text)
+with tts.generate_stream("First sentence. Second sentence.") as stream:
+    for chunk in stream:
+        consume_audio(chunk.audio.samples, chunk.audio.sample_rate)
+        # chunk.start_ms and chunk.timeline locate its audio/text.
 ```
 
-The loader accepts canonical built-in model IDs and resolves Wfloat-hosted
-registry assets internally.
-
-Streaming-capable STT families also expose a separate session path instead of
-overloading `transcribe(...)`:
+## Transcription and VAD
 
 ```python
-stt = wfloat.load_stt_model("k2-fsa/streaming-zipformer-en")
-session = stt.create_session()
+from wfloat import load_speech_to_text
 
-session.push(audio_chunk, sample_rate=16000)
-partial = session.get_result()
-final_result = session.finish()
-session.close()
+with load_speech_to_text("openai/whisper-tiny-en") as stt:
+    result = stt.transcribe("recording.wav", language="en")
+    print(result.text)
 ```
 
-## VAD Usage
+Audio inputs accept file paths, Wfloat audio objects, or NumPy samples with an
+explicit `sample_rate`. Mono arrays have shape `(frames,)`; multichannel arrays
+have shape `(frames, channels)`. Audio is downmixed/resampled as needed. File codec
+support currently covers uncompressed 8/16/24/32-bit PCM WAV. Decode other formats
+in your application and pass their NumPy samples. Inputs are never modified.
 
-Python also exposes the same one-shot VAD model shape as the web and React
-Native packages. It is intentionally file/buffer based for now; there is no
-Python live microphone/session helper. The Python VAD path uses `wfloat-core`,
-matching the TTS, STT, and LLM backend boundary.
+Live STT/VAD sessions process supplied audio synchronously through `push()` and end
+input with `finish()`. A push processes available work without waiting for future
+speech. The application owns its capture/network queue and backlog policy. Do not
+perform inference directly inside a time-sensitive audio-device callback.
 
 ```python
-vad = wfloat.load_vad_model(
-    "snakers4/silero-vad",
-    threshold=0.5,
-    min_silence_duration_sec=0.5,
-    min_speech_duration_sec=0.25,
-    max_speech_duration_sec=20.0,
-)
+from wfloat import load_streaming_speech_to_text
 
-result = vad.detect(audio="/path/to/mono-16khz.wav")
-
-for segment in result.segments:
-    print(segment.start_sec, segment.duration_sec)
+with load_streaming_speech_to_text("openai/whisper-tiny-en") as model:
+    session = model.create_session(on_transcript=lambda event: print(event.text))
+    try:
+        for samples in application_audio_source():
+            session.push(samples, sample_rate=16000)
+        result = session.finish()
+    finally:
+        session.cancel()  # harmless after finish; cleans up on early exit
 ```
 
-VAD currently expects mono 16 kHz audio.
+Whisper live transcription uses bounded recording windows; it is not a natively
+streaming recognizer. Word timestamps require verified backend support and are
+currently rejected; segment timings are available where supported.
+The registered English Zipformer supports `hotwords=["Wfloat", "speech recognition"]`
+on `transcribe()` and `create_session()`. Other models reject unsupported hotwords.
 
-## LLM Usage
+VAD `detect(..., return_audio=True)` returns detected clips for complete audio.
+Live VAD delivers completed clips without retaining all of them in its final timing
+summary. Timestamps are relative to the supplied audio/session, not wall-clock time.
 
-The Python LLM path loads local GGUF artifacts through `wfloat-core`:
+## Cancellation and errors
+
+Pass an optional standard-library `threading.Event` as `cancel_event`; a Stop button
+or another thread calls `.set()`. Merely passing an event does not cancel anything.
+Wfloat never clears the caller's event. Cancellation is cooperative at native safe
+boundaries; arbitrary Python tool functions cannot be forcibly killed.
+
+- LLM cancellation returns partial work with a cancelled stop reason.
+- TTS cancellation raises `OperationCancelledError`; delivered chunks remain usable.
+- Deliberately breaking iteration and exiting the stream context just cleans up.
+- Running tools are signalled but cancellation does not wait indefinitely for tools
+  ignoring it. Their side effects may still occur; late returns don't revive the run.
+- LLM operation failures use `GenerationError.partial_result` and Python `__cause__`.
+- Ordinary executor failures become model feedback by default; the stop policy is
+  available. Callback failures are application exceptions, not tool feedback.
+
+## Model files
 
 ```python
-import wfloat
+from wfloat import download_model, delete_model_assets
 
-llm = wfloat.load_llm_model("HuggingFaceTB/SmolLM2-360M-Instruct")
-result = llm.generate("Write one calm sentence about local inference.", seed=0)
-print(result.text)
-llm.close()
+download_model("openai/whisper-tiny-en", on_progress=lambda event: print(event.phase, event.progress))
+# Later, after unloading instances using these files:
+delete_model_assets("openai/whisper-tiny-en")
 ```
 
-## CLI Usage
+Loads/downloads are blocking and accept `cancel_event`. Valid cached assets skip
+download events. Downloads verify registry hashes, retain resumable partial files,
+and report byte-based aggregate progress. Deletion preserves shared dependencies.
+Loaded files are protected by leases; deleting files still used by a model raises
+`ModelAssetsInUseError`. Cross-process conflicting cache mutations also fail
+explicitly; independent cached readers are allowed.
 
-You can also generate a WAV from the command line:
+## Compatibility
 
-```bash
-wfloat generate \
-  --text "Hello world!" \
-  --out out.wav \
-  --voice-id mad_scientist_woman \
-  --emotion surprise \
-  --intensity 0.7 \
-  --silence-padding-sec 0
-```
-
-For the full CLI help:
-
-```bash
-wfloat generate --help
-```
-
-The first load downloads the model assets. After that, the package uses the
-cached local copy.
-
-## Native Backend
-
-Python TTS, STT, VAD, and LLM use the `wfloat-core` native runtime. Release
-wheels bundle the platform-specific shared library inside the `wfloat` package.
-
-Inside this monorepo, local development can point at an explicit build artifact
-with:
-
-```bash
-export WFLOAT_CORE_LIBRARY=/abs/path/to/libwfloat-core.so
-```
-
-## Speaker IDs
-
-Use `voice_id` string names or numeric `sid` values:
-
-| Speaker | SID |
-| --- | ---: |
-| `skilled_hero_man` | 0 |
-| `skilled_hero_woman` | 1 |
-| `fun_hero_man` | 2 |
-| `fun_hero_woman` | 3 |
-| `strong_hero_man` | 4 |
-| `strong_hero_woman` | 5 |
-| `mad_scientist_man` | 6 |
-| `mad_scientist_woman` | 7 |
-| `clever_villain_man` | 8 |
-| `clever_villain_woman` | 9 |
-| `narrator_man` | 10 |
-| `narrator_woman` | 11 |
-| `wise_elder_man` | 12 |
-| `wise_elder_woman` | 13 |
-| `outgoing_anime_man` | 14 |
-| `outgoing_anime_woman` | 15 |
-| `scary_villain_man` | 16 |
-| `scary_villain_woman` | 17 |
-| `news_reporter_man` | 18 |
-| `news_reporter_woman` | 19 |
-
-## Emotions
-
-Supported emotion labels:
-
-- `neutral`
-- `joy`
-- `sadness`
-- `anger`
-- `fear`
-- `surprise`
-- `dismissive`
-- `confusion`
-
-`intensity` must be between `0.0` and `1.0`.
-
-## More
-
-- Docs: https://docs.wfloat.com
-- Model card, voices, emotions, and samples: https://huggingface.co/Wfloat/wfloat-tts
-- Web package: https://github.com/wfloat/wfloat-web
-- React Native package: https://github.com/wfloat/react-native-wfloat
+Legacy loader exports remain available with their legacy result objects. New
+applications should use the model-type loaders above. Native inference cancellation
+occurs at safe boundaries; an active speech decode may finish before stopping.
+Model capabilities vary: unsupported options fail clearly rather than promising
+features the selected backend cannot provide.

@@ -56,6 +56,8 @@ struct wfloat_stt_model {
   const SherpaOnnxOnlineRecognizer *online_recognizer = nullptr;
   size_t active_session_count = 0;
   bool destroy_pending = false;
+  std::string online_hotwords;
+  std::string online_bpe_vocab;
 };
 
 struct wfloat_stt_session {
@@ -726,6 +728,42 @@ int32_t wfloat_stt_model_create_session(const wfloat_stt_model_t *model,
 
   *out_session = session.release();
   return kStatusOk;
+}
+
+int32_t wfloat_stt_model_configure_hotwords(
+    wfloat_stt_model_t *model, const char *hotwords, const char *bpe_vocab_path) {
+  if (!model || model->destroy_pending || model->active_session_count != 0)
+    return kStatusInvalidArgument;
+  if (!model->online_recognizer ||
+      model->config.family != WFLOAT_STT_FAMILY_ZIPFORMER_TRANSDUCER)
+    return kStatusNotSupported;
+  std::string phrases = OrEmpty(hotwords);
+  std::string vocabulary = phrases.empty() ? "" : OrEmpty(bpe_vocab_path);
+  if (!phrases.empty() && vocabulary.empty()) return kStatusInvalidArgument;
+  if (phrases.size() > static_cast<size_t>(INT32_MAX)) return kStatusInvalidArgument;
+  if (phrases == model->online_hotwords && vocabulary == model->online_bpe_vocab)
+    return kStatusOk;
+  auto config = BuildOnlineRecognizerConfig(model->config);
+  config.hotwords_file = "";
+  if (!phrases.empty()) {
+    config.decoding_method = "modified_beam_search";
+    config.model_config.modeling_unit = "bpe";
+    config.model_config.bpe_vocab = vocabulary.c_str();
+    config.hotwords_buf = phrases.c_str();
+    config.hotwords_buf_size = static_cast<int32_t>(phrases.size());
+  }
+  try {
+    const auto *replacement = SherpaOnnxCreateOnlineRecognizer(&config);
+    if (!replacement) return kStatusBackendError;
+    const auto *previous = model->online_recognizer;
+    model->online_recognizer = replacement;
+    model->online_hotwords.swap(phrases);
+    model->online_bpe_vocab.swap(vocabulary);
+    SherpaOnnxDestroyOnlineRecognizer(previous);
+    return kStatusOk;
+  } catch (...) {
+    return kStatusBackendError;
+  }
 }
 
 int32_t wfloat_stt_session_push_audio(wfloat_stt_session_t *session,

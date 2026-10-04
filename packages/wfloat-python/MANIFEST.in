@@ -1,2 +1,3 @@
 include README.md
 recursive-include python *.py
+include python/wfloat/py.typed

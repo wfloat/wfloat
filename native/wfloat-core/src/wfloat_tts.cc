@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cmath>
 #include <exception>
 #include <memory>
 #include <string>
@@ -64,6 +65,26 @@ struct OwnedSynthesisResult {
     base.model_id = model_id.c_str();
     base.text = text.c_str();
   }
+};
+
+struct OwnedPreparedText {
+  wfloat_tts_prepared_text_t base{};
+  sherpa_onnx::WfloatPreparedText prepared;
+  std::vector<const char *> text;
+  std::vector<const char *> text_clean;
+
+  void Finalize() {
+    for (const auto &unit : prepared.text) text.push_back(unit.c_str());
+    for (const auto &unit : prepared.text_clean) text_clean.push_back(unit.c_str());
+    base.text = text.data();
+    base.text_clean = text_clean.data();
+    base.count = text.size();
+  }
+};
+
+struct OwnedUnitAudio {
+  wfloat_audio_result_t base{};
+  std::vector<float> samples;
 };
 
 struct SegmentPlan {
@@ -859,6 +880,90 @@ wfloat_status_t wfloat_tts_model_synthesize_dialogue(
   } catch (...) {
     return WFLOAT_STATUS_INTERNAL_ERROR;
   }
+}
+
+wfloat_status_t wfloat_tts_model_prepare_text(
+    const wfloat_tts_model_t *model, const char *text,
+    const char *emotion, float intensity,
+    wfloat_tts_prepared_text_t **out_prepared) {
+  if (!out_prepared) return WFLOAT_STATUS_INVALID_ARGUMENT;
+  *out_prepared = nullptr;
+  if (!model || !model->tts || IsNullOrEmpty(text) ||
+      !std::isfinite(intensity) || intensity < 0 || intensity > 1) {
+    return WFLOAT_STATUS_INVALID_ARGUMENT;
+  }
+  if (model->family != WFLOAT_TTS_FAMILY_WFLOAT_EXPRESSIVE) {
+    return WFLOAT_STATUS_NOT_SUPPORTED;
+  }
+  try {
+    auto result = std::make_unique<OwnedPreparedText>();
+    result->prepared = model->tts->PrepareWfloatText(
+        text, emotion ? emotion : "neutral", intensity);
+    const auto &prepared = result->prepared;
+    if (prepared.text.empty() || prepared.text.size() != prepared.text_clean.size()) {
+      return WFLOAT_STATUS_BACKEND_ERROR;
+    }
+    std::string original;
+    for (size_t i = 0; i < prepared.text.size(); ++i) {
+      if (prepared.text[i].empty() || prepared.text_clean[i].empty()) {
+        return WFLOAT_STATUS_BACKEND_ERROR;
+      }
+      original += prepared.text[i];
+    }
+    if (original != text) return WFLOAT_STATUS_BACKEND_ERROR;
+    result->Finalize();
+    *out_prepared = &result.release()->base;
+    return WFLOAT_STATUS_OK;
+  } catch (const std::exception &) {
+    return WFLOAT_STATUS_BACKEND_ERROR;
+  } catch (...) {
+    return WFLOAT_STATUS_INTERNAL_ERROR;
+  }
+}
+
+void wfloat_tts_prepared_text_destroy(wfloat_tts_prepared_text_t *prepared) {
+  delete reinterpret_cast<OwnedPreparedText *>(prepared);
+}
+
+wfloat_status_t wfloat_tts_model_generate_unit(
+    const wfloat_tts_model_t *model, const char *text_clean,
+    int32_t sid, float speed, wfloat_audio_result_t **out_audio) {
+  if (!out_audio) return WFLOAT_STATUS_INVALID_ARGUMENT;
+  *out_audio = nullptr;
+  if (!model || !model->tts || IsNullOrEmpty(text_clean) ||
+      !std::isfinite(speed) || speed <= 0 || sid < 0) {
+    return WFLOAT_STATUS_INVALID_ARGUMENT;
+  }
+  if (model->family != WFLOAT_TTS_FAMILY_WFLOAT_EXPRESSIVE) {
+    return WFLOAT_STATUS_NOT_SUPPORTED;
+  }
+  try {
+    if (sid >= model->tts->NumSpeakers()) return WFLOAT_STATUS_INVALID_ARGUMENT;
+    sherpa_onnx::GenerationConfig cfg;
+    cfg.sid = sid;
+    cfg.speed = speed;
+    auto generated = model->tts->Generate(text_clean, cfg);
+    if (generated.sample_rate <= 0 || generated.samples.empty()) {
+      return WFLOAT_STATUS_BACKEND_ERROR;
+    }
+    auto result = std::make_unique<OwnedUnitAudio>();
+    result->samples = std::move(generated.samples);
+    result->base.samples = result->samples.data();
+    result->base.sample_count = result->samples.size();
+    result->base.sample_rate = generated.sample_rate;
+    result->base.duration_sec =
+        static_cast<float>(result->samples.size()) / generated.sample_rate;
+    *out_audio = &result.release()->base;
+    return WFLOAT_STATUS_OK;
+  } catch (const std::exception &) {
+    return WFLOAT_STATUS_BACKEND_ERROR;
+  } catch (...) {
+    return WFLOAT_STATUS_INTERNAL_ERROR;
+  }
+}
+
+void wfloat_tts_unit_audio_destroy(wfloat_audio_result_t *audio) {
+  delete reinterpret_cast<OwnedUnitAudio *>(audio);
 }
 
 void wfloat_tts_synthesis_result_destroy(wfloat_tts_synthesis_result_t *result) {
