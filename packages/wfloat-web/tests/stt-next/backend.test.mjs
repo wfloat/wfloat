@@ -197,7 +197,9 @@ test('real ASR JS wrapper packs hotword pointer and byte count at C ABI offsets'
   assert.deepEqual(captured, { text: "O'REILLY\nHELLO WORLD", length: 20, nul: 0, unit: 'bpe', vocab: '/zipformer-bpe.vocab' });
 });
 test('minified worker retains bundled vocabulary provenance and full Apache notice', async () => {
-  const result = await build({ entryPoints: [new URL('../../src/stt-next/worker.ts', import.meta.url).pathname], bundle: true, write: false, minify: true, platform: 'browser', format: 'esm' });
+  // This checks our bundled vocabulary notice, not the generated native loader.
+  // Unit tests run before WASM compilation in a clean CI checkout.
+  const result = await build({ entryPoints: [new URL('../../src/stt-next/worker.ts', import.meta.url).pathname], bundle: true, write: false, minify: true, platform: 'browser', format: 'esm', external: ['../wasm/sherpa-onnx-wasm-main-speech.js'] });
   const output = result.outputFiles.map(file => file.text).join('\n');
   assert.match(output, /62dd423df1d51da5ea06f1c3a046fc04f01b4f39/);
   assert.match(output, /Copyright 2024 Wei Kang/);

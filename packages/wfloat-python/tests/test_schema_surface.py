@@ -17,7 +17,7 @@ from wfloat._schemas import (
 class SchemaSurfaceTests(unittest.TestCase):
     def test_shared_native_fixtures(self):
         fixtures = Path(__file__).resolve().parents[3] / "tests/schema/cases.json"
-        for case in json.loads(fixtures.read_text()):
+        for case in json.loads(fixtures.read_text(encoding="utf-8")):
             with self.subTest(case=case["name"]):
                 if "value" not in case or case.get("code") in ("invalidSchema", "unsupportedSchema"):
                     if case["valid"]:
