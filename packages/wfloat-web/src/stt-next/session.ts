@@ -1,3 +1,4 @@
+import { attachCapture, type MicrophoneCapture as SharedMicrophoneCapture } from '../audio-next/microphone.js';
 import { deferred, asError, notify } from '../tts-next/internal.js';
 import { snapshotPcm, StreamingResampler } from './audio.js';
 import { startMicrophone, type MicrophoneCapture } from './microphone.js';
@@ -19,7 +20,8 @@ export class LiveSession implements TranscriptionSession {
   private inputCount = 0;
   private queue = new AudioQueue();
   private resampler?: StreamingResampler;
-  private source?: 'external' | 'microphone';
+  private source?: 'external' | 'microphone' | 'shared';
+  private detachCapture?: () => void;
   private capture?: MicrophoneCapture;
   private captureStart?: Promise<void>;
   private captureAbort = new AbortController();
@@ -46,6 +48,7 @@ export class LiveSession implements TranscriptionSession {
     return { text: this.text, segments: [...this.segments], ...(this.hypothesis ? { provisional: { text: this.hypothesis } } : {}) };
   }
   private stopCapture() {
+    this.detachCapture?.(); this.detachCapture = undefined;
     this.captureAbort.abort();
     const capture = this.capture; this.capture = undefined;
     this.captureClosing = capture?.stop().catch(error => { console.error('Wfloat microphone cleanup failed:', error); }) ?? this.captureClosing;
@@ -78,7 +81,7 @@ export class LiveSession implements TranscriptionSession {
   }
   async push(audio: PcmAudio): Promise<void> {
     this.checkInput();
-    if (this.source === 'microphone') throw new Error('Session already uses its microphone; external push would mix sources.');
+    if (this.source === 'microphone' || this.source === 'shared') throw new Error('Session already uses its microphone; external push would mix sources.');
     const owned = snapshotPcm(audio);
     this.source = 'external'; this.accept(owned);
   }
@@ -116,10 +119,16 @@ export class LiveSession implements TranscriptionSession {
     } else this.pendingSince = undefined;
     this.lastPending = ms;
   }
+  async attachMicrophone(source: SharedMicrophoneCapture): Promise<void> {
+    this.checkInput();
+    if (this.source || this.inputCount) throw new Error('Session already has an audio source; attaching a microphone would mix sources.');
+    this.detachCapture = attachCapture(source, audio => this.accept(audio), error => this.fail(error));
+    this.source = 'shared';
+  }
   startMicrophone(): Promise<void> {
     try {
       this.checkInput();
-      if (this.source === 'external') throw new Error('Session already uses external audio; microphone capture would mix sources.');
+      if (this.source === 'external' || this.source === 'shared') throw new Error('Session already uses external audio; microphone capture would mix sources.');
       if (this.captureStart) return this.captureStart;
       if (this.capture) return Promise.resolve();
       this.source = 'microphone';

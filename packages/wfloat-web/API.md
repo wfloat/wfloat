@@ -375,3 +375,77 @@ as word alignments. Do not assume capabilities merely from the model family name
 Legacy SttModel keeps its old signatures. Legacy root type names that collide with
 the new surface are exported as `LegacyTranscribeOptions` and
 `LegacyTranscriptionResult`; new callers should use the types above.
+
+## Voice activity detection and shared microphone input
+
+```ts
+import { loadVoiceActivityDetection, createMicrophoneCapture } from '@wfloat/wfloat-web';
+
+const vad = await loadVoiceActivityDetection('snakers4/silero-vad');
+const detection = vad.detect(file, { returnAudio: true }); // Also Blob, AudioBuffer or { samples, sampleRate }.
+const { segments } = await detection.result();
+for (const segment of segments) {
+  console.log(segment.id, segment.startMs, segment.endMs, segment.audio);
+}
+
+const session = await vad.createSession({
+  returnAudio: true,
+  onSpeechStart: event => console.log('speech began', event.id, event.startMs),
+  onSpeechEnd: event => consumeClip(event.audio, event.startMs, event.endMs),
+  onProbability: event => updateMeter(event.probability),
+  onError: error => showError(error, error.partialResult),
+});
+// Call from a user gesture; session owns this microphone.
+await session.startMicrophone();
+const summary = await session.finish(); // Drains input; timing ranges only, no retained clips.
+await vad.unload();
+```
+
+Options use model-appropriate defaults: `speechThreshold`, `silenceThreshold`,
+`minSpeechDurationMs`, `minSilenceDurationMs`, `speechPaddingMs`, and `returnAudio`
+(default false). Current Silero defaults are 0.5, 0.35, 250 ms, 500 ms, and 30 ms.
+If only the speech threshold changes, the silence threshold defaults to
+`max(0, speechThreshold - 0.15)`. Starts are confirmed after minimum speech,
+then backdated to the padded start. Padding is best effort, clamped to available
+input and the previous segment's end; clips never overlap. Probability events
+contain `{ probability, startMs, endMs }`, including silence, at model frame cadence.
+IDs are decimal strings starting at `"0"` for each operation.
+
+File results retain requested audio. Live sessions deliver requested clips only
+through `onSpeechEnd`; applications may retain them, and later inference never
+invalidates delivered samples. `finish()` closes confirmed speech and resolves;
+`cancel()` discards unfinished speech and pending input, resolving completed
+ranges with `stopReason: 'cancelled'`. Failures reject with `VadError.partialResult`
+and notify a live session's `onError` once. Application callbacks are not awaited;
+their exceptions are reported separately. No automatic retry or maximum segment
+splitting occurs. Live input has no default hard backlog limit; sustained backlog
+warns. Applications must stop their source or cancel if processing falls behind.
+
+For external PCM, call `await session.push({ samples, sampleRate })`; this
+acknowledges acceptance, not completed inference. Rates are normalized internally.
+File detections queue FIFO. A live session exclusively owns its model; competing
+operations reject. Use another model instance for independent sessions.
+
+To share one microphone between STT and VAD:
+
+```ts
+const microphone = createMicrophoneCapture(); // Inactive: no permission request yet.
+const transcript = await speechToText.createSession({ onTranscript });
+const activity = await vad.createSession({ onSpeechStart, onSpeechEnd });
+await transcript.attachMicrophone(microphone);
+await activity.attachMicrophone(microphone);
+
+// Inside a click/tap handler:
+await microphone.start();
+
+// Later:
+await microphone.stop();
+const [text, ranges] = await Promise.all([transcript.finish(), activity.finish()]);
+```
+
+Attach all consumers before `start()` begins. Each session accepts one source;
+external `push()` cannot be mixed with microphone input. Finishing/cancelling one
+consumer detaches it without stopping others. Capture failure fails remaining
+consumers. `stop()` is terminal and stops capture without finishing sessions;
+create a new helper for another recording. The previous capture utility remains
+available as `createLegacyMicrophoneCapture` during migration.

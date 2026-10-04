@@ -1,3 +1,4 @@
+import type { MicrophoneCapture } from '../audio-next/microphone.js';
 import type { DownloadModelOptions } from '../assets/types.js';
 
 export type LoadSpeechToTextOptions = DownloadModelOptions;
@@ -50,6 +51,8 @@ export interface TranscriptionSession {
   /** Accept owned audio; this does not wait for recognition or provide backpressure. */
   push(audio: PcmAudio): Promise<void>;
   startMicrophone(): Promise<void>;
+  /** Attach a prepared shared capture before either source has accepted audio. */
+  attachMicrophone(source: MicrophoneCapture): Promise<void>;
   finish(): Promise<LiveTranscriptionResult>;
   result(): Promise<LiveTranscriptionResult>;
   cancel(): void;

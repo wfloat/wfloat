@@ -7,10 +7,87 @@
 
 #include <algorithm>
 #include <memory>
+#include <array>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
+#include "sherpa-onnx/csrc/vad-model.h"
 
 #include "sherpa-onnx/c-api/c-api.h"
 
+// Wfloat score-only Silero bridge: one recurrent model, no segment buffers.
+struct WfloatVadScorer {
+  std::unique_ptr<sherpa_onnx::VadModel> model;
+  std::array<float, 576> input{};
+  int32_t context = 0;
+  bool failed = false;
+};
+
 extern "C" {
+
+// Null on recoverable errors. Unsupported model formats may abort the runtime.
+WfloatVadScorer *WfloatCreateVadScorer(const char *path) {
+  try {
+    if (!path || !*path) return nullptr;
+    sherpa_onnx::VadModelConfig config;
+    config.silero_vad.model = path;
+    config.silero_vad.window_size = 512;
+    if (!config.Validate()) return nullptr;
+    auto scorer = std::make_unique<WfloatVadScorer>();
+    scorer->model = sherpa_onnx::VadModel::Create(config);
+    if (!scorer->model || scorer->model->WindowShift() != 512) return nullptr;
+    scorer->context = scorer->model->WindowSize() - 512;
+    if (scorer->context != 0 && scorer->context != 64) return nullptr;
+    return scorer.release();
+  } catch (const std::exception &e) {
+    fprintf(stderr, "Wfloat VAD creation failed: %s\n", e.what());
+    return nullptr;
+  }
+}
+
+void WfloatDestroyVadScorer(WfloatVadScorer *scorer) { delete scorer; }
+
+// Resets recurrent state AND left context; returns 1 on success, 0 on failure.
+int32_t WfloatResetVadScorer(WfloatVadScorer *scorer) {
+  if (!scorer) return 0;
+  try {
+    scorer->model->Reset();
+    scorer->input.fill(0);
+    scorer->failed = false;
+    return 1;
+  } catch (const std::exception &e) {
+    scorer->failed = true;
+    fprintf(stderr, "Wfloat VAD reset failed: %s\n", e.what());
+    return 0;
+  }
+}
+
+// Exactly 512 NEW samples at 16 kHz, one inference even for digital silence.
+// v5 receives [64 previous samples, 512 new samples]; v4 receives 512.
+// NaN on error; inference failures poison state until reset/destruction.
+float WfloatScoreVadFrame(WfloatVadScorer *scorer, const float *samples,
+                         int32_t n) {
+  const float invalid = std::numeric_limits<float>::quiet_NaN();
+  if (!scorer || scorer->failed || !samples || n != 512) return invalid;
+  for (int32_t i = 0; i < n; ++i) {
+    if (!std::isfinite(samples[i])) return invalid;
+  }
+  try {
+    std::copy(samples, samples + n, scorer->input.begin() + scorer->context);
+    float score = scorer->model->Compute(scorer->input.data(), n + scorer->context);
+    if (!std::isfinite(score) || score < 0 || score > 1) {
+      scorer->failed = true;
+      return invalid;
+    }
+    std::copy(samples + n - scorer->context, samples + n, scorer->input.begin());
+    return score;
+  } catch (const std::exception &e) {
+    scorer->failed = true;
+    fprintf(stderr, "Wfloat VAD inference failed: %s\n", e.what());
+    return invalid;
+  }
+}
 
 static_assert(sizeof(SherpaOnnxOfflineTtsVitsModelConfig) == 8 * 4, "");
 static_assert(sizeof(SherpaOnnxOfflineTtsWfloatModelConfig) == 8 * 4, "");

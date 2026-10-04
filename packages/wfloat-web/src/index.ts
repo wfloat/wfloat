@@ -1,11 +1,11 @@
 export { TtsModel, loadTtsModel } from "./tts/model.js";
 export { SttModel, SttSession, loadSttModel } from "./stt/model.js";
-export { VadModel, VadSession, loadVadModel } from "./vad/model.js";
+export { VadModel, VadSession as LegacyVadSession, loadVadModel } from "./vad/model.js";
 export { LlmModel, loadLlmModel } from "./llm/model.js";
 export {
-  createMicrophoneCapture,
+  createMicrophoneCapture as createLegacyMicrophoneCapture,
   type CapturedMicrophoneAudio,
-  type MicrophoneCapture,
+  type MicrophoneCapture as LegacyMicrophoneCapture,
   type MicrophoneCaptureOptions,
 } from "./audio/index.js";
 export type {
@@ -43,8 +43,8 @@ export type {
   VadMicrophoneCaptureResult,
   VadMicrophoneOptions,
   VadSegment,
-  VadSessionOptions,
-  VadSpeechStartEvent,
+  VadSessionOptions as LegacyVadSessionOptions,
+  VadSpeechStartEvent as LegacyVadSpeechStartEvent,
 } from "./vad/types.js";
 export type {
   LlmChatMessage,
@@ -92,3 +92,15 @@ export type {
   PartialTranscript, LivePartialTranscript, ProvisionalTranscript,
   TranscriptionUpdate, LiveTranscriptUpdate,
 } from './stt-next/types.js';
+
+export { createMicrophoneCapture } from './audio-next/microphone.js';
+export type { MicrophoneCapture } from './audio-next/microphone.js';
+export { loadVoiceActivityDetection } from './vad-next/load.js';
+export { VoiceActivityDetectionModel } from './vad-next/model.js';
+export { VadError } from './vad-next/types.js';
+export type {
+  LoadVoiceActivityDetectionOptions, VadAudioInput, VadSpeechRange,
+  VadSpeechStartEvent, VadSpeechSegment, VadProbabilityEvent, VadOptions,
+  VadSessionOptions, VadSession, VadSessionData, VadSessionResult,
+  Detection, DetectionData, DetectionResult,
+} from './vad-next/types.js';

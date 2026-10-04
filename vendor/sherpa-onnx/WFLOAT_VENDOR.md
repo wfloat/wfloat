@@ -23,3 +23,14 @@ APIs and layouts change.
 Web STT integration also retains the actual audio frame count for Whisper
 segment-only timestamps, independently of attention collection. Upstream's
 trailing-segment duration fallback otherwise receives zero frames in that mode.
+
+Web VAD adds four C-linkage exports in the combined speech WASM entrypoint:
+`WfloatCreateVadScorer`, `WfloatDestroyVadScorer`, `WfloatResetVadScorer`, and
+`WfloatScoreVadFrame`. This score-only Silero bridge owns a `VadModel`, calls
+`Compute` once per 512 new 16 kHz samples, and retains only the 64-sample left
+context required by v5 (zero context for v4). Reset clears recurrent state and
+context. It never creates a `VoiceActivityDetector`, segment queue, or circular
+audio buffer, and applies no duration/threshold policy. Creation returns null,
+reset returns 0, and scoring returns NaN on recoverable native errors; runtime
+aborts remain fatal. Inference failure poisons the scorer until reset. These
+additive browser exports leave existing Sherpa C API layouts unchanged.

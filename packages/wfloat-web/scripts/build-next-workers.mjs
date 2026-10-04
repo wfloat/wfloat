@@ -18,6 +18,7 @@ export async function buildNextWorkers({ release, sherpaWasmUrl, llamaWasmUrl })
     ['src/llm-native/worker.ts', 'dist/llm-native/llm-native-worker.js'],
     ['src/tts-next/worker.ts', 'dist/tts-next/tts-worker.js'],
     ['src/stt-next/worker.ts', 'dist/stt-next/stt-worker.js'],
+    ['src/vad-next/worker.ts', 'dist/vad-next/vad-worker.js'],
   ]) {
     await access(resolve(root, entry));
     await build({entryPoints:[resolve(root,entry)],outfile:resolve(root,output),bundle:true,platform:'browser',format:'esm',target:'es2020',minify:release,
