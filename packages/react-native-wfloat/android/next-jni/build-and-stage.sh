@@ -2,6 +2,7 @@
 # Checkout-only publisher step. All dependency sources/libraries must exist.
 set -euo pipefail
 android_dir="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="$(cd "$android_dir/../../.." && pwd)"
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
 android_ndk="${ANDROID_NDK_HOME:-$android_sdk/ndk/26.1.10909125}"
 find_build_tool() {
@@ -23,8 +24,17 @@ for abi in "$@"; do
   case "$abi" in arm64-v8a|armeabi-v7a|x86_64|x86) ;; *) echo "Invalid ABI: $abi" >&2; exit 1 ;; esac
   build_dir="$android_dir/build/next-native/$abi"
   args=("-DCMAKE_POSITION_INDEPENDENT_CODE=ON")
-  if [ -n "${WFLOAT_SHERPA_DEPS_DIR:-}" ]; then args+=("-DWFLOAT_SHERPA_DEPS_DIR=$WFLOAT_SHERPA_DEPS_DIR"); fi
-  if [ -n "${WFLOAT_ORT_HEADERS:-}" ]; then args+=("-DWFLOAT_ORT_HEADERS=$WFLOAT_ORT_HEADERS"); fi
+  # Reuse the dependencies populated by this ABI's preceding Sherpa build.
+  # A clean Android checkout has no Web/WASM build tree to borrow from.
+  case "$abi" in
+    x86_64) sherpa_abi=x86-64 ;;
+    armeabi-v7a) sherpa_abi=armv7-eabi ;;
+    *) sherpa_abi="$abi" ;;
+  esac
+  sherpa_build="$repo_root/vendor/sherpa-onnx/build-android-$sherpa_abi"
+  ort_version="${SHERPA_ONNX_ONNXRUNTIME_VERSION:-1.27.1}"
+  args+=("-DWFLOAT_SHERPA_DEPS_DIR=${WFLOAT_SHERPA_DEPS_DIR:-$sherpa_build/_deps}")
+  args+=("-DWFLOAT_ORT_HEADERS=${WFLOAT_ORT_HEADERS:-$sherpa_build/$ort_version/headers}")
   "$cmake_bin" -S "$android_dir/next-jni" -B "$build_dir" -G Ninja \
     "-DCMAKE_MAKE_PROGRAM=$ninja_bin" "-DCMAKE_TOOLCHAIN_FILE=$android_ndk/build/cmake/android.toolchain.cmake" \
     "-DANDROID_ABI=$abi" -DANDROID_PLATFORM=android-24 -DANDROID_STL=c++_shared \
