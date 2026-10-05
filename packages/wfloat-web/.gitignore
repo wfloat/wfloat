@@ -1,7 +1,7 @@
 dist/
 data/
 sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
-assets/
+/assets/
 src/wasm/sherpa-onnx-wasm-main-tts.js
 
 node_modules/
@@ -71,3 +71,6 @@ package-lock.json
 *v8.log
 /lib/
 *.log
+
+# Local npm pack output
+*.tgz

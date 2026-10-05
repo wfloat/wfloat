@@ -22,6 +22,7 @@
 
 #include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
+#include "sherpa-onnx/csrc/offline-tts-kitten-utils.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
 #include "sherpa-onnx/csrc/session.h"
 #include "sherpa-onnx/csrc/text-utils.h"
@@ -57,7 +58,8 @@ class OfflineTtsKittenModel::Impl {
     return meta_data_;
   }
 
-  Ort::Value Run(Ort::Value x, int32_t sid, float speed) {
+  Ort::Value Run(Ort::Value x, int32_t sid, float speed,
+                 int64_t normalized_text_length) {
     auto memory_info =
         Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
 
@@ -79,7 +81,9 @@ class OfflineTtsKittenModel::Impl {
     }
 
     int32_t sid_int = static_cast<int32_t>(sid);
-    int32_t row = SelectStyleRow(x, style_rows);
+    int32_t row = IsKitten08(meta_data_)
+                      ? Kitten08StyleRow(normalized_text_length, style_rows)
+                      : SelectStyleRow(x, style_rows);
 
     /*const*/ float *p =
         styles_.data() + (sid_int * style_rows + row) * dim1;
@@ -327,9 +331,10 @@ const OfflineTtsKittenModelMetaData &OfflineTtsKittenModel::GetMetaData()
   return impl_->GetMetaData();
 }
 
-Ort::Value OfflineTtsKittenModel::Run(Ort::Value x, int64_t sid /*= 0*/,
-                                      float speed /*= 1.0*/) const {
-  return impl_->Run(std::move(x), sid, speed);
+Ort::Value OfflineTtsKittenModel::Run(
+    Ort::Value x, int64_t sid /*= 0*/, float speed /*= 1.0*/,
+    int64_t normalized_text_length /*= -1*/) const {
+  return impl_->Run(std::move(x), sid, speed, normalized_text_length);
 }
 
 #if __ANDROID_API__ >= 9

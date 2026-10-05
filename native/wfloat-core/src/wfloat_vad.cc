@@ -4,10 +4,14 @@
 #include <stdint.h>
 
 #include <memory>
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <string>
 #include <vector>
 
 #include "sherpa-onnx/c-api/c-api.h"
+#include "sherpa-onnx/csrc/vad-model.h"
 
 struct wfloat_vad_model {
   std::string model_id;
@@ -17,6 +21,11 @@ struct wfloat_vad_model {
   int32_t sample_rate = 16000;
   int32_t window_size = 512;
   const SherpaOnnxVoiceActivityDetector *detector = nullptr;
+  sherpa_onnx::VadModelConfig scorer_config;
+  std::unique_ptr<sherpa_onnx::VadModel> scorer;
+  std::array<float, 576> scorer_input{};
+  int32_t scorer_context = 0;
+  bool scorer_failed = false;
 };
 
 namespace {
@@ -163,6 +172,15 @@ wfloat_status_t wfloat_vad_model_create(
   model->sample_rate = sherpa_config.sample_rate;
   model->window_size = WindowSizeForConfig(config);
   model->detector = detector;
+  if (config->family == WFLOAT_VAD_FAMILY_SILERO &&
+      model->sample_rate == 16000 && model->window_size == 512) {
+    model->feature_flags |= WFLOAT_VAD_FEATURE_PROBABILITIES;
+    model->scorer_config.silero_vad.model = config->model_path;
+    model->scorer_config.silero_vad.window_size = 512;
+    model->scorer_config.sample_rate = model->sample_rate;
+    model->scorer_config.num_threads = sherpa_config.num_threads;
+    model->scorer_config.provider = sherpa_config.provider;
+  }
 
   *out_model = model.release();
   return WFLOAT_STATUS_OK;
@@ -210,8 +228,57 @@ wfloat_status_t wfloat_vad_model_reset(wfloat_vad_model_t *model) {
     return WFLOAT_STATUS_INVALID_ARGUMENT;
   }
 
-  SherpaOnnxVoiceActivityDetectorReset(model->detector);
+  try {
+    SherpaOnnxVoiceActivityDetectorReset(model->detector);
+    if (model->scorer) model->scorer->Reset();
+    model->scorer_input.fill(0);
+    model->scorer_failed = false;
+  } catch (...) {
+    model->scorer_failed = true;
+    return WFLOAT_STATUS_BACKEND_ERROR;
+  }
   return WFLOAT_STATUS_OK;
+}
+
+wfloat_status_t wfloat_vad_model_score_frame(
+    wfloat_vad_model_t *model, const float *samples, size_t sample_count,
+    float *out_probability) {
+  if (!model || !samples || !out_probability || sample_count != 512)
+    return WFLOAT_STATUS_INVALID_ARGUMENT;
+  if (!(model->feature_flags & WFLOAT_VAD_FEATURE_PROBABILITIES))
+    return WFLOAT_STATUS_NOT_SUPPORTED;
+  if (model->scorer_failed) return WFLOAT_STATUS_BACKEND_ERROR;
+  for (size_t i = 0; i < sample_count; ++i)
+    if (!std::isfinite(samples[i])) return WFLOAT_STATUS_INVALID_ARGUMENT;
+  try {
+    if (!model->scorer) {
+      model->scorer = sherpa_onnx::VadModel::Create(model->scorer_config);
+      if (!model->scorer || model->scorer->WindowShift() != 512) {
+        model->scorer_failed = true;
+        return WFLOAT_STATUS_NOT_SUPPORTED;
+      }
+      model->scorer_context = model->scorer->WindowSize() - 512;
+      if (model->scorer_context != 0 && model->scorer_context != 64) {
+        model->scorer_failed = true;
+        return WFLOAT_STATUS_NOT_SUPPORTED;
+      }
+    }
+    std::copy(samples, samples + sample_count,
+              model->scorer_input.begin() + model->scorer_context);
+    float probability = model->scorer->Compute(
+        model->scorer_input.data(), 512 + model->scorer_context);
+    if (!std::isfinite(probability) || probability < 0 || probability > 1) {
+      model->scorer_failed = true;
+      return WFLOAT_STATUS_BACKEND_ERROR;
+    }
+    std::copy(samples + sample_count - model->scorer_context,
+              samples + sample_count, model->scorer_input.begin());
+    *out_probability = probability;
+    return WFLOAT_STATUS_OK;
+  } catch (...) {
+    model->scorer_failed = true;
+    return WFLOAT_STATUS_BACKEND_ERROR;
+  }
 }
 
 wfloat_status_t wfloat_vad_model_flush(wfloat_vad_model_t *model) {

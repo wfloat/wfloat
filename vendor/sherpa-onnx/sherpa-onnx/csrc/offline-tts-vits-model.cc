@@ -23,6 +23,7 @@
 #include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
+#include "sherpa-onnx/csrc/offline-tts-vits-session-options.h"
 #include "sherpa-onnx/csrc/session.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 
@@ -35,6 +36,7 @@ class OfflineTtsVitsModel::Impl {
         env_(ORT_LOGGING_LEVEL_ERROR),
         sess_opts_(GetSessionOptions(config)),
         allocator_{} {
+    ApplyVitsSessionCompatibility(sess_opts_);
     sess_ = std::make_unique<Ort::Session>(
         env_, SHERPA_ONNX_TO_ORT_PATH(config.vits.model), sess_opts_);
     Init(nullptr, 0);
@@ -46,6 +48,7 @@ class OfflineTtsVitsModel::Impl {
         env_(ORT_LOGGING_LEVEL_ERROR),
         sess_opts_(GetSessionOptions(config)),
         allocator_{} {
+    ApplyVitsSessionCompatibility(sess_opts_);
     auto buf = ReadFile(mgr, config.vits.model);
     Init(buf.data(), buf.size());
   }

@@ -555,6 +555,12 @@ def _prepare_library(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.wfloat_stt_model_create_session.restype = ctypes.c_int32
 
+    if hasattr(lib, "wfloat_stt_model_configure_hotwords"):
+        lib.wfloat_stt_model_configure_hotwords.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+        ]
+        lib.wfloat_stt_model_configure_hotwords.restype = ctypes.c_int32
+
     lib.wfloat_stt_session_push_audio.argtypes = [
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_float),
@@ -615,6 +621,14 @@ def _prepare_library(lib: ctypes.CDLL) -> ctypes.CDLL:
 
     lib.wfloat_vad_model_reset.argtypes = [ctypes.c_void_p]
     lib.wfloat_vad_model_reset.restype = ctypes.c_int32
+
+    # Additive ABI: older libraries remain usable for the legacy detector.
+    if hasattr(lib, "wfloat_vad_model_score_frame"):
+        lib.wfloat_vad_model_score_frame.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_float),
+        ]
+        lib.wfloat_vad_model_score_frame.restype = ctypes.c_int32
 
     lib.wfloat_vad_model_flush.argtypes = [ctypes.c_void_p]
     lib.wfloat_vad_model_flush.restype = ctypes.c_int32
@@ -771,6 +785,14 @@ class CoreTts:
             self.close()
         except Exception:
             pass
+
+    def prepare_wfloat_text(self, text, emotion, intensity):
+        from ._tts_bridge import prepare_wfloat_text
+        return prepare_wfloat_text(self, text, emotion, intensity)
+
+    def generate(self, text, sid, speed):
+        from ._tts_bridge import generate
+        return generate(self, text, sid, speed)
 
     def synthesize_result(
         self,
@@ -1085,7 +1107,7 @@ class CoreStt:
             num_threads=1,
             debug=0,
             max_active_paths=4,
-            tail_paddings=0,
+            tail_paddings=-1,
             enable_token_timestamps=1 if enable_token_timestamps else 0,
             enable_segment_timestamps=1 if enable_segment_timestamps else 0,
             hotwords_score=1.5,
@@ -1107,11 +1129,47 @@ class CoreStt:
 
         self.sample_rate = int(info.sample_rate)
         self.supports_language_override = bool(info.supports_language_override)
+        self._hotword_directory = None
+        self._configured_hotwords = ()
+
+    def configure_hotwords(self, hotwords):
+        """Configure a serialized online operation using the pinned BPE scores."""
+        from ._recognition import _zipformer_vocabulary
+        phrases = tuple(hotwords or ())
+        if phrases and self._config_bytes["model_id"] != b"k2-fsa/streaming-zipformer-en":
+            raise ValueError("Verified hotword BPE scores are available only for the registered English Zipformer")
+        if phrases == self._configured_hotwords:
+            return
+        if not hasattr(self._lib, "wfloat_stt_model_configure_hotwords"):
+            raise NotImplementedError("Zipformer hotwords require the configure-hotwords native ABI; rebuild wfloat-core")
+        vocabulary_path = None
+        if phrases:
+            if self._hotword_directory is None:
+                import tempfile
+                vocabulary = _zipformer_vocabulary(Path(self._config_bytes["tokens_path"].decode("utf-8")).read_text(encoding="utf-8"))
+                directory = tempfile.TemporaryDirectory(prefix="wfloat-zipformer-")
+                try:
+                    (Path(directory.name) / "bpe.vocab").write_text(vocabulary, encoding="utf-8")
+                except BaseException:
+                    directory.cleanup()
+                    raise
+                self._hotword_directory = directory
+            vocabulary_path = str(Path(self._hotword_directory.name) / "bpe.vocab").encode("utf-8")
+        status = self._lib.wfloat_stt_model_configure_hotwords(
+            self._model, "\n".join(phrases).encode("utf-8"), vocabulary_path,
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core configure_hotwords failed with status {status}.")
+        self._configured_hotwords = phrases
 
     def close(self) -> None:
         if self._model and self._model.value:
             self._lib.wfloat_stt_model_destroy(self._model)
             self._model = ctypes.c_void_p()
+        directory = getattr(self, "_hotword_directory", None)
+        if directory is not None:
+            directory.cleanup()
+            self._hotword_directory = None
 
     def __del__(self) -> None:
         try:
@@ -1129,8 +1187,11 @@ class CoreStt:
         task: Optional[str] = None,
         hotwords: Optional[str] = None,
     ) -> TranscriptionResult:
-        sample_values = [float(sample) for sample in samples]
-        sample_array = (ctypes.c_float * len(sample_values))(*sample_values)
+        import numpy as np
+        sample_values = np.asarray(samples, dtype=np.float32, order="C")
+        if sample_values.ndim != 1 or not np.isfinite(sample_values).all():
+            raise ValueError("STT samples must be finite mono PCM")
+        sample_array = sample_values.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         language_bytes = None if language is None else language.encode("utf-8")
         task_bytes = None if task is None else task.encode("utf-8")
         hotwords_bytes = None if hotwords is None else hotwords.encode("utf-8")
@@ -1229,12 +1290,15 @@ class CoreSttSession:
             pass
 
     def push(self, samples: Sequence[float], sample_rate: Optional[int] = None) -> None:
-        sample_values = [float(sample) for sample in samples]
-        if not sample_values:
+        import numpy as np
+        sample_values = np.asarray(samples, dtype=np.float32, order="C")
+        if sample_values.ndim != 1 or not np.isfinite(sample_values).all():
+            raise ValueError("STT samples must be finite mono PCM")
+        if sample_values.size == 0:
             raise ValueError("samples must not be empty.")
 
         resolved_sample_rate = int(sample_rate or self.sample_rate)
-        sample_array = (ctypes.c_float * len(sample_values))(*sample_values)
+        sample_array = sample_values.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         status = self._lib.wfloat_stt_session_push_audio(
             self._session,
             sample_array,
@@ -1424,6 +1488,26 @@ class CoreVad:
 
         self.sample_rate = int(info.sample_rate)
         self.window_size = int(info.window_size)
+        self.supports_probabilities = bool(info.feature_flags & (1 << 1)) and hasattr(
+            self._lib, "wfloat_vad_model_score_frame"
+        )
+
+    def score_frame(self, samples) -> float:
+        """One stateful probability computation, without native segmentation."""
+        import numpy as np
+        if not self.supports_probabilities:
+            raise NotImplementedError("Native VAD probability scoring is unavailable; rebuild wfloat-core with the score-frame ABI")
+        data = np.asarray(samples, dtype=np.float32, order="C")
+        if data.ndim != 1 or len(data) != self.window_size or not np.isfinite(data).all():
+            raise ValueError(f"VAD score_frame requires {self.window_size} finite mono samples")
+        probability = ctypes.c_float()
+        status = self._lib.wfloat_vad_model_score_frame(
+            self._model, data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            data.size, ctypes.byref(probability),
+        )
+        if status != WFLOAT_STATUS_OK:
+            raise RuntimeError(f"wfloat-core VAD score_frame failed with status {status}.")
+        return float(probability.value)
 
     def close(self) -> None:
         if self._model and self._model.value:

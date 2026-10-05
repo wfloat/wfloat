@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - "packages/wfloat-web/**"
+      - "native/wfloat-core/src/schema/**"
+      - "tests/schema/**"
       - "scripts/ensure-emscripten.sh"
       - "vendor/llama.cpp/**"
       - "vendor/sherpa-onnx/**"
@@ -17,6 +19,8 @@ on:
       - main
     paths:
       - "packages/wfloat-web/**"
+      - "native/wfloat-core/src/schema/**"
+      - "tests/schema/**"
       - "scripts/ensure-emscripten.sh"
       - "vendor/llama.cpp/**"
       - "vendor/sherpa-onnx/**"
@@ -44,6 +48,13 @@ jobs:
       - name: Install dependencies
         working-directory: packages/wfloat-web
         run: npm install
+
+      - name: Validate SDK behavior, types, and shared schemas
+        working-directory: packages/wfloat-web
+        run: |
+          npm run test:unit
+          npm run test:types
+          npm run test:schema
 
       - name: Build WebAssembly runtimes
         working-directory: packages/wfloat-web

@@ -166,6 +166,10 @@ export interface OfflineTtsConfig {
 }
 
 export interface OfflineTtsGenerateConfig {
+  silenceScale?: number;
+  referenceAudio?: { samples: Float32Array; sampleRate: number };
+  inferenceSteps?: number;
+  extra?: Record<string, number | string>;
   text: string;
   sid: number;
   speed: number;
@@ -1066,17 +1070,38 @@ function initSherpaOnnxOfflineTtsConfig(
   };
 }
 
-function initSherpaOnnxGenerationConfig(
-  config: OfflineTtsGenerateConfig,
-  Module: SherpaModule,
-): number {
-  const len = 9 * 4;
-  const ptr = Module._malloc(len);
-  Module.HEAP8.fill(0, ptr, ptr + len);
-  Module.setValue(ptr, 0.2, "float");
-  Module.setValue(ptr + 4, config.speed ?? 1, "float");
-  Module.setValue(ptr + 8, config.sid ?? 0, "i32");
-  return ptr;
+function initSherpaOnnxGenerationConfig(config: OfflineTtsGenerateConfig, Module: SherpaModule): { ptr: number; free(): void } {
+  const allocations: number[] = [];
+  const free = () => { for (const ptr of allocations) Module._free(ptr); };
+  const alloc = (size: number) => {
+    const ptr = Module._malloc(size);
+    if (!ptr) throw new Error('Could not allocate TTS generation configuration.');
+    allocations.push(ptr); return ptr;
+  };
+  try {
+    const ptr = alloc(9 * 4);
+    Module.HEAP8.fill(0, ptr, ptr + 9 * 4);
+    Module.setValue(ptr, config.silenceScale ?? 0.2, "float");
+    Module.setValue(ptr + 4, config.speed ?? 1, "float");
+    Module.setValue(ptr + 8, config.sid ?? 0, "i32");
+    if (config.referenceAudio) {
+      const { samples, sampleRate } = config.referenceAudio;
+      const audioPtr = alloc(samples.byteLength);
+      Module.HEAPF32.set(samples, audioPtr / 4);
+      Module.setValue(ptr + 12, audioPtr, "i32");
+      Module.setValue(ptr + 16, samples.length, "i32");
+      Module.setValue(ptr + 20, sampleRate, "i32");
+    }
+    Module.setValue(ptr + 28, config.inferenceSteps ?? 0, "i32");
+    if (config.extra) {
+      const json = JSON.stringify(config.extra);
+      const length = Module.lengthBytesUTF8(json) + 1;
+      const extraPtr = alloc(length);
+      Module.stringToUTF8(json, extraPtr, length);
+      Module.setValue(ptr + 32, extraPtr, "i32");
+    }
+    return { ptr, free };
+  } catch (error) { free(); throw error; }
 }
 
 export class OfflineTts {
@@ -1088,10 +1113,11 @@ export class OfflineTts {
   constructor(configObj: OfflineTtsConfig, Module: SherpaModule) {
     // console.log(configObj);
     const config = initSherpaOnnxOfflineTtsConfig(configObj, Module);
-    const handle = Module._SherpaOnnxCreateOfflineTts(config.ptr);
+    let handle: number;
+    try { handle = Module._SherpaOnnxCreateOfflineTts(config.ptr); }
+    finally { freeConfig(config, Module); }
 
-    freeConfig(config, Module);
-
+    if (!handle) throw new Error('Failed to create Sherpa TTS engine.');
     this.handle = handle;
     this.sampleRate = Module._SherpaOnnxOfflineTtsSampleRate(this.handle);
     this.numSpeakers = Module._SherpaOnnxOfflineTtsNumSpeakers(this.handle);
@@ -1137,15 +1163,14 @@ export class OfflineTts {
   ): GeneratedAudio {
     const textLen = this.Module.lengthBytesUTF8(config.text) + 1;
     const textPtr = this.Module._malloc(textLen);
-    const generationConfigPtr = initSherpaOnnxGenerationConfig(
-      config,
-      this.Module,
-    );
-    this.Module.stringToUTF8(config.text, textPtr, textLen);
-
+    if (!textPtr) throw new Error('Could not allocate TTS text.');
+    let generationConfig: ReturnType<typeof initSherpaOnnxGenerationConfig> | undefined;
     let generatedAudioHandle = 0;
     try {
-      generatedAudioHandle = generateFn(textPtr, generationConfigPtr);
+      generationConfig = initSherpaOnnxGenerationConfig(config, this.Module);
+      this.Module.stringToUTF8(config.text, textPtr, textLen);
+
+      generatedAudioHandle = generateFn(textPtr, generationConfig.ptr);
       return this.decodeGeneratedAudio(generatedAudioHandle);
     } finally {
       if (generatedAudioHandle) {
@@ -1153,7 +1178,7 @@ export class OfflineTts {
           generatedAudioHandle,
         );
       }
-      this.Module._free(generationConfigPtr);
+      generationConfig?.free();
       this.Module._free(textPtr);
     }
   }

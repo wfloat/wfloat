@@ -1,0 +1,15 @@
+<!-- Copy relevant entries into the HOST application manifest to opt into continue.
+     This file is deliberately not merged by the library. Playback-only apps need
+     only mediaPlayback and its permission, and never need RECORD_AUDIO. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <application>
+    <service android:name="com.wfloat.WfloatNextAudioService"
+             android:exported="false"
+             android:foregroundServiceType="microphone|mediaPlayback" />
+  </application>
+</manifest>

@@ -5,12 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 SHERPA_DIR="${REPO_ROOT}/vendor/sherpa-onnx"
-IOS_LLM_XCFRAMEWORK="${REPO_ROOT}/out/rn-llm-ios/wfloat-core-llm.xcframework"
+IOS_LLM_XCFRAMEWORK="${PACKAGE_DIR}/ios/build/next-runtime/wfloat-core-llm.xcframework"
 
 IOS_DIR="${PACKAGE_DIR}/ios"
 JNI_LIBS_DIR="${PACKAGE_DIR}/android/src/main/jniLibs"
 ANDROID_ABIS=()
 
+speech_only=false
 stage_ios=false
 stage_android=false
 
@@ -20,6 +21,9 @@ if [[ $# -eq 0 ]]; then
 else
   for platform in "$@"; do
     case "${platform}" in
+      --speech-only)
+        speech_only=true
+        ;;
       ios)
         stage_ios=true
         ;;
@@ -37,6 +41,11 @@ else
         ;;
     esac
   done
+fi
+
+if [[ "${speech_only}" == true && ( "${stage_android}" != true || "${stage_ios}" == true ) ]]; then
+  echo "--speech-only requires android, without ios/all." >&2
+  exit 1
 fi
 
 normalize_android_abi() {
@@ -221,6 +230,13 @@ stage_android_from_build_dirs() {
 
   for abi in "${abis[@]}"; do
     build_dir="$(android_build_dir_for_abi "${abi}")"
+    if [[ ! -f "${build_dir}/install/lib/libsherpa-onnx-c-api.so" || ! -f "${build_dir}/install/lib/libonnxruntime.so" ]]; then
+      return 1
+    fi
+  done
+
+  for abi in "${abis[@]}"; do
+    build_dir="$(android_build_dir_for_abi "${abi}")"
     source_dir="${build_dir}/install/lib"
 
     if ! find "${source_dir}" -maxdepth 1 -type f -name '*.so' 2>/dev/null | grep -q .; then
@@ -229,7 +245,8 @@ stage_android_from_build_dirs() {
 
     destination_dir="${JNI_LIBS_DIR}/${abi}"
     mkdir -p "${destination_dir}"
-    find "${destination_dir}" -maxdepth 1 -type f -name '*.so' -delete
+    find "${destination_dir}" -maxdepth 1 -type f -name '*.so' \
+      ! -name 'libwfloat-llm-jni.so' ! -name 'libwfloat-next-jni.so' -delete
     find "${source_dir}" -maxdepth 1 -type f -name '*.so' -exec cp {} "${destination_dir}/" \;
     staged_any=true
   done
@@ -255,6 +272,14 @@ stage_android_from_zip() {
   unzip -oq "${archive_path}" -d "${temp_dir}"
 
   for abi in "${abis[@]}"; do
+    if [[ ! -f "${temp_dir}/${abi}/libsherpa-onnx-c-api.so" || ! -f "${temp_dir}/${abi}/libonnxruntime.so" ]]; then
+      echo "Missing speech/ORT libraries for ${abi} in ${archive_path}" >&2
+      rm -rf "${temp_dir}"
+      return 1
+    fi
+  done
+
+  for abi in "${abis[@]}"; do
     source_dir="${temp_dir}/${abi}"
 
     if ! find "${source_dir}" -maxdepth 1 -type f -name '*.so' 2>/dev/null | grep -q .; then
@@ -265,7 +290,8 @@ stage_android_from_zip() {
 
     destination_dir="${JNI_LIBS_DIR}/${abi}"
     mkdir -p "${destination_dir}"
-    find "${destination_dir}" -maxdepth 1 -type f -name '*.so' -delete
+    find "${destination_dir}" -maxdepth 1 -type f -name '*.so' \
+      ! -name 'libwfloat-llm-jni.so' ! -name 'libwfloat-next-jni.so' -delete
     find "${source_dir}" -maxdepth 1 -type f -name '*.so' -exec cp {} "${destination_dir}/" \;
   done
 
@@ -295,13 +321,42 @@ EOF
   done
 }
 
+preflight_android_bridges() {
+  local abi source_lib
+  for abi in "${ANDROID_ABIS[@]}"; do
+    for source_lib in \
+      "$(android_llm_build_dir_for_abi "${abi}")/libwfloat-llm-jni.so" \
+      "${PACKAGE_DIR}/android/build/next-native/${abi}/libwfloat-next-jni.so"; do
+      if [[ ! -f "${source_lib}" ]]; then
+        echo "Missing Android bridge: ${source_lib}. Run yarn rn:build-natives android first." >&2
+        exit 1
+      fi
+    done
+  done
+}
+
+stage_android_next_from_build_dirs() {
+  local abi source_lib destination_dir
+  for abi in "${ANDROID_ABIS[@]}"; do
+    source_lib="${PACKAGE_DIR}/android/build/next-native/${abi}/libwfloat-next-jni.so"
+    destination_dir="${JNI_LIBS_DIR}/${abi}"
+    cp "${source_lib}" "${destination_dir}/"
+  done
+}
+
 if [[ "${stage_ios}" == true ]]; then
   sherpa_xcframework="${SHERPA_DIR}/build-ios/sherpa-onnx.xcframework"
   onnxruntime_xcframework="${SHERPA_DIR}/build-ios/ios-onnxruntime/onnxruntime.xcframework"
 
   require_dir "${sherpa_xcframework}" "sherpa-onnx.xcframework"
   require_dir "${onnxruntime_xcframework}" "onnxruntime.xcframework"
-  require_dir "${IOS_LLM_XCFRAMEWORK}" "wfloat-core-llm.xcframework"
+  require_dir "${IOS_LLM_XCFRAMEWORK}" "combined wfloat-core-llm.xcframework"
+  for slice in ios-arm64 ios-arm64_x86_64-simulator; do
+    if [[ ! -f "${IOS_LLM_XCFRAMEWORK}/${slice}/Headers/wfloat-next/NextRuntime.h" ]]; then
+      echo "Missing combined runtime public header for ${slice}; run yarn rn:build-ios-next." >&2
+      exit 1
+    fi
+  done
 
   echo "Staging iOS XCFrameworks..."
   copy_real_dir "${sherpa_xcframework}" "${IOS_DIR}/sherpa-onnx.xcframework"
@@ -313,6 +368,7 @@ fi
 if [[ "${stage_android}" == true ]]; then
   read_android_abis
   echo "Android ABIs: ${ANDROID_ABIS[*]}"
+  if [[ "${speech_only}" != true ]]; then preflight_android_bridges; fi
   echo "Staging Android JNI libraries..."
   mkdir -p "${JNI_LIBS_DIR}"
 
@@ -333,7 +389,10 @@ EOF
     fi
   fi
 
-  stage_android_llm_from_build_dirs
+  if [[ "${speech_only}" != true ]]; then
+    stage_android_llm_from_build_dirs
+    stage_android_next_from_build_dirs
+  fi
 fi
 
 echo

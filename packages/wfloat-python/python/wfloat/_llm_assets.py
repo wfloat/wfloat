@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Optional
 from urllib.parse import urlparse
 
+from . import _assets as registry
 from ._assets import LlmModelAssets
 from ._download import download_file, verify_checksum
 
@@ -121,22 +122,57 @@ def cache_llm_model_assets(
     cache_dir: Path,
     force_download: bool = False,
 ) -> CachedLlmAssets:
-    return cache_llm_assets(
+    sources = {"model": assets.model}
+    checksums = {"model": assets.model_checksum} if assets.model_checksum else {}
+    if assets.model_shards:
+        if (assets.model_shards[0] != assets.model or
+                len(assets.model_shards) != len(assets.model_shard_checksums)):
+            raise ValueError("Invalid LLM shard manifest")
+        sources = {f"model_shard_{index:05d}": source
+                   for index, source in enumerate(assets.model_shards, 1)}
+        checksums = dict(zip(sources, assets.model_shard_checksums))
+    cached = cache_llm_assets(
         model_name,
         family=assets.family,
-        sources={
-            "model": assets.model,
-        },
-        checksums={
-            key: value
-            for key, value in {
-                "model": assets.model_checksum,
-            }.items()
-            if value is not None
-        },
+        sources=sources,
+        checksums=checksums,
         cache_dir=cache_dir,
         force_download=force_download,
         context_size=assets.context_size,
         chat_template=assets.chat_template,
         chat_template_format=assets.chat_template_format,
+    )
+    if assets.model_shards:
+        # Keep the existing single-path backend and C ABI. Native GGUF loading
+        # discovers the remaining shards alongside this canonical first shard.
+        cached = replace(cached, files={**cached.files, "model": cached.require("model_shard_00001")})
+    return cached
+
+
+_ROLLOUT_FAMILIES = {
+    "Qwen/Qwen3-0.6B": "qwen3",
+    "Qwen/Qwen3-1.7B": "qwen3",
+    "Qwen/Qwen3-4B": "qwen3",
+    "google/gemma-3-270m-it": "gemma3",
+}
+
+
+def fetch_llm_assets(model_name: str) -> LlmModelAssets:
+    """Resolve new LLMs while retaining the existing models' asset contracts."""
+    family = _ROLLOUT_FAMILIES.get(model_name)
+    if family is None:
+        return registry.fetch_llm_assets(model_name)
+    data = registry._model_assets(model_name)
+    if data.get("family") != family:
+        raise ValueError(f"LLM registry entry for {model_name} must have family {family}")
+    shards = (registry._llm_shard_assets(data)
+              if any(key.startswith("model_shard_") for key in data) else ())
+    model = shards[0] if shards else registry._file_asset(data, "model")
+    # Keep the embedded chat template; these are not SmolLM ChatML overrides.
+    return LlmModelAssets(
+        family=family, model=registry._registry_url(model),
+        model_checksum=registry._required_checksum(model, "model"),
+        model_shards=tuple(registry._registry_url(shard) for shard in shards),
+        model_shard_checksums=tuple(registry._required_checksum(shard, "model shard") for shard in shards),
+        context_size=2048,
     )

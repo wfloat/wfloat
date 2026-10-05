@@ -1,0 +1,43 @@
+{
+  "modelId": "google/gemma-3-1b-it",
+  "source": "https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF/resolve/f9c28bcd85737ffc5aef028638d3341d49869c27/gemma-3-1b-it-Q4_K_M.gguf",
+  "sourceSha256": "8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135",
+  "splitter": "vendored llama.cpp llama-gguf-split --split-max-size 480M",
+  "validation": {
+    "tensorsUnchanged": 340,
+    "originalMetadataPreserved": true,
+    "inferenceTested": false
+  },
+  "files": [
+    {
+      "filename": "NOTICE.txt",
+      "sizeBytes": 411,
+      "sha256": "11f53740e013d7db3503a8f64f7b4ded27eb32cff2cf793438de6abc5033f8c5",
+      "key": "models/google/gemma-3-1b-it/q4_k_m/NOTICE.txt"
+    },
+    {
+      "filename": "gemma-prohibited-use-policy.html",
+      "sizeBytes": 134821,
+      "sha256": "d40153dd11f6908b9949ea8fe550c9d594efe686ae985ae97e423cdbc246a4a2",
+      "key": "models/google/gemma-3-1b-it/q4_k_m/gemma-prohibited-use-policy.html"
+    },
+    {
+      "filename": "gemma-terms.html",
+      "sizeBytes": 143788,
+      "sha256": "39364b01c2bb41f6c94576734ead4e766b3e92012ab0bcb77b5c0db5791fb775",
+      "key": "models/google/gemma-3-1b-it/q4_k_m/gemma-terms.html"
+    },
+    {
+      "filename": "model-00001-of-00002.gguf",
+      "sizeBytes": 483196576,
+      "sha256": "0bf039ad41ec7f7ae7101c7f106bb03e66d63c0f06a3945930ee97bdfc04545b",
+      "key": "models/google/gemma-3-1b-it/q4_k_m/model-00001-of-00002.gguf"
+    },
+    {
+      "filename": "model-00002-of-00002.gguf",
+      "sizeBytes": 322861856,
+      "sha256": "6c562ac532d49978755cbc051f0db93125ef98c577317dbb1d360896d9fbaf22",
+      "key": "models/google/gemma-3-1b-it/q4_k_m/model-00002-of-00002.gguf"
+    }
+  ]
+}

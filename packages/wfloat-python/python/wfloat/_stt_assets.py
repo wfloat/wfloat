@@ -112,6 +112,11 @@ def cache_stt_model_assets(
     cache_dir: Path,
     force_download: bool = False,
 ) -> CachedSttAssets:
+    encoder = assets.encoder
+    if assets.encoder_filename is not None:
+        encoder = cache_dir / "models" / _normalize_model_dir_name(model_name) / assets.encoder_filename
+        if force_download or not assets.encoder_checksum or not verify_checksum(encoder, assets.encoder_checksum):
+            raise RuntimeError("Composite STT encoder is not ready; use download_model before loading")
     return cache_stt_assets(
         model_name,
         family=assets.family,
@@ -119,11 +124,12 @@ def cache_stt_model_assets(
             "model": assets.model,
             "tokens": assets.tokens,
             "preprocessor": assets.preprocessor,
-            "encoder": assets.encoder,
+            "encoder": encoder,
             "decoder": assets.decoder,
             "joiner": assets.joiner,
             "uncached_decoder": assets.uncached_decoder,
             "cached_decoder": assets.cached_decoder,
+            "merged_decoder": assets.merged_decoder,
         },
         checksums={
             key: value
@@ -136,6 +142,7 @@ def cache_stt_model_assets(
                 "joiner": assets.joiner_checksum,
                 "uncached_decoder": assets.uncached_decoder_checksum,
                 "cached_decoder": assets.cached_decoder_checksum,
+                "merged_decoder": assets.merged_decoder_checksum,
             }.items()
             if value is not None
         },

@@ -1130,6 +1130,8 @@ function initSherpaOnnxOfflineMoonshineModelConfig(config, Module) {
       cachedDecoderLen + mergedDecoderLen;
   const buffer = Module._malloc(n);
 
+  // Current vendored C API, wasm32: sizeof=20; merged_decoder offset=16.
+  // This fifth pointer is required for Moonshine v2 (not a separate model struct).
   const len = 5 * 4;  // 5 pointers
   const ptr = Module._malloc(len);
 
@@ -1814,18 +1816,22 @@ class OfflineRecognizer {
   constructor(configObj, Module) {
     this.config = configObj;
     const config = initSherpaOnnxOfflineRecognizerConfig(configObj, Module);
-    const handle = Module._SherpaOnnxCreateOfflineRecognizer(config.ptr);
-    freeConfig(config, Module);
-
-    this.handle = handle;
+    try {
+      this.handle = Module._SherpaOnnxCreateOfflineRecognizer(config.ptr);
+    } finally {
+      freeConfig(config, Module);
+    }
     this.Module = Module;
   }
 
   setConfig(configObj) {
     const config =
         initSherpaOnnxOfflineRecognizerConfig(configObj, this.Module);
-    this.Module._SherpaOnnxOfflineRecognizerSetConfig(this.handle, config.ptr);
-    freeConfig(config, this.Module);
+    try {
+      this.Module._SherpaOnnxOfflineRecognizerSetConfig(this.handle, config.ptr);
+    } finally {
+      freeConfig(config, this.Module);
+    }
   }
 
   free() {

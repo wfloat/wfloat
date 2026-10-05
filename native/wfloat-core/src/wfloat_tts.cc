@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cmath>
 #include <exception>
 #include <memory>
 #include <string>
@@ -18,6 +19,7 @@ struct wfloat_tts_model {
   std::string family_name;
   uint64_t feature_flags = WFLOAT_TTS_FEATURE_NONE;
   wfloat_tts_family_t family = WFLOAT_TTS_FAMILY_UNKNOWN;
+  float silence_scale = 0.2f;
   std::unique_ptr<sherpa_onnx::OfflineTts> tts;
 };
 
@@ -64,6 +66,26 @@ struct OwnedSynthesisResult {
     base.model_id = model_id.c_str();
     base.text = text.c_str();
   }
+};
+
+struct OwnedPreparedText {
+  wfloat_tts_prepared_text_t base{};
+  sherpa_onnx::WfloatPreparedText prepared;
+  std::vector<const char *> text;
+  std::vector<const char *> text_clean;
+
+  void Finalize() {
+    for (const auto &unit : prepared.text) text.push_back(unit.c_str());
+    for (const auto &unit : prepared.text_clean) text_clean.push_back(unit.c_str());
+    base.text = text.data();
+    base.text_clean = text_clean.data();
+    base.count = text.size();
+  }
+};
+
+struct OwnedUnitAudio {
+  wfloat_audio_result_t base{};
+  std::vector<float> samples;
 };
 
 struct SegmentPlan {
@@ -418,8 +440,14 @@ wfloat_status_t AppendGeneratedChunk(
 }
 
 sherpa_onnx::GenerationConfig BuildGenerationConfig(
+    const wfloat_tts_model_t *model,
     const wfloat_tts_synthesize_options_t *options) {
   sherpa_onnx::GenerationConfig cfg;
+  // Kitten's raw-text frontend consumes the per-generation field directly.
+  // Preserve the existing generation defaults for every other family.
+  if (model->family == WFLOAT_TTS_FAMILY_KITTEN) {
+    cfg.silence_scale = model->silence_scale;
+  }
   cfg.speed = options ? DefaultPositive(options->speed, kDefaultSpeed) : kDefaultSpeed;
   cfg.sid = options ? options->sid : 0;
   cfg.num_steps = options && options->num_steps > 0 ? options->num_steps : 5;
@@ -455,7 +483,7 @@ wfloat_status_t SynthesizeGeneric(
   EmitProgress(progress, WFLOAT_TTS_PROGRESS_STAGE_PREPARING, 0.0f, 0, 1,
                text.c_str(), 0, static_cast<int32_t>(text.size()));
 
-  sherpa_onnx::GenerationConfig cfg = BuildGenerationConfig(options);
+  sherpa_onnx::GenerationConfig cfg = BuildGenerationConfig(model, options);
   bool callback_cancelled = false;
   auto callback = [progress, &text, &callback_cancelled](
                       const float *, int32_t, float callback_progress) -> int32_t {
@@ -696,7 +724,7 @@ wfloat_status_t SynthesizeDialogue(
         }
       }
     } else {
-      sherpa_onnx::GenerationConfig cfg;
+      sherpa_onnx::GenerationConfig cfg = BuildGenerationConfig(model, nullptr);
       cfg.sid = plan.sid;
       cfg.speed = plan.speed;
 
@@ -763,6 +791,7 @@ wfloat_status_t wfloat_tts_model_create(
     model->model_id = IsNullOrEmpty(config->model_id) ? "unknown" : config->model_id;
     model->backend = "sherpa-onnx";
     model->family = config->family;
+    model->silence_scale = sherpa_config.silence_scale;
     model->family_name = FamilyName(config->family);
     model->feature_flags = FeatureFlagsForFamily(config->family);
     model->tts = std::make_unique<sherpa_onnx::OfflineTts>(sherpa_config);
@@ -859,6 +888,90 @@ wfloat_status_t wfloat_tts_model_synthesize_dialogue(
   } catch (...) {
     return WFLOAT_STATUS_INTERNAL_ERROR;
   }
+}
+
+wfloat_status_t wfloat_tts_model_prepare_text(
+    const wfloat_tts_model_t *model, const char *text,
+    const char *emotion, float intensity,
+    wfloat_tts_prepared_text_t **out_prepared) {
+  if (!out_prepared) return WFLOAT_STATUS_INVALID_ARGUMENT;
+  *out_prepared = nullptr;
+  if (!model || !model->tts || IsNullOrEmpty(text) ||
+      !std::isfinite(intensity) || intensity < 0 || intensity > 1) {
+    return WFLOAT_STATUS_INVALID_ARGUMENT;
+  }
+  if (model->family != WFLOAT_TTS_FAMILY_WFLOAT_EXPRESSIVE) {
+    return WFLOAT_STATUS_NOT_SUPPORTED;
+  }
+  try {
+    auto result = std::make_unique<OwnedPreparedText>();
+    result->prepared = model->tts->PrepareWfloatText(
+        text, emotion ? emotion : "neutral", intensity);
+    const auto &prepared = result->prepared;
+    if (prepared.text.empty() || prepared.text.size() != prepared.text_clean.size()) {
+      return WFLOAT_STATUS_BACKEND_ERROR;
+    }
+    std::string original;
+    for (size_t i = 0; i < prepared.text.size(); ++i) {
+      if (prepared.text[i].empty() || prepared.text_clean[i].empty()) {
+        return WFLOAT_STATUS_BACKEND_ERROR;
+      }
+      original += prepared.text[i];
+    }
+    if (original != text) return WFLOAT_STATUS_BACKEND_ERROR;
+    result->Finalize();
+    *out_prepared = &result.release()->base;
+    return WFLOAT_STATUS_OK;
+  } catch (const std::exception &) {
+    return WFLOAT_STATUS_BACKEND_ERROR;
+  } catch (...) {
+    return WFLOAT_STATUS_INTERNAL_ERROR;
+  }
+}
+
+void wfloat_tts_prepared_text_destroy(wfloat_tts_prepared_text_t *prepared) {
+  delete reinterpret_cast<OwnedPreparedText *>(prepared);
+}
+
+wfloat_status_t wfloat_tts_model_generate_unit(
+    const wfloat_tts_model_t *model, const char *text_clean,
+    int32_t sid, float speed, wfloat_audio_result_t **out_audio) {
+  if (!out_audio) return WFLOAT_STATUS_INVALID_ARGUMENT;
+  *out_audio = nullptr;
+  if (!model || !model->tts || IsNullOrEmpty(text_clean) ||
+      !std::isfinite(speed) || speed <= 0 || sid < 0) {
+    return WFLOAT_STATUS_INVALID_ARGUMENT;
+  }
+  if (model->family != WFLOAT_TTS_FAMILY_WFLOAT_EXPRESSIVE) {
+    return WFLOAT_STATUS_NOT_SUPPORTED;
+  }
+  try {
+    if (sid >= model->tts->NumSpeakers()) return WFLOAT_STATUS_INVALID_ARGUMENT;
+    sherpa_onnx::GenerationConfig cfg;
+    cfg.sid = sid;
+    cfg.speed = speed;
+    auto generated = model->tts->Generate(text_clean, cfg);
+    if (generated.sample_rate <= 0 || generated.samples.empty()) {
+      return WFLOAT_STATUS_BACKEND_ERROR;
+    }
+    auto result = std::make_unique<OwnedUnitAudio>();
+    result->samples = std::move(generated.samples);
+    result->base.samples = result->samples.data();
+    result->base.sample_count = result->samples.size();
+    result->base.sample_rate = generated.sample_rate;
+    result->base.duration_sec =
+        static_cast<float>(result->samples.size()) / generated.sample_rate;
+    *out_audio = &result.release()->base;
+    return WFLOAT_STATUS_OK;
+  } catch (const std::exception &) {
+    return WFLOAT_STATUS_BACKEND_ERROR;
+  } catch (...) {
+    return WFLOAT_STATUS_INTERNAL_ERROR;
+  }
+}
+
+void wfloat_tts_unit_audio_destroy(wfloat_audio_result_t *audio) {
+  delete reinterpret_cast<OwnedUnitAudio *>(audio);
 }
 
 void wfloat_tts_synthesis_result_destroy(wfloat_tts_synthesis_result_t *result) {

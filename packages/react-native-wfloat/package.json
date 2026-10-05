@@ -10,13 +10,19 @@
     "test": "jest",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
-    "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
+    "clean": "del-cli android/build ios/build example/android/build example/android/app/build example/ios/build lib",
     "rn:build-natives": "bash scripts/build-natives.sh",
     "rn:build-ios-llm": "bash scripts/build-ios-llm-xcframework.sh",
     "rn:stage-natives": "bash scripts/stage-natives.sh",
     "consumer:build:android": "yarn prepare && node scripts/consumer-build-smoke.mjs --android",
     "consumer:build:ios": "yarn prepare && node scripts/consumer-build-smoke.mjs --ios",
-    "prepare": "bob build"
+    "prepare": "bob build",
+    "rn:build-ios-next": "bash scripts/build-ios-next-xcframework.sh",
+    "rn:build-android-next": "bash android/next-jni/build-and-stage.sh",
+    "package:verify": "node scripts/verify-native-package.mjs --pack",
+    "prepack": "node scripts/verify-native-package.mjs",
+    "test:native-packaging": "node --test scripts/tests/*.test.mjs",
+    "test:portable": "node --test src/next/llm-next/__tests__/portable.test.mjs src/next/assets/__tests__/*.test.mjs src/next/stt-next/__tests__/*.test.mjs src/next/tts-next/__tests__/*.test.mjs"
   },
   "exports": {
     ".": {
@@ -35,7 +41,6 @@
     "lib",
     "android",
     "ios",
-    "cpp",
     "*.podspec",
     "react-native.config.js",
     "!ios/build",
@@ -49,7 +54,21 @@
     "!**/__tests__",
     "!**/__fixtures__",
     "!**/__mocks__",
-    "!**/.*"
+    "!**/.*",
+    "scripts/NATIVE-BUILD.md",
+    "scripts/THIRD-PARTY-NOTICES.txt",
+    "!android/tests",
+    "!ios/tests",
+    "!android/next-jni",
+    "!android/llm-jni",
+    "!android/**/*.md",
+    "!ios/**/*.md",
+    "!ios/build*",
+    "!android/build*/**",
+    "!**/*.log",
+    "!**/*.tgz",
+    "LEGACY_API.md",
+    "CONTRIBUTING.md"
   ],
   "keywords": [
     "react-native",

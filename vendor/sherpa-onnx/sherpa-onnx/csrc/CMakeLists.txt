@@ -391,6 +391,14 @@ if(ANDROID_NDK)
   target_link_libraries(sherpa-onnx-core android log)
 endif()
 
+# Kitten 0.8 mirrors upstream numeric conversion fallbacks and catches invalid
+# preparation before inference. Emscripten otherwise removes these handlers.
+if(EMSCRIPTEN AND SHERPA_ONNX_ENABLE_TTS)
+  set_property(SOURCE offline-tts-impl.cc piper-phonemize-lexicon.cc
+    APPEND PROPERTY COMPILE_OPTIONS -fexceptions)
+  target_link_options(sherpa-onnx-core INTERFACE -fexceptions)
+endif()
+
 target_link_libraries(sherpa-onnx-core
   kaldi-native-fbank-core
   kaldi-decoder-core

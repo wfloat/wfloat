@@ -1,3 +1,4 @@
+import { buildNextWorkers } from './build-next-workers.mjs';
 import { build } from "esbuild";
 import { mkdir, writeFile } from "fs/promises";
 import { dirname, resolve } from "path";
@@ -36,6 +37,7 @@ async function run() {
 
   console.log("Built module worker into dist/worker/worker.js");
   console.log("Wrote module worker loader into dist/worker/createWorker.js");
+  await buildNextWorkers({ release: false });
 }
 
 run().catch((error) => {

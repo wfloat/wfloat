@@ -20,7 +20,7 @@ from wfloat import _native
 from wfloat._assets import LlmModelAssets
 from wfloat._llm import LlmModel
 from wfloat._llm_assets import cache_llm_model_assets
-from wfloat._results import Audio
+from wfloat._results import Audio, TranscriptionResult as LegacyTranscriptionResult
 from wfloat._stt import SttModel, SttSession
 from wfloat._stt_assets import cache_stt_model_assets
 from wfloat._vad import VadModel
@@ -185,7 +185,9 @@ class TestWfloatSmoke(unittest.TestCase):
             get_library_path=lambda: "/tmp/legacy/libwfloat-core.so"
         )
 
-        with mock.patch.dict(sys.modules, {"wfloat_core": fake_runtime}):
+        with mock.patch.dict(sys.modules, {"wfloat_core": fake_runtime}), mock.patch.dict(
+            "os.environ", {"WFLOAT_CORE_LIBRARY": ""}
+        ):
             with mock.patch.object(
                 _core,
                 "_iter_packaged_library_paths",
@@ -212,7 +214,7 @@ class TestWfloatSmoke(unittest.TestCase):
         self.assertIn(Path("/tmp/legacy/libwfloat-core.so"), candidates)
 
     def test_stt_model_transcribe_uses_native_backend(self):
-        sentinel = wfloat.TranscriptionResult(
+        sentinel = LegacyTranscriptionResult(
             text="hello world",
             model_id="openai/whisper-tiny-en",
         )

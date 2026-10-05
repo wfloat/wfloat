@@ -1,3 +1,5 @@
+> For the new model-instance TTS/LLM APIs and durable asset lifecycle, see [API.md](API.md). The examples below describe the retained legacy API.
+
 # @wfloat/wfloat-web
 
 `@wfloat/wfloat-web` is the browser package for Wfloat speech models. It
@@ -69,12 +71,11 @@ console.log(result.audio.sampleRate, result.timeline.chunks.length);
 - `tts.synthesize(options)` generates a single utterance and returns `{ audio, timeline, modelId, text }`.
 - `tts.synthesizeDialogue(options)` generates multi-speaker dialogue from a list of segments and returns the same structured result shape.
 - `tts.pause()`, `tts.play()`, and `tts.stop()` control playback for the active request on that model instance.
-- `loadSttModel(modelId, { onProgress })` loads an offline STT model into the browser worker.
-- `stt.transcribe({ audio, sampleRate? })` transcribes a single audio input and returns `{ text, tokens?, segments?, ... }`.
-- `stt.startMicrophone()` / `stt.stopMicrophone()` record browser mic audio for one-shot offline STT flows.
-- `session.startMicrophone()` / `session.stopMicrophone()` capture browser mic audio and feed a streaming STT session.
-- `createMicrophoneCapture({ sampleRate? })` remains available as a lower-level browser mic helper when you need custom capture control.
-- streaming-capable STT models may also expose `await stt.createSession()` for incremental transcription.
+- `loadSpeechToText(id)` returns a model with `transcribe(audio, options)` operation handles.
+- `loadStreamingSpeechToText(id)` returns a model with live `createSession(options)` support.
+- Live sessions accept application PCM or own microphone capture, and expose `finish()`, `result()` and `cancel()`.
+- Both loaders share cached asset management and support `unload()`; see [API.md](API.md).
+
 - `loadVadModel(modelId, { onProgress })` loads a VAD model into the browser worker.
 - `vad.detect({ audio, sampleRate? })` returns speech segments with timing and segment audio.
 - `vad.createSession({ onSpeechStart, onSpeechEnd })` creates a live VAD session. `session.startMicrophone()` starts package-owned browser microphone capture, and `session.stopMicrophone()` stops capture, flushes the detector, and returns capture stats.
@@ -132,80 +133,37 @@ const result = await tts.synthesizeDialogue({
 console.log(result.timeline.chunks.map((chunk) => chunk.segmentIndex));
 ```
 
-## STT quick start
+## Speech-to-text
 
 ```ts
-import { loadSttModel } from "@wfloat/wfloat-web";
+import { loadSpeechToText, loadStreamingSpeechToText } from "@wfloat/wfloat-web";
 
-const stt = await loadSttModel("openai/whisper-tiny-en", {
-  onProgress(event) {
-    console.log(event.status);
-  },
+const model = await loadSpeechToText("openai/whisper-tiny-en");
+const transcription = model.transcribe(fileInput.files![0], {
+  onTranscript: ({ text }) => { preview.textContent = text; },
 });
-
-const result = await stt.transcribe({
-  audio: fileInput.files![0],
-});
-
+const result = await transcription.result();
 console.log(result.text);
-console.log(result.tokens?.length ?? 0);
-```
+await model.unload();
 
-## Microphone capture quick start
-
-```ts
-import { loadSttModel } from "@wfloat/wfloat-web";
-
-const stt = await loadSttModel("openai/whisper-tiny-en");
-
-await stt.startMicrophone({ sampleRate: 16000 });
-
-// later, from a Stop button click
-const audio = await stt.stopMicrophone();
-
-const result = await stt.transcribe(audio);
-
-console.log(result.text);
-```
-
-This is meant for one-shot browser STT flows such as:
-- record
-- stop
-- transcribe
-
-For custom capture pipelines, `createMicrophoneCapture({ sampleRate })` is also
-exported as a lower-level helper.
-
-## Streaming STT direction
-
-The first streaming web STT target is a sherpa online recognizer path for:
-
-- `k2-fsa/streaming-zipformer-en`
-
-Intended shape:
-
-```ts
-const stt = await loadSttModel("k2-fsa/streaming-zipformer-en");
-
-const session = await stt.createSession();
-
-await session.startMicrophone({
-  sampleRate: 16000,
-  onResult(partial) {
-    console.log(partial.text, partial.isEndpoint);
-  },
+const liveModel = await loadStreamingSpeechToText("k2-fsa/streaming-zipformer-en");
+const session = await liveModel.createSession({
+  onTranscript: ({ id, text, isFinal }) => updateUtterance(id, text, isFinal),
+  onError: error => showError(error.message, error.partialResult),
 });
-
-// later, from a Stop button click
-await session.stopMicrophone();
-
-const finalResult = await session.finish();
-console.log(finalResult.text);
-await session.close();
+startButton.onclick = () => session.startMicrophone().catch(showError);
+stopButton.onclick = async () => console.log(await session.finish());
 ```
 
-This path is now implemented in the package surface and resolves registry
-assets internally.
+Complete-audio input supports File/Blob, AudioBuffer, and `{ samples, sampleRate }`.
+For application-owned live audio, use `await session.push({ samples, sampleRate })`
+instead of its microphone. Push acknowledges acceptance, not processing/backpressure.
+There is no default backlog cap; optional `maxBufferedAudioMs` stops the session
+with a recoverable error if pending audio exceeds an application-selected limit.
+
+See [API.md](API.md#complete-audio-transcription) for cancellation, input ownership,
+options, current model support and lifecycle details. Legacy `loadSttModel` remains
+available separately during migration.
 
 ## VAD quick start
 

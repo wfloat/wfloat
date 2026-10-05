@@ -56,6 +56,12 @@ set(exported_functions
   SherpaOnnxOnlineStreamIsEndpoint
   SherpaOnnxOnlineStreamReset
 
+  # Wfloat score-only VAD
+  WfloatCreateVadScorer
+  WfloatDestroyVadScorer
+  WfloatResetVadScorer
+  WfloatScoreVadFrame
+
   # VAD
   SherpaOnnxCreateCircularBuffer
   SherpaOnnxDestroyCircularBuffer

@@ -1,3 +1,4 @@
+import { buildNextWorkers } from './build-next-workers.mjs';
 import { build } from "esbuild";
 import { readFile, rm, writeFile } from "fs/promises";
 import { resolve } from "path";
@@ -50,6 +51,7 @@ async function run() {
   await writeFile(finalOutfile, wrapped, "utf8");
   await rm(outfile, { force: true });
   console.log("Copied bundled worker into dist/worker/worker-inline.js");
+  await buildNextWorkers({ release: true, sherpaWasmUrl, llamaWasmUrl });
 }
 
 run().catch((error) => {

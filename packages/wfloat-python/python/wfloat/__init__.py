@@ -55,3 +55,59 @@ __all__ = [
     "load_tts_model",
     "load_vad_model",
 ]
+
+# Redesigned synchronous surface. Legacy loaders above remain importable, while
+# the value types below describe the new task-specific loaders.
+from ._audio import Audio
+from ._operations import OperationCancelledError
+from ._schemas import SchemaConfigurationError, SchemaValidationError
+from ._tools import ToolContext, ToolDefinition, define_tool
+from ._language_types import (
+    GenerationResult, GenerationError, GenerationRound, PartialGenerationResult,
+    Usage, ContextLimit, StructuredOutput, StopContext, ToolCall,
+    TextEvent, ReasoningEvent, RoundStartEvent, ToolCallEvent, ToolStartEvent,
+    ToolResultEvent, ToolErrorEvent, ToolCancelEvent, ToolValidationErrorEvent,
+    GenerationEvent, StopReason, ToolValidationError,
+)
+from ._language import LanguageModel, LanguageStream, tool_result
+from ._language_load import load_language_model
+from ._speech import (
+    TextToSpeechModel, SpeechResult, SpeechChunk, SpeechTiming, SpeechSegment,
+    SpeechStream, load_text_to_speech,
+)
+from ._recognition import (
+    SpeechToTextModel, StreamingSpeechToTextModel, TranscriptionSession,
+    TranscriptionResult, TranscriptionUpdate, LiveTranscriptUpdate,
+    TranscriptTiming, TranscriptWord, TranscriptSegment, ProvisionalTranscript,
+    PartialTranscript, TranscriptionError, load_speech_to_text,
+    load_streaming_speech_to_text,
+)
+from ._activity import (
+    VoiceActivityDetectionModel, VadSession, DetectionResult, VadSessionResult,
+    SpeechRange, SpeechStartEvent, VadProbabilityEvent, VadError,
+    load_voice_activity_detection,
+)
+from ._lifecycle import (
+    download_model, delete_model_assets, ModelProgressEvent,
+    ModelAssetsDeletedError, ModelAssetsInUseError,
+)
+
+__all__ += [
+    "OperationCancelledError", "SchemaConfigurationError", "SchemaValidationError",
+    "ToolContext", "ToolDefinition", "define_tool", "tool_result", "ToolCall",
+    "LanguageModel", "LanguageStream", "GenerationError", "GenerationRound",
+    "PartialGenerationResult", "Usage", "ContextLimit", "StructuredOutput", "StopContext",
+    "GenerationEvent", "StopReason", "ToolValidationError",
+    "TextEvent", "ReasoningEvent", "RoundStartEvent", "ToolCallEvent", "ToolStartEvent",
+    "ToolResultEvent", "ToolErrorEvent", "ToolCancelEvent", "ToolValidationErrorEvent",
+    "TextToSpeechModel", "SpeechResult", "SpeechChunk", "SpeechTiming", "SpeechSegment",
+    "SpeechStream", "SpeechToTextModel", "StreamingSpeechToTextModel", "TranscriptionSession",
+    "TranscriptionUpdate", "LiveTranscriptUpdate", "TranscriptTiming", "TranscriptWord",
+    "TranscriptSegment", "ProvisionalTranscript", "PartialTranscript", "TranscriptionError",
+    "VoiceActivityDetectionModel", "VadSession", "DetectionResult", "VadSessionResult",
+    "SpeechRange", "SpeechStartEvent", "VadProbabilityEvent", "VadError",
+    "load_language_model", "load_text_to_speech", "load_speech_to_text",
+    "load_streaming_speech_to_text", "load_voice_activity_detection",
+    "download_model", "delete_model_assets", "ModelProgressEvent",
+    "ModelAssetsDeletedError", "ModelAssetsInUseError",
+]

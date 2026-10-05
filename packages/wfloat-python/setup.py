@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import setuptools
 from setuptools.command.build_py import build_py as _build_py
@@ -55,19 +56,19 @@ def _shared_library_patterns() -> tuple[str, ...]:
     if sys.platform == "win32":
         return ("**/wfloat-core.dll", "**/libwfloat-core.dll", "**/*.dll")
     if sys.platform == "darwin":
-        return ("**/libwfloat-core.dylib",)
-    return ("**/libwfloat-core.so", "**/*.so")
+        return ("**/*.dylib",)
+    return ("**/*.so", "**/*.so.*")
 
 
 def _is_native_library(path: Path) -> bool:
     if sys.platform == "win32":
         return path.suffix.lower() == ".dll"
     if sys.platform == "darwin":
-        return path.name == "libwfloat-core.dylib"
+        return path.suffix.lower() == ".dylib"
     return path.suffix == ".so" or ".so." in path.name
 
 
-def _macos_build_arch() -> str | None:
+def _macos_build_arch() -> Optional[str]:
     archs = set(re.findall(r"-arch\s+(\S+)", os.environ.get("ARCHFLAGS", "")))
     if not archs:
         cibw_archs = os.environ.get("CIBW_ARCHS_MACOS") or os.environ.get("CIBW_ARCHS")
@@ -116,6 +117,7 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
         str(build_temp),
         "-DWFLOAT_BUILD_CORE=ON",
         "-DWFLOAT_ENABLE_LLAMA_CPP=ON",
+        "-DWFLOAT_BUILD_PYTHON_LLM=ON",
         "-DWFLOAT_CORE_ENABLE_SPEECH=ON",
         "-DSHERPA_ONNX_ENABLE_BINARY=OFF",
         "-DSHERPA_ONNX_BUILD_C_API_EXAMPLES=OFF",
@@ -128,6 +130,15 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
 
     if sys.platform != "win32":
         configure.append("-DCMAKE_BUILD_TYPE=Release")
+
+    if sys.platform.startswith("linux"):
+        # Every bundled library is flattened into wfloat/native. Absolute build
+        # RPATHs let auditwheel resolve a second copy outside the wheel, mixing
+        # original and grafted llama/ggml libraries in the same process.
+        configure.extend([
+            "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON",
+            "-DCMAKE_INSTALL_RPATH=$ORIGIN",
+        ])
 
     if sys.platform == "darwin":
         configure.append(
@@ -145,6 +156,7 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
             str(build_temp),
             "--target",
             "wfloat-core-shared",
+            "wfloat-python-llm",
             "--config",
             "Release",
             "--parallel",
@@ -153,13 +165,20 @@ def _build_native_runtime(build_temp: Path) -> list[Path]:
     )
 
     libraries: list[Path] = []
-    seen: set[Path] = set()
+    seen: dict[str, Path] = {}
     for pattern in _shared_library_patterns():
         for path in build_temp.glob(pattern):
             resolved = path.resolve()
-            if resolved not in seen and _is_native_library(path):
-                seen.add(resolved)
-                libraries.append(path)
+            if not _is_native_library(path):
+                continue
+            # SONAME aliases must survive flattening into wfloat/native.
+            previous = seen.get(path.name)
+            if previous is not None:
+                if previous != resolved and previous.read_bytes() != resolved.read_bytes():
+                    raise RuntimeError(f"Conflicting native libraries named {path.name}")
+                continue
+            seen[path.name] = resolved
+            libraries.append(path)
 
     primary_names = {
         "wfloat-core.dll",
@@ -225,12 +244,15 @@ setuptools.setup(
     author="wfloat",
     license="MIT",
     python_requires=">=3.9",
+    install_requires=["numpy>=1.23"],
+    extras_require={"schemas": ["pydantic>=2,<3"]},
     url="https://github.com/wfloat/wfloat-python",
     package_dir={"": "python"},
     packages=setuptools.find_packages(where="python"),
     distclass=BinaryDistribution,
     package_data={
         "wfloat": [
+            "py.typed",
             "native/*.dll",
             "native/*.dylib",
             "native/*.so",

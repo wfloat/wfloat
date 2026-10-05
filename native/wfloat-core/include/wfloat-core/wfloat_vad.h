@@ -21,6 +21,7 @@ typedef enum wfloat_vad_family {
 typedef enum wfloat_vad_feature_flags {
   WFLOAT_VAD_FEATURE_NONE = 0,
   WFLOAT_VAD_FEATURE_SEGMENTS = 1 << 0,
+  WFLOAT_VAD_FEATURE_PROBABILITIES = 1 << 1,
 } wfloat_vad_feature_flags_t;
 
 typedef struct wfloat_vad_model_config {
@@ -71,6 +72,14 @@ wfloat_status_t wfloat_vad_model_accept_waveform(
     size_t sample_count);
 
 wfloat_status_t wfloat_vad_model_reset(wfloat_vad_model_t *model);
+
+/* Score one chronological frame without detector segmentation or ring-buffer
+ * retention. Currently Silero only, 512 mono samples at 16 kHz. The first call
+ * initializes an independent scorer; reset clears recurrent and left context.
+ * Never mix score frames with accept_waveform on the same operation. */
+wfloat_status_t wfloat_vad_model_score_frame(
+    wfloat_vad_model_t *model, const float *samples, size_t sample_count,
+    float *out_probability);
 
 wfloat_status_t wfloat_vad_model_flush(wfloat_vad_model_t *model);
 

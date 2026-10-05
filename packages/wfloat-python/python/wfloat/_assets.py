@@ -1,13 +1,17 @@
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Dict, Mapping, Optional
 from urllib.parse import urlparse
 
+from ._composite import composite_parts
 from ._generated_model_urls import MODEL_ASSETS, REGISTRY_ORIGIN, SHARED_ASSETS
 
 REGISTRY_BASE_URL = REGISTRY_ORIGIN
 WFLOAT_TTS_MODEL_ID = "wfloat/wfloat-tts"
+PARAKEET_TDT_MODEL_ID = "nvidia/parakeet-tdt-0.6b-v3"
 SILERO_VAD_MODEL_ID = "snakers4/silero-vad"
+GEMMA3_1B_IT_MODEL_ID = "google/gemma-3-1b-it"
 SMOLLM2_360M_INSTRUCT_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct"
 
 
@@ -81,6 +85,9 @@ class SttModelAssets:
     uncached_decoder_checksum: Optional[str] = None
     cached_decoder: Optional[str] = None
     cached_decoder_checksum: Optional[str] = None
+    merged_decoder: Optional[str] = None
+    merged_decoder_checksum: Optional[str] = None
+    encoder_filename: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "SttModelAssets":
@@ -141,6 +148,8 @@ class SttModelAssets:
             uncached_decoder_checksum=optional_string("uncached_decoder_checksum"),
             cached_decoder=optional_string("cached_decoder"),
             cached_decoder_checksum=optional_string("cached_decoder_checksum"),
+            merged_decoder=optional_string("merged_decoder"),
+            merged_decoder_checksum=optional_string("merged_decoder_checksum"),
         )
 
     def to_dict(self) -> Dict[str, str]:
@@ -164,6 +173,8 @@ class SttModelAssets:
             "uncached_decoder_checksum": self.uncached_decoder_checksum,
             "cached_decoder": self.cached_decoder,
             "cached_decoder_checksum": self.cached_decoder_checksum,
+            "merged_decoder": self.merged_decoder,
+            "merged_decoder_checksum": self.merged_decoder_checksum,
         }
         for key, value in optional_fields.items():
             if value:
@@ -230,6 +241,8 @@ class LlmModelAssets:
     context_size: Optional[int] = None
     chat_template: Optional[str] = None
     chat_template_format: Optional[str] = None
+    model_shards: tuple[str, ...] = ()
+    model_shard_checksums: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "LlmModelAssets":
@@ -367,16 +380,19 @@ def fetch_model_assets(model_name: str) -> ModelAssets:
 def fetch_stt_assets(model_name: str) -> SttModelAssets:
     model_assets = _model_assets(model_name)
     family = model_assets.get("family")
-    if family not in {"whisper", "zipformer-transducer", "moonshine"}:
+    if family not in {"whisper", "zipformer-transducer", "moonshine", "parakeet-tdt"}:
         raise ValueError("Unsupported STT model: %s" % model_name)
 
+    encoder = model_assets.get("encoder", {})
+    split_encoder = bool(composite_parts(encoder))
     return SttModelAssets(
         family=str(family),
+        encoder_filename=encoder["filename"] if split_encoder else None,
         model=_optional_file_url(model_assets, "model"),
         model_checksum=_optional_file_checksum(model_assets, "model"),
         preprocessor=_optional_file_url(model_assets, "preprocessor"),
         preprocessor_checksum=_optional_file_checksum(model_assets, "preprocessor"),
-        encoder=_optional_file_url(model_assets, "encoder"),
+        encoder=None if split_encoder else _optional_file_url(model_assets, "encoder"),
         encoder_checksum=_optional_file_checksum(model_assets, "encoder"),
         decoder=_optional_file_url(model_assets, "decoder"),
         decoder_checksum=_optional_file_checksum(model_assets, "decoder"),
@@ -386,6 +402,8 @@ def fetch_stt_assets(model_name: str) -> SttModelAssets:
         uncached_decoder_checksum=_optional_file_checksum(model_assets, "uncached_decoder"),
         cached_decoder=_optional_file_url(model_assets, "cached_decoder"),
         cached_decoder_checksum=_optional_file_checksum(model_assets, "cached_decoder"),
+        merged_decoder=_optional_file_url(model_assets, "merged_decoder"),
+        merged_decoder_checksum=_optional_file_checksum(model_assets, "merged_decoder"),
         tokens=_registry_url(_file_asset(model_assets, "tokens")),
         tokens_checksum=_optional_file_checksum(model_assets, "tokens"),
     )
@@ -406,16 +424,58 @@ def fetch_vad_assets(model_name: str) -> VadModelAssets:
 
 
 def fetch_llm_assets(model_name: str) -> LlmModelAssets:
-    if model_name != SMOLLM2_360M_INSTRUCT_MODEL_ID:
+    if model_name not in {GEMMA3_1B_IT_MODEL_ID, SMOLLM2_360M_INSTRUCT_MODEL_ID}:
         raise ValueError("Unsupported LLM model: %s" % model_name)
 
     model_assets = _model_assets(model_name)
-    model = _file_asset(model_assets, "model")
+    gemma = model_name == GEMMA3_1B_IT_MODEL_ID
+    if gemma:
+        shards = _gemma3_shard_assets(model_assets)
+    elif any(key.startswith("model_shard_") for key in model_assets):
+        shards = _llm_shard_assets(model_assets)
+    else:
+        shards = ()
+    model = shards[0] if shards else _file_asset(model_assets, "model")
 
     return LlmModelAssets(
         family=str(model_assets.get("family") or "smollm"),
         model=_registry_url(model),
         model_checksum=_registry_checksum(model),
-        context_size=8192,
-        chat_template_format="chatml",
+        model_shards=tuple(_registry_url(shard) for shard in shards),
+        model_shard_checksums=tuple(_required_checksum(shard, "model shard") for shard in shards),
+        context_size=2048 if gemma else 8192,
+        chat_template_format=None if gemma else "chatml",
     )
+
+
+def _llm_shard_assets(data: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    """Order a complete native GGUF split for llama.cpp's sibling discovery."""
+    roles = sorted(key for key in data if key.startswith("model_shard_"))
+    count = len(roles)
+    expected = [f"model_shard_{index:05d}" for index in range(1, count + 1)]
+    if count < 2 or count > 99999 or roles != expected or "model" in data:
+        raise ValueError("LLM shards require at least two contiguous model_shard_NNNNN roles starting at 00001, without model")
+    shards = tuple(_file_asset(data, role) for role in roles)
+    siblings = set()
+    for index, shard in enumerate(shards, 1):
+        path = Path(urlparse(_registry_url(shard)).path)
+        match = re.fullmatch(r"(.+)-(\d{5})-of-(\d{5})\.gguf", path.name)
+        if not match or int(match[2]) != index or int(match[3]) != count:
+            raise ValueError("LLM shards require canonical ordered sibling filenames matching the shard count")
+        siblings.add((str(path.parent), match[1]))
+        _required_checksum(shard, roles[index - 1])
+    if len(siblings) != 1:
+        raise ValueError("LLM shards must be siblings with the same filename prefix")
+    return shards
+
+
+def _gemma3_shard_assets(data: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    """Apply Gemma's registry requirements around the generic GGUF split."""
+    if data.get("family") != "gemma3":
+        raise ValueError("Gemma 3 registry entry must have family gemma3")
+    shards = _llm_shard_assets(data)
+    for role in ("model_terms", "model_policy", "model_notice", "model_provenance"):
+        asset = _file_asset(data, role)
+        _registry_url(asset)
+        _required_checksum(asset, role)
+    return shards

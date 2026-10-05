@@ -1,0 +1,31 @@
+{
+  "frozenAt": "2026-10-05T07:01:56.254027+00:00",
+  "scope": "Historical Kitten frontend qualification snapshot; paths are relative to the SDK root. Shared files may have subsequent unrelated changes.",
+  "sha256": {
+    "packages/wfloat-web/src/tts-next/backend.ts": "1032c9b5e336fc38090518a2990e78ad424010270c4af09b9019b6c6381994ee",
+    "packages/wfloat-web/src/tts-next/families.ts": "e66a7ab83a9e345ac52dcd441ba8b4beea9f6fb9b645658c8383345271a7db3c",
+    "packages/wfloat-web/src/tts-next/load.ts": "f1d71dc294cf4a06d23c601c03927768c9d0af6d7fc8eedfdf47137f5fe2feff",
+    "packages/wfloat-web/src/tts-next/sherpa.ts": "cafa80fa096e1fe11e98559b97955dbb645cbb5b7b9b7dbc6cdddccf62f2f678",
+    "packages/wfloat-web/src/wasm/sherpa-onnx-tts.ts": "874521cb66086c995fbefba5093e503caedf938894c39e16e8794aaee5f3ec81",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/CMakeLists.txt": "2410cc95562617a18e472c849917972aca2e20f70f8418f3359b5bad2fb52f5b",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-impl.h": "b11ae9131f331256c09cd12724d61e9a5f78e3fd327a43eb79efbc381799a9fb",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-model-config.cc": "da70b1087a7a492178db7e32d536bc0f08e39bbaa695fae27b3f88e2976fbd3f",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-model-config.h": "5a3b95421dd9333fb91dd19794aa6f09463b825c2794458f20985bf16ae8abaa",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-model-meta-data.h": "0913e4b4dd9baebcec95e05873fe2037d5b2255660bc10fc0e00ad4d5735aada",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-model.cc": "3e3eb22f8d7e9e5bc9620d4802507044f93d157e580f113ad066dcf1e4373393",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-model.h": "3917a5be6e21629a3b7cf74ecb3f9929bd7175253643b4d031b68d0ff87b8e26",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-numbers.h": "af0c0aa488551c0a7e1065010a03879329edbc53b50d10084f0d85f3cb4d4740",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-phonemize.h": "1de5c4adb2093325b330cfef09442b258a1b8d9a5b8c45f608b366f99f3e16d7",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-regex-data.h": "6c4c7d4692b94e7023925313a964014c054ac1a6eef0a139ed8b72082f4bfda3",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-regex.h": "2e589a50fae509b08fcd40f757c8acd53b7372f9f3ed9adb59cd7c07aa2acac5",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-text-data.h": "691a5397195ae349e4b8561e5e11174bcb91bc41cc5f44d346967c1dc581c68c",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-text-unicode.h": "38ec873731462be78a42e5528d92e5c5dcfa421355479b391b64bb04b3527769",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-text.h": "b7ad491f939fae92e3f1af31f7f9e5b3b15dcef3d2827eef0812aad7076c6146",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-unicode.h": "0e232906adc223911e9744075c9a8e1a4bcc02ae7f83ab54a81c58066dcd9a3e",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/offline-tts-kitten-utils.h": "719ff4b226b2b15b1cf4e5dc7c12f52aedae791347aa9e705ba60f6ab748ca26",
+    "vendor/sherpa-onnx/sherpa-onnx/csrc/piper-phonemize-lexicon.cc": "72cd95b2ce91abf46cb7d98f7fdf84bef31d752f27e8a2e9e118f18b6b1edefb"
+  },
+  "status": "frozen",
+  "reason": "iOS13 portable formatter and intentional scientific-float numeric bug fix validated",
+  "provenance": "../../WFLOAT_KITTEN_08.md"
+}

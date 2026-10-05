@@ -4,6 +4,7 @@
 #ifndef SHERPA_ONNX_CSRC_OFFLINE_TTS_KITTEN_IMPL_H_
 #define SHERPA_ONNX_CSRC_OFFLINE_TTS_KITTEN_IMPL_H_
 
+#include <deque>
 #include <iomanip>
 #include <ios>
 #include <memory>
@@ -22,6 +23,8 @@
 #include "sherpa-onnx/csrc/offline-tts-frontend.h"
 #include "sherpa-onnx/csrc/offline-tts-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-kitten-model.h"
+#include "sherpa-onnx/csrc/offline-tts-kitten-utils.h"
+#include "sherpa-onnx/csrc/offline-tts-kitten-text.h"
 #include "sherpa-onnx/csrc/piper-phonemize-lexicon.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 
@@ -217,6 +220,12 @@ class OfflineTtsKittenImpl : public OfflineTtsImpl {
 #endif
     }
 
+    if (IsKitten08(meta_data)) {
+      // Kitten 0.8 owns normalization. Other model/FST frontend behavior stays
+      // on the legacy path below; adapters send raw text with no extra rules.
+      return Generate08(text, sid, speed, gen_config.silence_scale, callback);
+    }
+
     if (!tn_list_.empty()) {
       for (const auto &tn : tn_list_) {
         text = tn->Normalize(text);
@@ -349,6 +358,59 @@ class OfflineTtsKittenImpl : public OfflineTtsImpl {
   }
 
  private:
+  GeneratedAudio Generate08(const std::string &raw, int32_t sid, float speed,
+                            float silence_scale,
+                            GeneratedAudioCallback callback) const {
+    const auto &meta = model_->GetMetaData();
+    using kitten_text::Text;
+    std::vector<std::pair<Text, std::vector<int64_t>>> prepared;
+    try {
+      auto input = Utf8ToUtf32(raw);
+      // Bound preprocessing as well as inference. This is an internal resource
+      // limit, not an alteration of upstream normalization for accepted input.
+      if (input.size() > 65536) {
+        throw std::length_error("Kitten text exceeds 65536 codepoints per call");
+      }
+      auto chunks = kitten_text::Prepare(input);
+      std::deque<Text> pending(chunks.begin(), chunks.end());
+      while (!pending.empty()) {
+        Text chunk = std::move(pending.front()); pending.pop_front();
+        auto ids = frontend_->ConvertTextToTokenIds(Utf32ToUtf8(chunk), meta.voice);
+        if (ids.size() != 1 || ids[0].tokens.empty()) {
+          throw std::invalid_argument("Kitten failed to phonemize normalized chunk");
+        }
+        if (ids[0].tokens.size() > static_cast<size_t>(meta.max_token_len)) {
+          // The export bounds tokens separately from upstream's 400-character
+          // chunks. Split TEXT, then rephonemize/recount; never split IDs.
+          if (chunk.size() <= 1) throw std::length_error("Kitten token limit too small");
+          size_t split = chunk.size() / 2;
+          size_t word = split;
+          while (word && !KittenIsSpace(chunk[word])) --word;
+          if (word) split = word;
+          auto left = kitten_text::EnsurePunctuation(chunk.substr(0, split));
+          auto right = kitten_text::EnsurePunctuation(chunk.substr(split));
+          if (left.size() >= chunk.size() || right.size() >= chunk.size()) {
+            throw std::length_error("Kitten cannot safely subdivide normalized text");
+          }
+          pending.push_front(std::move(right)); pending.push_front(std::move(left));
+        } else prepared.emplace_back(std::move(chunk), std::move(ids[0].tokens));
+      }
+    } catch (const std::exception &ex) {
+      SHERPA_ONNX_LOGE("Kitten 0.8 text preparation failed: %s", ex.what());
+      return {};
+    }
+    GeneratedAudio out;
+    out.sample_rate = meta.sample_rate;
+    for (size_t i = 0; i < prepared.size(); ++i) {
+      auto audio = Process({prepared[i].second}, sid, speed, silence_scale,
+                           prepared[i].first.size());
+      out.samples.insert(out.samples.end(), audio.samples.begin(), audio.samples.end());
+      if (callback && !callback(audio.samples.data(), audio.samples.size(),
+                               (i + 1.0) / prepared.size())) break;
+    }
+    return out;
+  }
+
   template <typename Manager>
   void InitFrontend(Manager *mgr) {
     const auto &meta_data = model_->GetMetaData();
@@ -365,7 +427,8 @@ class OfflineTtsKittenImpl : public OfflineTtsImpl {
 
   GeneratedAudio Process(const std::vector<std::vector<int64_t>> &tokens,
                          int32_t sid, float speed,
-                         float silence_scale) const {
+                         float silence_scale,
+                         int64_t normalized_text_length = -1) const {
     int32_t num_tokens = 0;
     for (const auto &k : tokens) {
       num_tokens += k.size();
@@ -384,7 +447,8 @@ class OfflineTtsKittenImpl : public OfflineTtsImpl {
     Ort::Value x_tensor = Ort::Value::CreateTensor(
         memory_info, x.data(), x.size(), x_shape.data(), x_shape.size());
 
-    Ort::Value audio = model_->Run(std::move(x_tensor), sid, speed);
+    Ort::Value audio = model_->Run(std::move(x_tensor), sid, speed,
+                                   normalized_text_length);
 
     std::vector<int64_t> audio_shape =
         audio.GetTensorTypeAndShapeInfo().GetShape();
@@ -395,11 +459,12 @@ class OfflineTtsKittenImpl : public OfflineTtsImpl {
       total *= i;
     }
 
+    total = KittenAudioLength(total, model_->GetMetaData().version);
     const float *p = audio.GetTensorData<float>();
 
     GeneratedAudio ans;
     ans.sample_rate = model_->GetMetaData().sample_rate;
-    ans.samples = std::vector<float>(p, p + total);
+    if (total > 0) ans.samples.assign(p, p + total);
 
     if (silence_scale != 1) {
       ans = ans.ScaleSilence(silence_scale);

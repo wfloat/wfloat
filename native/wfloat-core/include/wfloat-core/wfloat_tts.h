@@ -222,6 +222,35 @@ wfloat_status_t wfloat_tts_model_synthesize_dialogue(
 
 void wfloat_tts_synthesis_result_destroy(wfloat_tts_synthesis_result_t *result);
 
+/* Incremental Wfloat expressive synthesis. Preparation preserves the engine's
+ * pronunciation/context processing of the complete input. Original UTF-8 units
+ * concatenate exactly to that input; normalized units are opaque engine text.
+ * The returned arrays/strings are owned until prepared_text_destroy, independent
+ * of the model lifetime. No waveform is generated during preparation. */
+typedef struct wfloat_tts_prepared_text {
+  const char *const *text;
+  const char *const *text_clean;
+  size_t count;
+} wfloat_tts_prepared_text_t;
+
+wfloat_status_t wfloat_tts_model_prepare_text(
+    const wfloat_tts_model_t *model, const char *text,
+    const char *emotion, float intensity,
+    wfloat_tts_prepared_text_t **out_prepared);
+
+void wfloat_tts_prepared_text_destroy(wfloat_tts_prepared_text_t *prepared);
+
+/* Generate exactly one normalized unit from prepare_text, without preparing it
+ * again or adding inter-unit silence. The caller drives subsequent units and
+ * cancellation between calls. Returned samples survive model destruction and
+ * are owned until unit_audio_destroy. Outputs are NULL on failure. */
+wfloat_status_t wfloat_tts_model_generate_unit(
+    const wfloat_tts_model_t *model, const char *text_clean,
+    int32_t sid, float speed, wfloat_audio_result_t **out_audio);
+
+void wfloat_tts_unit_audio_destroy(wfloat_audio_result_t *audio);
+
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

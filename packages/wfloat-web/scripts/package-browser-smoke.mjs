@@ -49,6 +49,10 @@ try {
     stdio: "inherit",
   });
   run("npm", ["run", "build"], { cwd: consumerDir, stdio: "inherit" });
+  if (process.env.WFLOAT_SMOKE_PLAYWRIGHT && process.env.WFLOAT_SMOKE_MODEL) {
+    const { runPackedRuntimeSmoke } = await import('./package-runtime-smoke.mjs');
+    await runPackedRuntimeSmoke(consumerDir, process.env.WFLOAT_SMOKE_PLAYWRIGHT, process.env.WFLOAT_SMOKE_MODEL);
+  }
 } finally {
   if (!process.env.WFLOAT_KEEP_PACKAGE_SMOKE_TMP) {
     rmSync(tmpDir, { recursive: true, force: true });
