@@ -69,6 +69,17 @@ not an npm installation requirement.
 
 ## Verify the distribution
 
+CI strips Android libraries with the NDK's `llvm-strip --strip-unneeded` before
+packaging, verifying that dynamic exports, dependency metadata, and build IDs
+remain unchanged. Debug symbols are retained separately in the
+`wfloat-rn-debug-symbols-<abi>` workflow artifacts for 90 days. Download those
+artifacts before they expire if longer retention is needed.
+
+The compressed npm tarball must fit our 180 MiB publishing budget. This is a
+conservative project limit, not npm's documented maximum; the upload request
+also contains base64 overhead. Android and iOS consumer builds use that same
+tarball before publication.
+
 From the React Native package directory in a full source checkout, run
 `yarn test:portable` for the shared contract and native-adapter regression tests.
 The runner reuses the checked-in web tests and repository dependencies; its

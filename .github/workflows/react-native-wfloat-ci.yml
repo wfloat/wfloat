@@ -122,6 +122,21 @@ jobs:
           yarn rn:build-natives android
           yarn rn:stage-natives android
 
+      - name: Strip Android distribution binaries
+        working-directory: packages/react-native-wfloat
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/26.1.10909125"
+          node --test scripts/tests/strip-android.test.mjs
+          node scripts/strip-android-symbols.mjs android/src/main/jniLibs "${RUNNER_TEMP}/wfloat-debug-symbols"
+
+      - name: Retain Android debug symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: wfloat-rn-debug-symbols-${{ matrix.abi }}
+          path: ${{ runner.temp }}/wfloat-debug-symbols/
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Archive Android ABI artifacts
         run: |
           tar -czf "react-native-wfloat-android-${{ matrix.abi }}.tgz" \
@@ -239,12 +254,15 @@ jobs:
 
           yarn prepare
 
+          node --test scripts/tests/package-size.test.mjs
+
           rm -rf pack-output
           mkdir -p pack-output
           npm pack --ignore-scripts --pack-destination pack-output
 
           tarball="$(find pack-output -maxdepth 1 -type f -name '*.tgz' -print -quit)"
           test -n "${tarball}"
+          node scripts/check-package-size.mjs "${tarball}"
           package_files="$(tar -tzf "${tarball}")"
 
           while IFS= read -r expected_file; do
