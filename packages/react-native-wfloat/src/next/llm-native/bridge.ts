@@ -36,8 +36,10 @@ class BridgeBackend implements NativeBackend {
     } finally {
       signal?.removeEventListener('abort', cancel);
       if (!done) abort.abort();
-      await settled;
-      this.active = undefined;
+      // Babel's RN async-generator helper resumes an awaited return() with
+      // generator.return(), skipping statements after an await in finally.
+      // Keep ownership release inside the awaited promise's cleanup instead.
+      await settled.finally(() => { this.active = undefined; });
     }
   }
   async unload() {

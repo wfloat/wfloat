@@ -284,6 +284,116 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(data.exists())
             self.assertTrue((self.root / 'shared' / shared['sha256'] / 'espeak.zip').exists())
 
+    def test_piper_kokoro_shared_install_reuse_leases_and_repair(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as zip_file:
+            zip_file.writestr('espeak-ng-data/test', b'voice')
+        self.payloads['/espeak.zip'] = archive.getvalue()
+        shared = self.asset('/espeak.zip')
+        models = {
+            'test/piper': {'family': 'piper', 'model': self.asset('/model.bin')},
+            'test/kokoro': {'family': 'kokoro', 'model': self.asset('/model.bin')},
+        }
+        class Model:
+            def __init__(model, lease):
+                model.lease = lease
+            def unload(model):
+                model.lease.release()
+        with patch.dict(lifecycle.MODEL_ASSETS, models), patch.object(
+                lifecycle, 'SHARED_ASSETS', {'espeak_ng_data_zip': shared}):
+            loaded = []
+            data = self.root / 'espeak' / shared['sha256'] / 'espeak-ng-data/test'
+            try:
+                for model_id in models:
+                    events = []
+                    def initialize(lease):
+                        self.assertEqual(data.read_bytes(), b'voice')
+                        return Model(lease)
+                    loaded.append(lifecycle.load_with_lifecycle(
+                        model_id, initialize, cache_dir=self.root, on_progress=events.append))
+                    self.assertEqual(events[-1].phase, 'ready')
+                    with self.assertRaises(lifecycle.ModelAssetsInUseError):
+                        lifecycle.delete_model_assets(model_id, cache_dir=self.root)
+                    lifecycle.download_model(model_id, cache_dir=self.root)
+                self.assertEqual(sum(path == '/espeak.zip' for path, _ in self.requests), 1)
+                # Unload/delete one family while the other retains the same data.
+                loaded[0].unload()
+                lifecycle.delete_model_assets('test/piper', cache_dir=self.root)
+                self.assertEqual(data.read_bytes(), b'voice')
+                # An incomplete installation cannot be replaced under Kokoro's lease.
+                (data.parent.parent / '.ready').unlink()
+                with self.assertRaises(lifecycle.ModelAssetsInUseError):
+                    lifecycle.download_model('test/piper', cache_dir=self.root)
+                self.assertEqual(data.read_bytes(), b'voice')
+                loaded[1].unload()
+                with patch.object(lifecycle, 'urlopen', side_effect=AssertionError('redownload')):
+                    lifecycle.download_model('test/piper', cache_dir=self.root)
+                self.assertTrue((data.parent.parent / '.ready').is_file())
+            finally:
+                for model in loaded:
+                    model.unload()
+            # Initialization failures release both model and dependency locks.
+            with self.assertRaisesRegex(RuntimeError, 'initialization failed'):
+                lifecycle.load_with_lifecycle('test/piper', lambda lease: (_ for _ in ()).throw(
+                    RuntimeError('initialization failed')), cache_dir=self.root)
+            (data.parent.parent / '.ready').unlink()
+            lifecycle.download_model('test/kokoro', cache_dir=self.root)
+            self.assertEqual(data.read_bytes(), b'voice')
+
+    def test_shared_espeak_lease_protects_other_process_repair(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as zip_file:
+            zip_file.writestr('espeak-ng-data/test', b'voice')
+        self.payloads['/espeak.zip'] = archive.getvalue()
+        shared = {'espeak_ng_data_zip': self.asset('/espeak.zip')}
+        self.metadata['family'] = 'piper'
+        with patch.object(lifecycle, 'SHARED_ASSETS', shared):
+            self.download()
+            process, state = self.child('lease', shared_assets=shared)
+            self.assertEqual(state, 'locked')
+            marker = self.root / 'espeak' / shared['espeak_ng_data_zip']['sha256'] / '.ready'
+            marker.unlink()
+            # Use a different model so only the shared dependency lock can block repair.
+            with patch.dict(lifecycle.MODEL_ASSETS, {'test/kokoro': {**self.metadata, 'family': 'kokoro'}}):
+                try:
+                    with self.assertRaises(lifecycle.ModelAssetsInUseError):
+                        lifecycle.download_model('test/kokoro', cache_dir=self.root)
+                finally:
+                    process.communicate('release\n', timeout=5)
+                lifecycle.download_model('test/kokoro', cache_dir=self.root)
+                self.assertTrue(marker.is_file())
+
+    def test_kitten_shared_espeak_install_lease_and_reuse(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as zip_file:
+            zip_file.writestr('espeak-ng-data/test', b'voice')
+        self.payloads['/espeak.zip'] = archive.getvalue()
+        self.metadata['family'] = 'kitten'
+        shared = self.asset('/espeak.zip')
+        with patch.object(lifecycle, 'SHARED_ASSETS', {'espeak_ng_data_zip': shared}):
+            self.download()
+            data = self.root / 'espeak' / shared['sha256'] / 'espeak-ng-data/test'
+            self.assertEqual(data.read_bytes(), b'voice')
+            lease = lifecycle.acquire_model_asset_lease(self.model_id, cache_dir=self.root)
+            try:
+                with self.assertRaises(lifecycle.ModelAssetsInUseError):
+                    lifecycle.delete_model_assets(self.model_id, cache_dir=self.root)
+                with self.assertRaises(lifecycle.ModelAssetsInUseError):
+                    with lifecycle._file_access(self.root, 'espeak-' + shared['sha256']):
+                        self.fail('shared data lease was not held')
+                with patch.object(lifecycle, 'urlopen', side_effect=AssertionError('redownload')):
+                    self.download()
+            finally:
+                lease.release()
+            lifecycle.delete_model_assets(self.model_id, cache_dir=self.root)
+            self.assertEqual(data.read_bytes(), b'voice')
+
+    def test_espeak_only_added_to_enabled_tts_families(self):
+        for family in ('pocket', 'whisper', 'test'):
+            with self.subTest(family=family):
+                self.metadata['family'] = family
+                self.assertFalse(any(asset.shared for asset in lifecycle._assets(self.model_id, self.root)))
+
     def test_multiple_files_aggregate_progress(self):
         self.payloads['/tokens.txt'] = b'tokens'
         self.metadata['tokens'] = self.asset('/tokens.txt')
@@ -418,14 +528,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(initialized, [])
         self.assertIsInstance(errors[0], lifecycle.ModelAssetsDeletedError)
 
-    def child(self, mode, *, model_id=None, metadata=None):
+    def child(self, mode, *, model_id=None, metadata=None, shared_assets=None):
         script = r"""
 import json, sys
 from pathlib import Path
 from wfloat import _lifecycle as lifecycle
-root, model_id, metadata, origin, mode = json.loads(sys.argv[1])
+root, model_id, metadata, origin, mode, shared_assets = json.loads(sys.argv[1])
 lifecycle.MODEL_ASSETS = {model_id: metadata}
 lifecycle.REGISTRY_ORIGIN = origin
+if shared_assets is not None:
+    lifecycle.SHARED_ASSETS = shared_assets
 try:
     if mode == 'lease':
         lease = lifecycle.acquire_model_asset_lease(model_id, cache_dir=Path(root))
@@ -466,7 +578,7 @@ except lifecycle.ModelAssetsInUseError:
     print('busy', flush=True)
 """
         arguments = json.dumps([str(self.root), model_id or self.model_id, metadata or self.metadata,
-                                lifecycle.REGISTRY_ORIGIN, mode])
+                                lifecycle.REGISTRY_ORIGIN, mode, shared_assets])
         process = subprocess.Popen([sys.executable, '-u', '-c', script, arguments],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)

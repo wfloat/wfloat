@@ -46,7 +46,9 @@ export interface SchemaValidation {
   issues: Array<{ code: string; message: string; instancePath: string; schemaPath: string }>;
 }
 export interface NativeLoadOptions {
-  model: Blob | ArrayBuffer;
+  model?: Blob | ArrayBuffer;
+  /** Internal ordered GGUF shards, transferred to the worker without cloning. */
+  modelFiles?: Array<{ name: string; data: Blob | ArrayBuffer }>;
   /** Used only by the loader; never cloned into the worker. */
   signal?: AbortSignal;
   contextSize: number;

@@ -1,5 +1,6 @@
 import { acquireModelAssetLease, downloadModel } from '../assets/index.js';
 import { checkAbort, notify } from '../assets/types.js';
+import { isComposite, readComposite } from '../assets/composite.js';
 import { readAsset } from '../assets/store.js';
 import { SHERPA_WASM_URL } from '../runtime/urls.js';
 import { MODEL_ASSETS, REGISTRY_ORIGIN } from '../worker/generatedModelUrls.js';
@@ -23,7 +24,9 @@ async function load(id: string, options: LoadSpeechToTextOptions, live: boolean)
     const assets = { wasm: await readAsset(SHERPA_WASM_URL, { signal: lease.signal }) } as WorkerAssets;
     const records = MODEL_ASSETS[id as keyof typeof MODEL_ASSETS];
     for (const [key, value] of Object.entries(records)) {
-      if (typeof value === 'object' && 'path' in value) {
+      if (isComposite(value)) {
+        (assets as unknown as Record<string, Uint8Array>)[key] = await readComposite(value, lease.signal);
+      } else if (typeof value === 'object' && 'path' in value && ['tokens', 'encoder', 'decoder', 'joiner', 'preprocessor', 'uncached_decoder', 'cached_decoder', 'merged_decoder'].includes(key)) {
         (assets as unknown as Record<string, Uint8Array>)[key] = await readAsset(REGISTRY_ORIGIN + value.path, { signal: lease.signal });
       }
     }

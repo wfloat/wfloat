@@ -3,7 +3,7 @@ import { ensureHeapViews } from '../tts-next/sherpa.js';
 import type { SherpaModule } from '../wasm/sherpa-onnx-tts.js';
 import type { RecognitionOptions, TranscriptData, TranscriptSegment } from './types.js';
 import type { WorkerAssets } from './backend-types.js';
-import { sttCapabilities, validateRecognitionOptions, normalizeZipformerHotwords } from './capabilities.js';
+import { sttCapabilities, validateRecognitionOptions, normalizeZipformerHotwords, recognitionLanguage } from './capabilities.js';
 
 /** Caught Ort exceptions are logged and swallowed by vendored offline decoders. */
 export class NativeDiagnostics {
@@ -19,14 +19,20 @@ export class NativeDiagnostics {
 }
 export function recognizerConfig(modelId: string, options: RecognitionOptions = {}) {
   validateRecognitionOptions(modelId, options);
-  const { family } = sttCapabilities(modelId);
+  const capabilities = sttCapabilities(modelId);
+  const { family } = capabilities;
   const base = { tokens: '/tokens.txt', numThreads: 1, provider: 'cpu', debug: 0 };
   if (family === 'whisper') return {
-    modelConfig: { ...base, modelType: 'whisper', whisper: { encoder: '/encoder.onnx', decoder: '/decoder.onnx', language: 'en', task: 'transcribe', tailPaddings: -1, enableTokenTimestamps: 0, enableSegmentTimestamps: options.timestamps === 'segment' ? 1 : 0 } },
+    modelConfig: { ...base, modelType: 'whisper', whisper: { encoder: '/encoder.onnx', decoder: '/decoder.onnx', language: options.language === undefined ? (capabilities.translation ? '' : 'en') : recognitionLanguage(options.language), task: options.task ?? 'transcribe', tailPaddings: -1, enableTokenTimestamps: 0, enableSegmentTimestamps: options.timestamps === 'segment' ? 1 : 0 } },
     decodingMethod: 'greedy_search', maxActivePaths: 4,
   };
   if (family === 'moonshine') return {
-    modelConfig: { ...base, moonshine: { preprocessor: '/preprocessor.onnx', encoder: '/encoder.onnx', uncachedDecoder: '/uncached_decoder.onnx', cachedDecoder: '/cached_decoder.onnx' } },
+    modelConfig: { ...base, moonshine: capabilities.moonshineVersion === 2 ? { encoder: '/encoder.ort', mergedDecoder: '/merged_decoder.ort', preprocessor: '', uncachedDecoder: '', cachedDecoder: '' } : { preprocessor: '/preprocessor.onnx', encoder: '/encoder.onnx', uncachedDecoder: '/uncached_decoder.onnx', cachedDecoder: '/cached_decoder.onnx', mergedDecoder: '' } },
+    decodingMethod: 'greedy_search', maxActivePaths: 4,
+  };
+  if (family === 'parakeet-tdt') return {
+    featConfig: { sampleRate: 16000, featureDim: 128 },
+    modelConfig: { ...base, modelType: 'nemo_transducer', transducer: { encoder: '/encoder.onnx', decoder: '/decoder.onnx', joiner: '/joiner.onnx' } },
     decodingMethod: 'greedy_search', maxActivePaths: 4,
   };
   const hotwords = normalizeZipformerHotwords(options.hotwords).join('\n');
@@ -53,10 +59,13 @@ export function transcriptFromNative(raw: Record<string, unknown>, options: Reco
   if (raw.text.trim() && !texts.length) throw new Error('Sherpa did not return requested segment timestamps.');
   const segments: TranscriptSegment[] = texts.map((text, index) => {
     const startMs = starts[index] * 1000;
-    const endMs = startMs + durations[index] * 1000;
+    const rawEndMs = startMs + durations[index] * 1000;
     // In segment-only mode a native unclosed segment can have zero duration;
     // never relabel that fallback as a measured endpoint.
-    if (typeof text !== 'string' || typeof starts[index] !== 'number' || typeof durations[index] !== 'number' || !Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs < 0 || endMs < startMs || (text.trim() && endMs === startMs) || endMs > durationMs + 20) throw new Error('Sherpa returned invalid segment timing (including possible unclosed Whisper segment).');
+    if (typeof text !== 'string' || typeof starts[index] !== 'number' || typeof durations[index] !== 'number' || !Number.isFinite(startMs) || !Number.isFinite(rawEndMs) || startMs < 0 || rawEndMs < startMs || (text.trim() && rawEndMs === startMs)) throw new Error('Sherpa returned invalid segment timing (including possible unclosed Whisper segment).');
+    // Bound predicted endpoints to this decode window before timeline offsets.
+    const endMs = Math.min(rawEndMs, durationMs);
+    if (startMs > durationMs || (text.trim() && endMs <= startMs)) throw new Error('Sherpa returned segment timing outside the supplied audio.');
     return { text, timing: { startMs, endMs } };
   });
   return { text: raw.text, segments };
@@ -81,16 +90,24 @@ export class SherpaRecognizer {
     this.kind = sttCapabilities(modelId).kind;
     ensureHeapViews(module);
     if (this.kind === 'online') this.tokenText = new TextDecoder().decode(assets.tokens);
-    const required: (keyof WorkerAssets)[] = sttCapabilities(modelId).family === 'moonshine' ? ['tokens', 'encoder', 'preprocessor', 'uncached_decoder', 'cached_decoder'] : this.kind === 'online' ? ['tokens', 'encoder', 'decoder', 'joiner'] : ['tokens', 'encoder', 'decoder'];
+    const capabilities = sttCapabilities(modelId);
+    const v2 = capabilities.family === 'moonshine' && capabilities.moonshineVersion === 2;
+    const required: (keyof WorkerAssets)[] = capabilities.family === 'moonshine'
+      ? v2 ? ['tokens', 'encoder', 'merged_decoder'] : ['tokens', 'encoder', 'preprocessor', 'uncached_decoder', 'cached_decoder']
+      : (this.kind === 'online' || capabilities.family === 'parakeet-tdt') ? ['tokens', 'encoder', 'decoder', 'joiner'] : ['tokens', 'encoder', 'decoder'];
+    const assetPath = (key: keyof WorkerAssets) => key === 'tokens' ? '/tokens.txt' : `/${key}.${v2 ? 'ort' : 'onnx'}`;
     for (const key of required) {
       const bytes = assets[key];
       if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw new Error(`Missing STT asset: ${key}`);
-      module.FS.writeFile(key === 'tokens' ? '/tokens.txt' : `/${key}.onnx`, bytes);
+      module.FS.writeFile(assetPath(key), bytes, { canOwn: true });
     }
     try {
       diagnostics.run(() => {
         this.recognizer = factories[this.kind](recognizerConfig(modelId), module);
         if (!this.recognizer.handle) throw new Error('Sherpa failed to create the STT recognizer.');
+        // Offline ORT sessions own their weights after load. Online hotword
+        // reconfiguration still needs the files, so retain those until unload.
+        if (this.kind === 'offline') for (const key of required) module.FS.unlink(assetPath(key));
       });
     } catch (error) {
       if (this.recognizer?.handle) this.recognizer.free();

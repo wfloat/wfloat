@@ -215,9 +215,20 @@ int32_t ValidateConfig(const StoredSttConfig &config) {
       }
       break;
     case WFLOAT_STT_FAMILY_MOONSHINE:
-      if (config.preprocessor_path.empty() || config.encoder_path.empty() ||
-          config.uncached_decoder_path.empty() ||
-          config.cached_decoder_path.empty()) {
+      if (config.encoder_path.empty()) {
+        return kStatusInvalidArgument;
+      }
+      // The otherwise unused decoder_path ABI slot carries Moonshine v2's
+      // merged decoder. Keep v1 and v2 contracts mutually exclusive.
+      if (!config.decoder_path.empty()) {
+        if (!config.preprocessor_path.empty() ||
+            !config.uncached_decoder_path.empty() ||
+            !config.cached_decoder_path.empty()) {
+          return kStatusInvalidArgument;
+        }
+      } else if (config.preprocessor_path.empty() ||
+                 config.uncached_decoder_path.empty() ||
+                 config.cached_decoder_path.empty()) {
         return kStatusInvalidArgument;
       }
       break;
@@ -319,12 +330,16 @@ SherpaOnnxOfflineRecognizerConfig BuildRecognizerConfig(
           config.uncached_decoder_path.c_str();
       recognizer_config.model_config.moonshine.cached_decoder =
           config.cached_decoder_path.c_str();
+      recognizer_config.model_config.moonshine.merged_decoder =
+          config.decoder_path.c_str();
       break;
     case WFLOAT_STT_FAMILY_PARAKEET_CTC:
       recognizer_config.model_config.nemo_ctc.model =
           config.model_path.c_str();
       break;
     case WFLOAT_STT_FAMILY_PARAKEET_TDT:
+      // Avoid auto-detection opening an additional encoder session at load time.
+      recognizer_config.model_config.model_type = "nemo_transducer";
       recognizer_config.model_config.transducer.encoder =
           config.encoder_path.c_str();
       recognizer_config.model_config.transducer.decoder =
@@ -419,6 +434,9 @@ int32_t SetRecognizerConfig(wfloat_stt_model_t *model, const char *language,
 
   SherpaOnnxOfflineRecognizerConfig config =
       BuildRecognizerConfig(model->config, language, task);
+  // Whisper SetConfig copies decoder options; it does not reload ONNX sessions.
+  // Reuse this recognizer when returning from an explicit language/task to the
+  // model defaults: replacing it can overlap weights with a retained ORT arena.
   SherpaOnnxOfflineRecognizerSetConfig(model->recognizer, &config);
   return kStatusOk;
 }

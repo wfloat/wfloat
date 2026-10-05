@@ -6,6 +6,8 @@ The current entry points are `loadTextToSpeech`, `loadLanguageModel`,
 `loadTtsModel`/`loadLlmModel`/`loadSttModel` exports remain available during migration; their
 legacy singleton worker behavior is separate from these APIs.
 
+The model tables describe IDs integrated in this branch. Publication and platform qualification are ongoing; inclusion is not a claim of completed testing on every platform.
+
 ## Download, load, unload, delete
 
 ```ts
@@ -46,6 +48,34 @@ A load signal is detached after successful initialization. Abort pending
 load/download promises with a caller-owned signal; unload completed models.
 
 ## Language generation
+
+| Model IDs | Behavior |
+| --- | --- |
+| `HuggingFaceTB/SmolLM2-360M-Instruct` | Existing text-generation model. |
+| `Qwen/Qwen3-0.6B`, `Qwen/Qwen3-1.7B` | Embedded thinking template; reasoning enabled unless explicitly disabled. |
+| `Qwen/Qwen3-4B` | Same thinking behavior; limited smoke qualification only (see below). |
+| `google/gemma-3-270m-it`, `google/gemma-3-1b-it` | Embedded Gemma text-chat template. |
+
+Qwen 4B has passed bounded Web, Python and RN iOS/Android generation and
+cached-reload checks at context 2048 with reasoning disabled. These checks do
+not qualify physical-device performance, reasoning, tools, structured output
+or long-context behavior for 4B.
+
+Qwen and Gemma default to a 2048-token context. Model files, quantization and shard
+layout are selected internally; there is no public quantization or shard selector.
+Larger models need more memory even when their downloads are split into shards.
+Qwen sampling defaults follow the reasoning mode; explicit sampling options take
+precedence. Use `reasoning: false` to disable thinking and bound generation with `maxTokensPerRound`.
+
+`loadLanguageModel('google/gemma-3-1b-it')` uses the embedded Gemma chat template.
+Its GGUF shards are downloaded, verified, and loaded together internally; callers
+do not select shards or quantization. Download progress includes accompanying
+Gemma terms, prohibited-use policy, notice, and provenance files. Gemma model
+use/distribution is subject to those model-specific terms; the SDK license is
+unchanged. Browser memory requirements exceed the approximately 806 MB of weights.
+Private browsing can impose a smaller storage quota than its reported estimate;
+a quota failure rejects the load with `AssetStorageError` and retains the browser
+error as its cause.
 
 ```ts
 import { loadLanguageModel, type Message } from '@wfloat/wfloat-web';
@@ -219,6 +249,32 @@ warn; unsupported tools/schema capabilities must not be silently ignored.
 
 ## Speech
 
+Additional speech-generation IDs use the existing loader and `voiceId` option:
+
+| Model ID | Language / voice selection |
+| --- | --- |
+| `rhasspy/piper-en_US-lessac-medium` | US English; voice 0. |
+| `rhasspy/piper-en_US-amy-medium` | US English; voice 0. |
+| `rhasspy/piper-en_US-ryan-medium` | US English; voice 0. |
+| `rhasspy/piper-en_GB-alba-medium` | British English; voice 0. |
+| `rhasspy/piper-de_DE-thorsten-medium` | German; voice 0. |
+| `rhasspy/piper-fr_FR-siwis-medium` | French; voice 0. |
+| `rhasspy/piper-en_US-libritts-high` | US English; speaker IDs 0–903. |
+| `hexgrad/Kokoro-82M` | American/British English, Spanish, French, Hindi, Italian, Brazilian Portuguese and Mandarin; named voices or numeric IDs. Japanese excluded. |
+| `KittenML/kitten-tts-nano-0.8` | English; eight named voices or IDs 0–7; 24 kHz output. |
+| `KittenML/kitten-tts-mini-0.8` | English; eight named voices or IDs 0–7; 24 kHz output. |
+
+Kokoro Japanese voices (`jf_*`, `jm_*`, numeric IDs 37–41) are rejected: the current
+frontend routes Han characters through Chinese pronunciation. Piper/Kokoro/Kitten do not
+support reference-audio voice cloning. Shared eSpeak data is downloaded internally.
+
+Kitten voice IDs 0–7 map to `Jasper`, `Bella`, `Bruno`, `Luna`, `Hugo`, `Rosie`,
+`Leo`, and `Kiki`. Kitten requires the updated 0.8 frontend runtime and accepts
+at most 65,536 Unicode codepoints per synthesis call. Limited Web, Python and
+RN iOS/Android smoke checks have passed for Nano and Mini. The iOS runtime
+requires the bundled ONNX Runtime 1.18.1 update for these exports.
+These checks do not establish broad platform or pronunciation-quality coverage.
+
 ```ts
 import { loadTextToSpeech } from '@wfloat/wfloat-web';
 const speech = await loadTextToSpeech('wfloat/wfloat-tts');
@@ -349,28 +405,33 @@ and queued work, stops owned capture, and waits for safe native cleanup.
 
 ### Current STT model capabilities
 
-All three registry models accept complete recordings and live sessions:
+| Model IDs | Languages / tasks | Live recognition | Optional capabilities |
+| --- | --- | --- | --- |
+| `openai/whisper-tiny-en` | English transcription | Windowed | Segment timestamps |
+| `openai/whisper-tiny`, `openai/whisper-base`, `openai/whisper-small` | Multilingual transcription; translation to English | Windowed | Segment timestamps |
+| `UsefulSensors/moonshine-tiny`, `moonshine-ai/moonshine-base` | English transcription | Windowed | — |
+| `k2-fsa/streaming-zipformer-en` | English transcription | Native incremental | English hotwords |
+| `shaojieli/streaming-zipformer-fr` | French transcription | Native incremental | — |
+| `k2-fsa/streaming-zipformer-zh-en` | Chinese/English transcription | Native incremental | — |
+| `nvidia/parakeet-tdt-0.6b-v3` | Automatic recognition of 25 languages; transcription only | Windowed | — |
 
-- `k2-fsa/streaming-zipformer-en`: native incremental recognition, endpoint detection,
-  and hotwords using its verified English tokenizer and modified beam search.
-- `openai/whisper-tiny-en`: offline recognition and optional segment timestamps;
-  live sessions use bounded overlapping
-  windows and reconcile text. No standalone VAD is downloaded.
-- `UsefulSensors/moonshine-tiny`: offline recognition with the same windowed live adapter.
+These adapters accept complete recordings and live sessions. Windowed live
+recognition reruns offline recognition on bounded overlapping audio; it has
+different latency and cost from native incremental recognition. Zipformer's
+`language` validates compatibility rather than forcing the bilingual decoder.
 
-Windowed live recognition reprocesses context and has model-dependent update latency;
-it is not equivalent in cost to a native streaming model. Continuous speech, accents,
-noise and very slow devices affect accuracy and responsiveness.
+Parakeet requires omitting `language`; translation, hotwords and word/segment
+timestamp requests are unsupported. Its transport parts are reconstructed
+internally before loading. Word timestamps are unavailable for the listed models;
+segment timestamps are available only for Whisper. Predicted segment endpoints
+are capped to the supplied audio duration (per processing window); text and start
+times are preserved. Invalid or wholly out-of-range timings still fail. Other timing fields must not
+be interpreted as word alignments. Unsupported options reject.
 
-Recognition options belong on transcribe/createSession: `language`, `task`,
-`timestamps`, and `hotwords`. Current assets are English-only and support
-transcription, not translation. `timestamps: "segment"` is supported by Whisper;
-word timing is not supported by the current assets. `hotwords` is supported by
-Zipformer (English letters, apostrophes and spaces; no native decoder control syntax).
-Changing hotwords rebuilds that model instance’s recognizer between operations,
-which has initialization and temporary memory cost. Unsupported combinations reject. Unsupported options fail before new
-work is scheduled. Numeric confidence and token emission times are not passed off
-as word alignments. Do not assume capabilities merely from the model family name.
+Recognition options belong on `transcribe()` / `createSession()`: `language`,
+`task`, `timestamps`, and `hotwords`. English Zipformer hotwords accept English
+letters, apostrophes and spaces; changing them rebuilds the recognizer between
+operations, with initialization and temporary memory cost.
 
 Legacy SttModel keeps its old signatures. Legacy root type names that collide with
 the new surface are exported as `LegacyTranscribeOptions` and
@@ -449,3 +510,45 @@ consumer detaches it without stopping others. Capture failure fails remaining
 consumers. `stop()` is terminal and stops capture without finishing sessions;
 create a new helper for another recording. The previous capture utility remains
 available as `createLegacyMicrophoneCapture` during migration.
+
+## Pocket TTS
+
+`loadTextToSpeech('kyutai/pocket-tts')` uses the January 2026 English INT8
+Pocket export. Other upstream Pocket versions/languages are not implied.
+
+```ts
+const model = await loadTextToSpeech('kyutai/pocket-tts');
+const generation = model.generate('Hello from your device.', {
+  referenceAudio: recording, // File/Blob, AudioBuffer, or { samples, sampleRate }
+  temperature: 0.7,
+  seed: 42,
+  inferenceSteps: 5,
+});
+const result = await generation.result();
+generation.dispose();
+await model.unload();
+```
+
+These options also apply to `speak`, dialogue defaults, and individual dialogue
+segments. Use `voiceId: 'alba'` instead of `referenceAudio` for the bundled preset;
+Alba is also the default when neither is supplied. A segment's explicit voice or
+reference replaces the dialogue's default voice selection. Supplying both on the
+same resolved segment is an error. Reference audio is normalized to mono 24 kHz;
+provide a nonempty recording of at most ten seconds. Caller PCM is snapshotted
+before queued work; compressed audio decoding errors reject the generation.
+
+`temperature` is a finite nonnegative sampling-noise control (default `0.7`).
+Positive values below the smallest normal float32 (`2 ** -126`) are rejected
+because the native parser cannot reliably accept them; zero is supported.
+`inferenceSteps` is a positive integer flow-step count (default `5`): more steps
+cost more computation and do not guarantee better speech. `seed` is an optional
+integer from `0` through `2147483647`; omission uses fresh randomness. Seeds apply
+to each prepared speech unit, and exact equality across devices/runtimes is not
+promised. `emotion`, `intensity`, and `speed` have no effect on this Pocket
+adapter and produce a warning if explicitly supplied. Conversely, Wfloat TTS
+warns for the three Pocket sampling controls and rejects reference audio.
+
+Synthesis yields bounded text units, with unit-level highlighting rather than
+word alignment. Cancellation takes effect between units; Pocket's current latent
+inference loop cannot be interrupted mid-unit. The existing generation retention,
+playback arbitration, download, and cleanup contracts still apply.

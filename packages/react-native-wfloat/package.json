@@ -22,7 +22,7 @@
     "package:verify": "node scripts/verify-native-package.mjs --pack",
     "prepack": "node scripts/verify-native-package.mjs",
     "test:native-packaging": "node --test scripts/tests/*.test.mjs",
-    "test:portable": "node --test src/next/llm-next/__tests__/portable.test.mjs"
+    "test:portable": "node --test src/next/llm-next/__tests__/portable.test.mjs src/next/assets/__tests__/*.test.mjs src/next/stt-next/__tests__/*.test.mjs src/next/tts-next/__tests__/*.test.mjs"
   },
   "exports": {
     ".": {

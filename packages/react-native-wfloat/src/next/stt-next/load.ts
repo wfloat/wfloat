@@ -10,6 +10,7 @@ async function load(id: string, options: LoadSpeechToTextOptions, live: boolean)
   const lease = await loadAssets(id, 'stt', options);
   const native = new NativeInstance();
   try {
+    if (lease.family !== capabilities.family) throw new Error('Registry STT family does not match the model.');
     notify(options.onProgress, { phase: 'loading' });
     const loaded = await native.call<{ kind: 'offline' | 'online' }>('load', { task: 'stt', modelId: id, family: lease.family, paths: lease.paths, options: {} }, { signal: lease.signal });
     if (loaded.kind !== capabilities.kind) throw new Error('Native recognizer kind does not match the model.');

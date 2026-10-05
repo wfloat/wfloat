@@ -7,7 +7,8 @@ import { checkAbort, notify, ModelAssetsDeletedError, type DownloadModelOptions 
 export * from './types';
 
 type File = { path: string; sha256: string; sizeBytes: number };
-type Asset = File & { name: string; url: string; key: string; shared: boolean };
+type Composite = { parts: File[]; sha256: string; sizeBytes: number; filename: string };
+type Asset = { name: string; sha256: string; sizeBytes: number; key: string; shared: boolean; url?: string; parts?: Asset[] };
 export type Task = 'tts' | 'stt' | 'vad' | 'llm';
 function keyFor(url: string): string {
   // Registry URLs are ASCII; escape non-ASCII rather than depending on TextEncoder in Hermes.
@@ -19,16 +20,33 @@ function keyFor(url: string): string {
 export function modelManifest(id: string): { family: string; task: Task; assets: Asset[] } {
   if (!Object.prototype.hasOwnProperty.call(MODEL_ASSETS, id)) throw new TypeError(`Unknown model: ${id}`);
   const record = MODEL_ASSETS[id as keyof typeof MODEL_ASSETS];
-  const task: Task = id === 'wfloat/wfloat-tts' ? 'tts' : id === 'snakers4/silero-vad' ? 'vad' : id === 'HuggingFaceTB/SmolLM2-360M-Instruct' ? 'llm' : 'stt';
+  const family = 'family' in record ? record.family : 'wfloat';
+  const task: Task = ['wfloat', 'pocket', 'piper', 'kokoro', 'kitten'].includes(family) ? 'tts' : family === 'silero-vad' ? 'vad' : ['smollm', 'gemma3', 'qwen3'].includes(family) ? 'llm' : 'stt';
   const assets: Asset[] = [];
   const append = (name: string, file: File, shared: boolean) => {
     const url = REGISTRY_ORIGIN + file.path;
     assets.push({ ...file, name, url, key: keyFor(url), shared });
   };
   for (const [name, file] of Object.entries(record)) {
-    if (typeof file === 'object' && file && 'path' in file) append(name, file as File, false);
+    if (typeof file !== 'object' || !file) continue;
+    if ('parts' in file) {
+      const composite = file as unknown as Composite;
+      if (!Array.isArray(composite.parts) || !composite.parts.length ||
+          !/^[0-9a-f]{64}$/i.test(composite.sha256) || !Number.isSafeInteger(composite.sizeBytes) || composite.sizeBytes < 0 ||
+          (typeof composite.filename !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(composite.filename)) || composite.parts.some(part =>
+            !part || typeof part.path !== 'string' || !part.path.startsWith('/') || !/^[0-9a-f]{64}$/i.test(part.sha256) || !Number.isSafeInteger(part.sizeBytes) || part.sizeBytes < 0) ||
+          new Set(composite.parts.map(part => part.path)).size !== composite.parts.length ||
+          composite.parts.reduce((sum, part) => sum + part.sizeBytes, 0) !== composite.sizeBytes)
+        throw new TypeError(`Invalid composite asset: ${id}/${name}`);
+      const parts = composite.parts.map((part, i) => {
+        const url = REGISTRY_ORIGIN + part.path;
+        return { ...part, name: `${name}.part${i}`, url, key: keyFor(url), shared: false };
+      });
+      assets.push({ name, parts, sha256: composite.sha256, sizeBytes: composite.sizeBytes,
+        key: keyFor(`assembled:${id}/${name}/${composite.sha256}`), shared: false });
+    } else if ('path' in file) append(name, file as File, false);
   }
-  if (task === 'tts') append('espeak_data', Platform.OS === 'ios' ? SHARED_ASSETS.espeak_ng_data_aar : SHARED_ASSETS.espeak_ng_data_zip, true);
+  if (['wfloat', 'piper', 'kokoro', 'kitten'].includes(family)) append('espeak_data', Platform.OS === 'ios' ? SHARED_ASSETS.espeak_ng_data_aar : SHARED_ASSETS.espeak_ng_data_zip, true);
   return { family: 'family' in record ? record.family : 'wfloat', task, assets };
 }
 
@@ -59,7 +77,8 @@ function wait<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) abort();
   });
 }
-async function acquire(asset: Asset, signal: AbortSignal, progress: (bytes: number) => void): Promise<{path: string}> {
+type Cached = {path: string; sizeBytes: number} | null;
+async function acquire(asset: Asset, signal: AbortSignal, progress: (bytes: number) => void, cachedParts?: Cached[]): Promise<{path: string}> {
   checkAbort(signal);
   let transfer = transfers.get(asset.key);
   if (transfer?.controller.signal.aborted) {
@@ -69,14 +88,28 @@ async function acquire(asset: Asset, signal: AbortSignal, progress: (bytes: numb
   if (!transfer) {
     const controller = new OperationController();
     const created: Transfer = { controller, listeners: new Set(), bytes: 0, promise: Promise.resolve({path: ''}) };
-    created.promise = request<{path: string}>({ op: 'assetDownload', ...asset }, {
+    created.promise = (asset.parts ? (async () => {
+      const bytes = asset.parts!.map((part, i) => cachedParts?.[i]?.sizeBytes === part.sizeBytes ? part.sizeBytes : 0);
+      created.bytes = bytes.reduce((a, b) => a + b, 0);
+      for (let i = 0; i < asset.parts!.length; i++) {
+        if (cachedParts?.[i]?.sizeBytes === asset.parts![i]!.sizeBytes) continue;
+        await acquire(asset.parts![i]!, controller.signal, value => {
+          bytes[i] = value;
+          created.bytes = bytes.reduce((a, b) => a + b, 0);
+          for (const listener of created.listeners) listener(created.bytes);
+        });
+      }
+      checkAbort(controller.signal);
+      return request<{path: string}>({ op: 'assetAssemble', key: asset.key, sha256: asset.sha256,
+        sizeBytes: asset.sizeBytes, parts: asset.parts!.map(({key, sha256, sizeBytes}) => ({key, sha256, sizeBytes})) }, {signal: controller.signal});
+    })() : request<{path: string}>({ op: 'assetDownload', ...asset }, {
       signal: controller.signal,
       onEvent: event => {
         if (event.type !== 'download') return;
         created.bytes = event.downloadedBytes;
         for (const listener of created.listeners) listener(created.bytes);
       },
-    }).finally(() => { if (transfers.get(asset.key) === created) transfers.delete(asset.key); });
+    })).finally(() => { if (transfers.get(asset.key) === created) transfers.delete(asset.key); });
     transfers.set(asset.key, created); transfer = created;
   }
   transfer.listeners.add(progress);
@@ -94,7 +127,11 @@ async function obtain(id: string, options: DownloadModelOptions, signal: AbortSi
   checkAbort(signal);
   notify(options.onProgress, { phase: 'checking' });
   const states = await Promise.all(assets.map(asset => request<{path: string;sizeBytes: number}|null>({ op: 'assetStat', key: asset.key, sha256: asset.sha256, sizeBytes: asset.sizeBytes }, {signal})));
-  const bytes = states.map((state, i) => state?.sizeBytes === assets[i]!.sizeBytes ? state.sizeBytes : 0);
+  const partStates = await Promise.all(assets.map(async (asset, i) =>
+    asset.parts && states[i]?.sizeBytes !== asset.sizeBytes ? Promise.all(asset.parts.map(part =>
+      request<Cached>({op:'assetStat', key:part.key, sha256:part.sha256, sizeBytes:part.sizeBytes}, {signal}))) : undefined));
+  const bytes = states.map((state, i) => state?.sizeBytes === assets[i]!.sizeBytes ? state.sizeBytes :
+    (partStates[i]?.reduce((sum, part, j) => sum + (part?.sizeBytes === assets[i]!.parts![j]!.sizeBytes ? part.sizeBytes : 0), 0) ?? 0));
   const paths: Record<string, string> = {};
   const totalBytes = assets.reduce((sum, asset) => sum + asset.sizeBytes, 0);
   let speedTime = Date.now(), speedBytes = bytes.reduce((a,b) => a+b,0);
@@ -112,14 +149,17 @@ async function obtain(id: string, options: DownloadModelOptions, signal: AbortSi
     checkAbort(signal);
     const state = states[i];
     if (state && state.sizeBytes === asset.sizeBytes) { paths[asset.name] = state.path; continue; }
+    const needsNetwork = bytes[i] !== asset.sizeBytes;
+    if (needsNetwork) progress();
     let sampled = false;
     const path = await acquire(asset, signal, value => {
       bytes[i] = value;
       // Initial progress may describe resumed bytes already on disk, not throughput.
       if (!sampled) { sampled = true; speedTime = Date.now(); speedBytes = bytes.reduce((a,b) => a+b,0); }
-      progress();
-    });
-    bytes[i] = asset.sizeBytes; paths[asset.name] = path.path; progress();
+      if (needsNetwork) progress();
+    }, partStates[i]);
+    bytes[i] = asset.sizeBytes; paths[asset.name] = path.path;
+    if (needsNetwork) progress();
     // Restart speed sample to avoid including long integrity checks in next asset's rate.
     speedTime = Date.now(); speedBytes = bytes.reduce((a,b) => a+b,0);
   }
@@ -138,8 +178,10 @@ export async function loadAssets(id: string, task: Task, options: DownloadModelO
   const owned = lease(id, options.signal);
   try {
     const paths = await obtain(id, options, owned.signal);
-    if (task === 'tts') {
-      const asset = manifest.assets.find(value => value.name === 'espeak_data')!;
+    // Pass the extracted data directory to every eSpeak-backed family, never the archive.
+    const espeak = manifest.assets.find(value => value.name === 'espeak_data' && value.shared);
+    if (espeak) {
+      const asset = espeak;
       paths.espeak_data = (await request<{path:string}>({op:'prepareEspeak', path:paths.espeak_data, key:asset.key, format:Platform.OS === 'ios' ? 'aar' : 'zip'}, {signal:owned.signal})).path;
     }
     checkAbort(owned.signal);
@@ -153,7 +195,7 @@ export function deleteModelAssets(id: string): Promise<void> {
   for (const controller of callers.get(id) ?? []) controller.abort(new ModelAssetsDeletedError());
   const deleting = (async () => {
     // Wait for cancelled writers to settle before physical removal.
-    for (const asset of manifest.assets.filter(value => !value.shared)) {
+    for (const asset of manifest.assets.flatMap(value => [value, ...(value.parts ?? [])]).filter(value => !value.shared)) {
       const transfer = transfers.get(asset.key);
       transfer?.controller.abort(new ModelAssetsDeletedError());
       await transfer?.promise.catch(() => {});

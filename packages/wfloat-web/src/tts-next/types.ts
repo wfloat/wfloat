@@ -8,7 +8,8 @@ export type PlaybackEvent =
   | { state: 'buffering' | 'playing' | 'paused' | 'finished' | 'cancelled'; highlight: SpeechHighlight | null }
   | { state: 'failed'; highlight: null; error: Error };
 export type PlaybackOptions = { onPlayback?: (event: PlaybackEvent) => void };
-export type SynthesisOptions = { voiceId?: string | number; emotion?: string; intensity?: number; speed?: number };
+export type ReferenceAudio = import('../stt-next/types.js').TranscriptionAudio;
+export type SynthesisOptions = { referenceAudio?: ReferenceAudio; temperature?: number; seed?: number; inferenceSteps?: number; voiceId?: string | number; emotion?: string; intensity?: number; speed?: number };
 export type SpeechSegment = SynthesisOptions & { text: string; pauseAfterMs?: number };
 export type GenerateOptions = SynthesisOptions & { pauseBetweenSegmentsMs?: number };
 export type SpeakOptions = GenerateOptions & PlaybackOptions;

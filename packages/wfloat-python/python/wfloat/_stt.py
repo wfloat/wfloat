@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
+from ._stt_contracts import ZIPFORMER_LANGUAGES, validate_options
 from ._results import StreamingTranscriptionResult, TranscriptionResult
 
 
@@ -92,6 +93,11 @@ class SttModel:
         task: Optional[str] = None,
         hotwords: Optional[str] = None,
     ) -> TranscriptionResult:
+        language = validate_options(self.model_id, language, task)
+        if hotwords is not None and self.model_id != 'k2-fsa/streaming-zipformer-en':
+            raise ValueError("Hotwords are supported only by the registered English Zipformer")
+        if self.model_id in ZIPFORMER_LANGUAGES:
+            language = None
         if isinstance(audio, (str, Path)):
             samples, resolved_sample_rate = _load_wav_audio(Path(audio))
         else:

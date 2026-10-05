@@ -351,3 +351,43 @@ test('a never-settling notification promise does not block synthesis, completion
  clocks[0].advance(2000);await until(()=>cleanup);await cleanup;
  assert.equal(events.at(-1),'finished');assert.equal(events.filter(e=>e==='finished').length,1);
 });
+
+const { validatePocketSegment, preparePocket } = await load('../../src/tts-next/pocket.ts');
+test('Pocket validates sampling and voice inputs before starting work', () => {
+  for (const option of [{temperature:NaN},{temperature:-1},{temperature:1e100},{seed:-1},{seed:1.1},{seed:2147483648},{inferenceSteps:0},{inferenceSteps:1.5}]) assert.throws(()=>validatePocketSegment({text:'Hello',...option}));
+  validatePocketSegment({text:'Hello',temperature:0,seed:0,inferenceSteps:1});
+  assert.throws(()=>validatePocketSegment({text:'Hello',voiceId:'alba',referenceAudio:{samples:new Float32Array(1),sampleRate:24000}}),/either/);
+  assert.throws(()=>validatePocketSegment({text:'Hello',voiceId:0}),/voiceId/);
+  assert.throws(()=>validatePocketSegment({text:'Hello',referenceAudio:{samples:new Float32Array(240001),sampleRate:24000}}),/10 seconds/);
+});
+test('Pocket prepared units bound long inputs and retain original Unicode offsets', () => {
+  for (const text of ['Hello world. '+ 'Another sentence! '.repeat(60), '👋'.repeat(301), 'a'.repeat(600), '   hello   ']) {
+    const units=preparePocket({text});
+    assert.ok(units.length);
+    for(const u of units){assert.equal(u.text,text.slice(u.textStart,u.textEnd));assert.ok(u.text.length<=200);assert.ok(!/^[\uDC00-\uDFFF]/.test(u.text));assert.ok(!/[\uD800-\uDBFF]$/.test(u.text));}
+    assert.equal(units.map(u=>u.text).join(''),text);
+  }
+});
+test('Pocket reference snapshots and dialogue voice overrides survive caller mutation',async()=>{
+  const b=backend();b.validate=validatePocketSegment;
+  const {model}=fixture(b);const samples=new Float32Array([.5]);
+  const g=model.generateDialogue([{text:'one'},{text:'two',voiceId:'alba'}],{referenceAudio:{samples,sampleRate:24000},temperature:.3,seed:42,inferenceSteps:3});
+  samples[0]=1;await g.finished;
+  assert.equal(b.calls[0].referenceAudio.samples[0],.5);
+  assert.equal(b.calls[1].referenceAudio,undefined);
+  assert.deepEqual(b.calls.map(c=>[c.temperature,c.seed,c.inferenceSteps]),[[.3,42,3],[.3,42,3]]);
+  await model.unload();
+});
+
+test('Pocket rejects float32 underflow and Wfloat rejects unsupported voice cloning', () => {
+  assert.throws(()=>validatePocketSegment({text:'Hello',temperature:1e-40}),/float32/);
+  assert.throws(()=>validateWfloatSegment({text:'Hello',referenceAudio:{samples:new Float32Array([.1]),sampleRate:24000}}),/referenceAudio/);
+});
+
+test('Pocket highlights retain long whitespace without feeding unbounded inference units', () => {
+  const text=' '.repeat(250)+'Hello'+' '.repeat(450);
+  const units=preparePocket({text});
+  assert.equal(units[0].textStart,0);
+  assert.equal(units.at(-1).textEnd,text.length);
+  assert.ok(units.every(u=>u.text.length<=200));
+});

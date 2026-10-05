@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { build } from '../../node_modules/esbuild/lib/main.js';
 const load = async path => {
   const result = await build({ entryPoints: [new URL(path, import.meta.url).pathname], bundle: true, write: false, platform: 'node', format: 'esm' });
-  return import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].text).toString('base64'));
+  return import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].text + '\n//# sourceURL=stt-backend-test-bundle.mjs').toString('base64'));
 };
 const { SherpaSpeechToTextBackend } = await load('../../src/stt-next/backend.ts');
 const { NativeDiagnostics, SherpaRecognizer, recognizerConfig, transcriptFromNative, zipformerVocabulary } = await load('../../src/stt-next/sherpa.ts');
@@ -25,7 +25,7 @@ function fixture(modelId = whisper, tokens = ZIPFORMER_TOKENS) {
   let result = { text: 'hello' }; let fail = false; let ready = 0;
   const stream = { handle: 2, acceptWaveform: (rate, samples) => { calls.push(['accept', rate, samples.length]); ready++; }, free: () => calls.push(['stream-free']), inputFinished: () => calls.push(['finish']) };
   const native = { handle: 1, createStream: () => stream, setConfig: config => calls.push(['config', config]), decode: () => { ready--; if (fail) diagnostics.print('Caught exception: ORT failed. Return an empty result.'); }, getResult: () => result, isReady: () => ready > 0, isEndpoint: () => false, reset: () => calls.push(['reset']), free: () => calls.push(['recognizer-free']) };
-  const module = { HEAP8: new Int8Array(1), HEAP32: new Int32Array(1), HEAPF32: new Float32Array(1), FS: { writeFile(path, bytes) { calls.push(['file', path, bytes]); } } };
+  const module = { HEAP8: new Int8Array(1), HEAP32: new Int32Array(1), HEAPF32: new Float32Array(1), FS: { writeFile(path, bytes) { calls.push(['file', path, bytes]); }, unlink(path) { calls.push(['unlink', path]); } } };
   const assets = Object.fromEntries(['tokens', 'encoder', 'decoder', 'joiner', 'preprocessor', 'uncached_decoder', 'cached_decoder'].map(key => [key, new Uint8Array([1])]));
   if (modelId === zipformer) assets.tokens = new TextEncoder().encode(tokens);
   const recognizer = new SherpaRecognizer(module, modelId, assets, diagnostics, { offline: () => native, online: config => { calls.push(['online-config', config]); return { ...native }; } });
@@ -62,6 +62,25 @@ test('Whisper configuration applies the coordinated timestamp capability', () =>
 test('segment timing rejects missing, sentinel-zero and malformed data, but valid silence succeeds', () => {
   for (const raw of [{ text: 'hello' }, { text: 'hello', segment_texts: ['hello'], segment_timestamps: [1], segment_durations: [0] }, { text: 'hello', segment_texts: ['hello'], segment_timestamps: ['1'], segment_durations: [1] }]) assert.throws(() => transcriptFromNative(raw, { timestamps: 'segment' }, 5000));
   assert.deepEqual(transcriptFromNative({ text: '' }, { timestamps: 'segment' }, 1000), { text: '' });
+});
+test('segment endpoints clamp to audio without changing text or starts', async () => {
+  const raw = { text: 'See you tomorrow.', segment_texts: ['See you tomorrow.'], segment_timestamps: [7.6], segment_durations: [1] };
+  assert.deepEqual(transcriptFromNative(raw, { timestamps: 'segment' }, 8000), {
+    text: raw.text, segments: [{ text: raw.text, timing: { startMs: 7600, endMs: 8000 } }],
+  });
+  assert.equal(raw.segment_durations[0], 1);
+  for (const [start, duration, expectedEnd] of [[.1, .5, 600], [.1, .92, 1000], [.1, 1, 1000]]) {
+    const data = transcriptFromNative({ text: 'hello', segment_texts: ['hello'], segment_timestamps: [start], segment_durations: [duration] }, { timestamps: 'segment' }, 1000);
+    assert.equal(data.segments[0].timing.endMs, expectedEnd);
+    assert.equal(data.segments[0].timing.startMs, start * 1000);
+  }
+  for (const [start, duration] of [[8, .6], [8.1, .5], [-.1, 1], [.2, -.1], [NaN, 1], [0, Infinity], [.1, 0]]) {
+    assert.throws(() => transcriptFromNative({ text: 'hello', segment_texts: ['hello'], segment_timestamps: [start], segment_durations: [duration] }, { timestamps: 'segment' }, 8000));
+  }
+  assert.deepEqual(transcriptFromNative(raw, {}, 8000), { text: raw.text });
+  const { offsetTranscript } = await load('../../src/stt-next/transcript.ts');
+  const tail = transcriptFromNative({ text: 'tail', segment_texts: ['tail'], segment_timestamps: [.1], segment_durations: [1.5] }, { timestamps: 'segment' }, 1000);
+  assert.deepEqual(offsetTranscript(tail, 25000).segments[0].timing, { startMs: 25100, endMs: 26000 });
 });
 test('caught native exceptions fail and free offline stream; oversized windows reject', () => {
   const f = fixture(); f.fail();

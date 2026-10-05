@@ -8,6 +8,15 @@ import type { ToolMap, ToolCallFor, ToolGenerationOptions, AssistantPart, Genera
 import { asError, GenerationError, jsonValue, notify, StopFilter, toolResult } from './util';
 
 const cancelled = Symbol('cancelled');
+const qwen3Models = new Set(['Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B', 'Qwen/Qwen3-4B']);
+function generationDefaults(modelId: string, options: GenerationOptions): GenerationOptions {
+  if (!qwen3Models.has(modelId)) return options;
+  // The embedded Qwen3 template enables thinking unless explicitly disabled.
+  // Match its documented sampling modes without overriding caller controls.
+  const thinking = options.reasoning !== false;
+  return { ...options, temperature: options.temperature ?? (thinking ? 0.6 : 0.7),
+    topP: options.topP ?? (thinking ? 0.95 : 0.8), topK: options.topK ?? 20, minP: options.minP ?? 0 };
+}
 interface CallState { call: ToolCall; raw: ToolCall; roundIndex: number; started: boolean; outcome?: ToolMessage; definition: ToolDefinition<any> }
 interface RoundState { index: number; text: string; assistant?: Extract<Message, { role: 'assistant' }>; parts: AssistantPart[]; outcomes: Array<Message | CallState> }
 
@@ -85,7 +94,7 @@ export class LanguageModel {
   generate<const T extends ToolMap>(messages: readonly Message[], options: ToolGenerationOptions<T>): LanguageGeneration<unknown, ToolCallFor<T>>;
   generate(messages: readonly Message[], options?: GenerationOptions): LanguageGeneration;
   generate(messages: readonly Message[], supplied: any = {}): LanguageGeneration {
-    const options: GenerationOptions = supplied;
+    const options: GenerationOptions = generationDefaults(this.modelId, supplied);
     if (this.closed) throw new Error('The model has been unloaded.');
     validateOptions(options);
     const input = snapshotMessages(messages);

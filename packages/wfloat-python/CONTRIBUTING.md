@@ -64,6 +64,22 @@ Whisper tiny.en, English streaming Zipformer, and Silero models. Set
 skip when their fixtures are unavailable; unit tests use deterministic backends
 to exercise failures, scheduling and cancellation.
 
+For Gemma 3 1B, the opt-in test below downloads and verifies both native GGUF
+shards and accompanying registry documents, generates text, unloads, and reloads
+with network access disabled. Use an empty cache directory to exercise the
+initial public download. The existing structured native bridge must be available;
+no runtime rebuild is needed when it already supports Gemma 3.
+
+```bash
+WFLOAT_TEST_GEMMA_CACHE="$PWD/out/gemma-public-smoke" \
+WFLOAT_LLM_LIBRARY=/path/to/libwfloat-python-llm.dylib \
+PYTHONPATH=python python3 -m pytest tests/test_gemma_shards.py -q -s
+```
+
+The public API remains `load_language_model("google/gemma-3-1b-it")`, with a
+2048-token default context and the GGUF's embedded chat template. All assets stay
+cached after unload; `delete_model_assets` removes them once no model holds a lease.
+
 You can also run a smoke check:
 
 ```bash

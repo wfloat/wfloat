@@ -29,6 +29,8 @@
 #include "phonemize.hpp"    // NOLINT
 #include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
+#include "sherpa-onnx/csrc/offline-tts-kitten-utils.h"
+#include "sherpa-onnx/csrc/offline-tts-kitten-phonemize.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 
 namespace sherpa_onnx {
@@ -59,13 +61,16 @@ static std::string ToString(char32_t cp) {
   return result;
 }
 
+static std::mutex &EspeakMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
 void CallPhonemizeEspeak(const std::string &text,
                          piper::eSpeakPhonemeConfig &config,  // NOLINT
                          std::vector<std::vector<piper::Phoneme>> *phonemes) {
-  static std::mutex espeak_mutex;
-
-  // keep multi threads from calling into piper::phonemize_eSpeak
-  std::lock_guard<std::mutex> lock(espeak_mutex);
+  // Both Piper and Kitten use the same process-global eSpeak state.
+  std::lock_guard<std::mutex> lock(EspeakMutex());
 
   try {
     piper::phonemize_eSpeak(text, config, *phonemes);
@@ -669,6 +674,37 @@ std::vector<TokenIDs> ConvertTextToTokenIdsKitten(
     const std::unordered_map<char32_t, int32_t> &token2id,
     const OfflineTtsKittenModelMetaData &meta_data, const std::string &text,
     const std::string &voice /*= ""*/) {
+  if (IsKitten08(meta_data)) {
+    std::lock_guard<std::mutex> lock(EspeakMutex());
+    try {
+      if (espeak_SetVoiceByName(voice.c_str()) != 0)
+        throw std::invalid_argument("Invalid Kitten eSpeak voice");
+      auto phones = kitten_text::PhonemizePreservingPunctuation(
+          Utf8ToUtf32(text), [](const std::u32string &part) {
+            std::string utf8 = Utf32ToUtf8(part);
+            const void *input = utf8.c_str();
+            std::u32string out;
+            while (input) {
+              const char *p = espeak_TextToPhonemes(
+                  &input, espeakCHARS_UTF8, (static_cast<int>('_') << 8) | 0x02);
+              if (p && *p) {
+                if (!out.empty()) out += U' ';
+                out += Utf8ToUtf32(p);
+              }
+            }
+            return out;
+          });
+      auto ids = Kitten08TokenIds(
+          std::vector<char32_t>(phones.begin(), phones.end()), token2id,
+          meta_data, false);
+      if (ids.empty()) return {};
+      return {TokenIDs(std::move(ids))};
+    } catch (const std::exception &ex) {
+      SHERPA_ONNX_LOGE("Kitten phonemization failed: %s", ex.what());
+      return {};
+    }
+  }
+
   piper::eSpeakPhonemeConfig config;
 
   // ./bin/espeak-ng-bin --path  ./install/share/espeak-ng-data/ --voices

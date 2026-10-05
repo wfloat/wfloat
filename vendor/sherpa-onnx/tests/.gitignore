@@ -1,0 +1,9 @@
+# Machine-local build and qualification evidence; keep files locally.
+/kitten/validation.json
+/kitten/native-builds.json
+/kitten/ios-ort-upgrade.json
+/vits/ort18-memory-pattern.json
+
+# Python execution caches.
+__pycache__/
+*.pyc

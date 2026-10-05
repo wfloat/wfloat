@@ -4,11 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from ._assets import fetch_llm_assets
 from ._cache import get_default_cache_dir
 from ._language import LanguageModel
 from ._lifecycle import load_with_lifecycle
-from ._llm_assets import cache_llm_model_assets
+from ._llm_assets import cache_llm_model_assets, fetch_llm_assets
 from ._llm_bridge import NativeLanguageBackend
 
 

@@ -31,7 +31,7 @@
     "build:wasm": "npm run build:sherpa-wasm && npm run build:llama-wasm",
     "build:sherpa-wasm": "bash scripts/build-sherpa-speech-wasm.sh",
     "build:llama-wasm": "bash scripts/build-llama-wasm.sh",
-    "test:unit": "node --test tests/llm-next/operations.test.mjs tests/llm-next/worker.test.mjs tests/tts-next/tts-next.test.mjs tests/stt-next/*.test.mjs tests/vad-next/*.test.mjs && node src/assets/tests/run.mjs",
+    "test:unit": "node --test tests/llm-next/operations.test.mjs tests/llm-next/worker.test.mjs tests/tts-next/*.test.mjs tests/stt-next/*.test.mjs tests/vad-next/*.test.mjs && node src/assets/tests/run.mjs",
     "test:types": "tsc --noEmit && tsc --noEmit --strict --target es2022 --module esnext --moduleResolution bundler --skipLibCheck tests/llm-next/inference.ts ../../tests/schema/parent-types.test.ts tests/stt-next/inference.ts tests/vad-next/inference.ts",
     "test:schema": "node ../../tests/schema/run.mjs"
   },

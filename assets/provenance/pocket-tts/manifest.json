@@ -1,0 +1,137 @@
+{
+  "repo": "csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26",
+  "revision": "e715955cf50d18d919d37231513c0e914b83661a",
+  "files": [
+    {
+      "file": "lm_main.int8.onnx",
+      "sizeBytes": 76341079,
+      "sha256": "bfc0c7e7e3d72864fa3bb2ee499f62f21ddc1474b885f5f3ca570f8be73e787e"
+    },
+    {
+      "file": "lm_flow.int8.onnx",
+      "sizeBytes": 9962530,
+      "sha256": "8d627d235c44a597da908e1085ebe241cbbe358964c502c5a5063d18851a5529"
+    },
+    {
+      "file": "decoder.int8.onnx",
+      "sizeBytes": 22693618,
+      "sha256": "12b0857402d31aead94df19d6783b4350d1f740e811f3a3202c70ad89ae11eea"
+    },
+    {
+      "file": "encoder.onnx",
+      "sizeBytes": 72713165,
+      "sha256": "e8f2f6d301ffb96e398b138a7dc6d3038622d236044636b73d920bab85890260"
+    },
+    {
+      "file": "text_conditioner.onnx",
+      "sizeBytes": 16388343,
+      "sha256": "0b84e837d7bfaf2c896627b03e3f080320309f37f4fc7df7698c644f7ba5e6b1"
+    },
+    {
+      "file": "vocab.json",
+      "sizeBytes": 69478,
+      "sha256": "6fb646346cf931016f70c4921aab0900ce7a304b893cb02135c74e294abfea01"
+    },
+    {
+      "file": "token_scores.json",
+      "sizeBytes": 123616,
+      "sha256": "5be2f278caf9b9800741f0fd82bff677f4943ec764c356f907213434b622d958"
+    },
+    {
+      "file": "LICENSE",
+      "sizeBytes": 18655,
+      "sha256": "fe7b4ce83b8381cc5b216bbb4af73c570688d1b819c73bbaed8ca401f4677cd6"
+    },
+    {
+      "file": "README.md",
+      "sizeBytes": 389,
+      "sha256": "2d05e627fe4fa3c625e822efcd20ad2ca62eb3b4fc1d67ae2625cb106b4f689c"
+    }
+  ],
+  "modelId": "kyutai/pocket-tts",
+  "assetPrefix": "models/kyutai/pocket-tts/int8/",
+  "publicationStatus": "published-and-tested",
+  "modelSourceUrl": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/tree/e715955cf50d18d919d37231513c0e914b83661a",
+  "sourceNotice": "Source LICENSE is CC BY 4.0; source README also states non-commercial use. Both original notices are preserved verbatim; no claim that the inconsistent statements have been resolved.",
+  "reference": {
+    "url": "https://huggingface.co/kyutai/tts-voices/resolve/323332d33f997de8394f24a193e1a76df720e01a/alba-mackenna/casual.wav",
+    "sha256": "46264e83cb99115c3d210260e029117566d9c64f20266d10daa78107759ede3e",
+    "sizeBytes": 958542,
+    "attribution": "Alba MacKenna, Casual recording, distributed by Kyutai",
+    "license": "CC-BY-4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "sourceNoticeUrl": "https://huggingface.co/kyutai/tts-voices/blob/323332d33f997de8394f24a193e1a76df720e01a/README.md",
+    "modifications": "First 5 seconds, normalized to mono 24000 Hz using Wfloat Python normalize_audio; serialized to canonical PCM16 WAV.",
+    "outputFile": "voices/alba-reference-24khz.wav",
+    "outputSha256": "119de816a34170ad22042dd5c22f951b82b39c541ee70a175f29afb054cf1f83"
+  },
+  "publication": {
+    "verifiedAt": "2026-10-05T02:14:34.499292+00:00",
+    "origin": "https://registry.wfloat.com",
+    "objects": [
+      {
+        "key": "models/kyutai/pocket-tts/int8/lm_main.int8.onnx",
+        "sizeBytes": 76341079,
+        "sha256": "bfc0c7e7e3d72864fa3bb2ee499f62f21ddc1474b885f5f3ca570f8be73e787e"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/lm_flow.int8.onnx",
+        "sizeBytes": 9962530,
+        "sha256": "8d627d235c44a597da908e1085ebe241cbbe358964c502c5a5063d18851a5529"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/decoder.int8.onnx",
+        "sizeBytes": 22693618,
+        "sha256": "12b0857402d31aead94df19d6783b4350d1f740e811f3a3202c70ad89ae11eea"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/encoder.onnx",
+        "sizeBytes": 72713165,
+        "sha256": "e8f2f6d301ffb96e398b138a7dc6d3038622d236044636b73d920bab85890260"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/text_conditioner.onnx",
+        "sizeBytes": 16388343,
+        "sha256": "0b84e837d7bfaf2c896627b03e3f080320309f37f4fc7df7698c644f7ba5e6b1"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/vocab.json",
+        "sizeBytes": 69478,
+        "sha256": "6fb646346cf931016f70c4921aab0900ce7a304b893cb02135c74e294abfea01"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/token_scores.json",
+        "sizeBytes": 123616,
+        "sha256": "5be2f278caf9b9800741f0fd82bff677f4943ec764c356f907213434b622d958"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/voices/alba-reference-24khz.wav",
+        "sizeBytes": 240044,
+        "sha256": "119de816a34170ad22042dd5c22f951b82b39c541ee70a175f29afb054cf1f83"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/SOURCE-LICENSE.txt",
+        "sizeBytes": 18655,
+        "sha256": "fe7b4ce83b8381cc5b216bbb4af73c570688d1b819c73bbaed8ca401f4677cd6"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/SOURCE-README.md",
+        "sizeBytes": 389,
+        "sha256": "2d05e627fe4fa3c625e822efcd20ad2ca62eb3b4fc1d67ae2625cb106b4f689c"
+      },
+      {
+        "key": "models/kyutai/pocket-tts/int8/ATTRIBUTION.txt",
+        "sizeBytes": 731,
+        "sha256": "5f8692630c484be5976b863a7faaf2583e5a4737d53fa972a333ba1ee55489ab"
+      }
+    ],
+    "cachePurge": "Not performed: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID absent. New public URLs returned correct bytes directly.",
+    "tests": {
+      "web": "Fresh browser cache: public-registry download, preset synthesis, Blob reference dialogue, unload and cached reload passed. Local built WASM runtime used.",
+      "python": "Fresh cache: public-registry download, native synthesis, repeatable seed and cached reload passed.",
+      "http": "All eight runtime objects: 206 byte ranges, Access-Control-Allow-Origin *, CDN HIT; complete public bodies matched SHA-256.",
+      "reactNative": "iOS 18.0 iPhone 16 simulator and Android 16 API 36.1 host emulator: public download, seeded synthesis, custom-reference dialogue, playback completion, unload and cached reload passed. Emulator results are not physical-phone performance measurements.",
+      "reactNativeIOS": "iPhone 16 simulator / iOS 18.0: public download, native synthesis, deterministic seed, custom-reference dialogue, playback completion, unload and cached reload passed."
+    }
+  }
+}

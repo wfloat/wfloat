@@ -385,3 +385,26 @@ test('abort from initial download progress observes abandoned join promises', as
   // node:test also fails this test on an unhandled internal join rejection.
   await tick();assert.equal(count.n,0);
 });
+
+test('transport parts reconstruct exact bytes and reject corrupt, missing and reordered data', async () => {
+  const { readComposite, compositeParts } = await import('../composite.ts');
+  const { REGISTRY_ORIGIN } = await import('../../worker/generatedModelUrls.ts');
+  const store = new Store();
+  const data = [bytes('first'), bytes('second')];
+  const parts = data.map((b, i) => ({path:`/part-${i}`,sha256:sha(b),sizeBytes:b.length}));
+  for (let i=0;i<parts.length;i++) {
+    const url=REGISTRY_ORIGIN+parts[i].path;
+    store.records.set(url,{...emptyRecord(url),bytes:data[i].length,chunks:1,complete:true,sha256:parts[i].sha256});
+    store.chunks.set(url,[data[i]]);
+  }
+  const model={filename:'encoder.onnx',parts,sizeBytes:11,sha256:sha(bytes('firstsecond'))};
+  assert.deepEqual(await readComposite(model,undefined,store),bytes('firstsecond'));
+  await assert.rejects(readComposite({...model,parts:[...parts].reverse()},undefined,store),AssetIntegrityError);
+  assert.throws(()=>compositeParts({...model,parts:[parts[0],parts[0]]}),AssetIntegrityError);
+  const c=new AbortController();c.abort();await assert.rejects(readComposite(model,c.signal,store),{name:'AbortError'});
+  store.chunks.set(REGISTRY_ORIGIN+parts[0].path,[bytes('wrong')]);
+  await assert.rejects(readComposite(model,undefined,store),AssetIntegrityError);
+  store.chunks.set(REGISTRY_ORIGIN+parts[0].path,[data[0]]);
+  await store.delete([REGISTRY_ORIGIN+parts[1].path]);
+  await assert.rejects(readComposite(model,undefined,store),AssetStorageError);
+});

@@ -1,6 +1,8 @@
 // Native port of wfloat-web/native/llama-wasm/round_runtime.cpp.
 // Keep parser, grammar, sampling and cache behavior synchronized with that source.
 #include "Backend.h"
+#include "LlmAssets.h"
+#include "LlmModelParams.h"
 #include <cstdio>
 #include "llama.h"
 #include "common.h"
@@ -236,7 +238,7 @@ void decode(Model & m, llama_token * tokens, size_t count) {
 
 const char * wfloat_native_last_error() { return error.c_str(); }
 void wfloat_native_free_string(char * p) { std::free(p); }
-Model * wfloat_native_create(const char * path, int context_size, int threads, const char * tmpl, const Cancel* cancel = nullptr) {
+Model * wfloat_native_create_paths(const std::vector<std::string>& paths, int context_size, int threads, const char * tmpl, const Cancel* cancel = nullptr) {
     try {
         static std::once_flag once; std::call_once(once, [] {
             llama_log_set(warning_log, nullptr);
@@ -246,7 +248,7 @@ Model * wfloat_native_create(const char * path, int context_size, int threads, c
         });
         if (context_size <= 0 || threads <= 0) throw std::runtime_error("Positive context size and thread count required.");
         auto m = std::make_unique<Model>();
-        auto mp = llama_model_default_params(); mp.n_gpu_layers = 0; mp.load_mode = LLAMA_LOAD_MODE_NONE;
+        auto mp = nativeLlmModelParams();
         if (cancel) {
             mp.progress_callback = [](float, void* opaque) -> bool {
                 try { const auto& fn = *static_cast<const Cancel*>(opaque); return !(fn && fn()); }
@@ -254,7 +256,12 @@ Model * wfloat_native_create(const char * path, int context_size, int threads, c
             };
             mp.progress_callback_user_data = const_cast<Cancel*>(cancel);
         }
-        m->model = llama_model_load_from_file(path, mp);
+        if (paths.empty()) throw std::invalid_argument("Missing GGUF paths.");
+        if (cancel) checkCancelled(*cancel);
+        std::vector<const char*> splits;
+        for (const auto& path : paths) splits.push_back(path.c_str());
+        m->model = paths.size() == 1 ? llama_model_load_from_file(splits.front(), mp)
+            : llama_model_load_from_splits(splits.data(), splits.size(), mp);
         if (!m->model) throw std::runtime_error("Failed to load GGUF.");
         if (llama_model_has_encoder(m->model)) throw std::runtime_error("Chat runtime currently requires a decoder-only model.");
         auto cp = llama_context_default_params();
@@ -268,6 +275,10 @@ Model * wfloat_native_create(const char * path, int context_size, int threads, c
         m->templates = common_chat_templates_init(m->model, tmpl ? tmpl : "");
         return m.release();
     } catch (const std::exception & e) { error = e.what(); return nullptr; }
+}
+// Preserve the Python C ABI adapter's exact single-file entry point.
+Model * wfloat_native_create(const char * path, int context_size, int threads, const char * tmpl, const Cancel* cancel = nullptr) {
+    return wfloat_native_create_paths({path}, context_size, threads, tmpl, cancel);
 }
 int wfloat_native_context_size(Model * m) { return llama_n_ctx(m->context); }
 void wfloat_native_destroy(Model * m) { delete m; }
@@ -370,9 +381,9 @@ struct Llm final : Backend {
     explicit Llm(const Json& j, const Cancel& cancel) {
         checkCancelled(cancel);
         const auto options = j.value("options", Json::object());
-        auto path = asset(j, {"model", "model_gguf"});
+        auto paths = llmModelPaths(j);
         auto tmpl = options.value("chatTemplate", std::string());
-        model.reset(llm_detail::wfloat_native_create(path.c_str(), options.value("contextSize", 4096),
+        model.reset(llm_detail::wfloat_native_create_paths(paths, options.value("contextSize", 2048),
                                                    options.value("numThreads", 1), tmpl.c_str(), &cancel));
         if (!model) throw std::runtime_error(llm_detail::error);
         checkCancelled(cancel);

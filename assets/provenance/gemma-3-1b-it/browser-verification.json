@@ -1,0 +1,133 @@
+{
+  "date": "2026-10-05",
+  "modelId": "google/gemma-3-1b-it",
+  "modelAssets": "canonical public registry URLs",
+  "runtime": "locally rebuilt single-thread WASM; 4 GiB maximum",
+  "browsers": {
+    "safari": {
+      "passed": true,
+      "cases": [
+        {
+          "pass": true,
+          "test": "preabort"
+        },
+        {
+          "test": "load",
+          "elapsedMs": 127860,
+          "pass": true,
+          "phases": [
+            "checking",
+            "downloading",
+            "loading",
+            "ready"
+          ],
+          "context": 2048
+        },
+        {
+          "pass": true,
+          "test": "accompanying-terms"
+        },
+        {
+          "pass": true,
+          "test": "generate"
+        },
+        {
+          "pass": true,
+          "count": 15,
+          "test": "token-count"
+        },
+        {
+          "pass": true,
+          "test": "structured"
+        },
+        {
+          "pass": true,
+          "test": "cancel",
+          "reason": "cancelled"
+        },
+        {
+          "pass": true,
+          "test": "queued-generations"
+        },
+        {
+          "pass": true,
+          "phases": [
+            "checking",
+            "loading",
+            "ready"
+          ],
+          "test": "cached-reload"
+        },
+        {
+          "pass": true,
+          "test": "all"
+        }
+      ]
+    },
+    "chrome": {
+      "passed": true,
+      "cases": [
+        {
+          "test": "preabort",
+          "pass": true
+        },
+        {
+          "test": "load",
+          "pass": true,
+          "elapsedMs": 141335.59999999404,
+          "phases": [
+            "checking",
+            "downloading",
+            "loading",
+            "ready"
+          ],
+          "context": 2048
+        },
+        {
+          "test": "accompanying-terms",
+          "pass": true
+        },
+        {
+          "test": "generate",
+          "pass": true
+        },
+        {
+          "test": "token-count",
+          "pass": true,
+          "count": 15
+        },
+        {
+          "test": "structured",
+          "pass": true
+        },
+        {
+          "test": "cancel",
+          "pass": true,
+          "reason": "cancelled"
+        },
+        {
+          "test": "queued-generations",
+          "pass": true
+        },
+        {
+          "test": "cached-reload",
+          "pass": true,
+          "phases": [
+            "checking",
+            "loading",
+            "ready"
+          ]
+        },
+        {
+          "test": "all",
+          "pass": true
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Simulator/VM host, not a physical-phone benchmark",
+    "Chrome ephemeral context rejected at approximately 532 MB with QuotaExceededError; persistent profile passed",
+    "Some native-client CDN responses still cached prepublication 404s at test time"
+  ]
+}

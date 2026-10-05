@@ -24,8 +24,9 @@ from typing import Callable, Literal, Optional
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from ._assets import WFLOAT_TTS_MODEL_ID
+from ._assets import WFLOAT_TTS_MODEL_ID, GEMMA3_1B_IT_MODEL_ID, _gemma3_shard_assets, _llm_shard_assets
 from ._cache import get_default_cache_dir, normalize_model_name
+from ._composite import composite_parts
 from ._download import extract_archive, resolve_extracted_data_directory
 from ._generated_model_urls import MODEL_ASSETS, REGISTRY_ORIGIN, SHARED_ASSETS
 from ._operations import OperationCancelledError, check_cancelled
@@ -51,17 +52,18 @@ class ModelProgressEvent:
 
 @dataclass(frozen=True)
 class _Asset:
-    url: str
+    url: Optional[str]
     path: Path
     sha256: str
     size: Optional[int]
     shared: bool = False
+    parts: tuple[_Asset, ...] = ()
 
     @property
     def partial(self):
         # Metadata is part of the checkpoint identity, so registry revisions
         # cannot accidentally append to a different immutable asset.
-        identity = hashlib.sha256((self.url + self.sha256).encode()).hexdigest()[:20]
+        identity = hashlib.sha256(((self.url or self.path.name) + self.sha256).encode()).hexdigest()[:20]
         return self.path.with_name(self.path.name + '.' + identity + '.part')
 
 
@@ -261,12 +263,25 @@ def _resolve(model_id, cache_dir):
 
 
 def _assets(model_id, root):
+    if model_id == GEMMA3_1B_IT_MODEL_ID:
+        _gemma3_shard_assets(MODEL_ASSETS[model_id])
+    elif any(key.startswith("model_shard_") for key in MODEL_ASSETS[model_id]):
+        _llm_shard_assets(MODEL_ASSETS[model_id])
     result = []
     entries = [(value, False) for value in MODEL_ASSETS[model_id].values()
-               if isinstance(value, dict) and 'path' in value]
-    if model_id == WFLOAT_TTS_MODEL_ID:
+               if isinstance(value, dict) and ('path' in value or 'parts' in value)]
+    if model_id == WFLOAT_TTS_MODEL_ID or MODEL_ASSETS[model_id].get('family') in ('piper', 'kokoro', 'kitten'):
         entries.append((SHARED_ASSETS['espeak_ng_data_zip'], True))
     for entry, shared in entries:
+        parts = composite_parts(entry)
+        if parts:
+            directory = root / 'models' / normalize_model_name(model_id)
+            children = tuple(_Asset(REGISTRY_ORIGIN + part['path'], directory / Path(part['path']).name,
+                                    part['sha256'].lower(), part['sizeBytes']) for part in parts)
+            result.extend(children)
+            result.append(_Asset(None, directory / entry['filename'], entry['sha256'].lower(),
+                                 entry['sizeBytes'], parts=children))
+            continue
         checksum = entry.get('sha256', '')
         size = entry.get('sizeBytes')
         path = entry['path']
@@ -307,6 +322,8 @@ def _assets_ready(model_id, root):
 
 
 def _remaining(asset):
+    if asset.parts:
+        return 0  # Reconstruction is disk I/O, not network progress.
     offset = asset.partial.stat().st_size if asset.partial.is_file() else 0
     if asset.size is None:
         return None
@@ -321,6 +338,9 @@ def _download(transfer):
     try:
         asset.path.parent.mkdir(parents=True, exist_ok=True)
         if _valid(asset):
+            return
+        if asset.parts:
+            _assemble(transfer)
             return
         offset = partial.stat().st_size if partial.is_file() else 0
         if offset and asset.size is not None and offset >= asset.size:
@@ -397,6 +417,53 @@ def _download(transfer):
             transfer.done.set()
 
 
+def _assemble(transfer):
+    asset = transfer.asset
+    check = lambda: check_cancelled(transfer.stop)
+    # Parts were subscribed before the composite. Wait without holding _guard,
+    # so cancellation/deletion can stop both network and assembly workers.
+    for part in asset.parts:
+        with _guard:
+            dependency = _transfers.get(part.path)
+        if dependency is not None:
+            while not dependency.done.wait(0.02):
+                check()
+            if dependency.error is not None:
+                raise dependency.error
+        check()
+    try:
+        digest = hashlib.sha256()
+        size = 0
+        with asset.partial.open('wb') as target:
+            for part in asset.parts:
+                part_digest = hashlib.sha256()
+                part_size = 0
+                with part.path.open('rb') as source:
+                    while True:
+                        check()
+                        chunk = source.read(_CHUNK)
+                        if not chunk:
+                            break
+                        target.write(chunk)
+                        digest.update(chunk)
+                        part_digest.update(chunk)
+                        size += len(chunk)
+                        part_size += len(chunk)
+                        if part_size > part.size:
+                            raise IOError('Composite part exceeds registry size')
+                if part_size != part.size or part_digest.hexdigest() != part.sha256:
+                    raise IOError('Composite part failed size or SHA-256 verification')
+            target.flush()
+            os.fsync(target.fileno())
+        if size != asset.size or digest.hexdigest() != asset.sha256:
+            raise IOError('Composite asset failed size or SHA-256 verification')
+        with _guard:
+            check()
+            os.replace(asset.partial, asset.path)
+    finally:
+        asset.partial.unlink(missing_ok=True)
+
+
 def _validate_options(on_progress, cancel_event):
     if on_progress is not None and not callable(on_progress):
         raise TypeError('on_progress must be callable')
@@ -435,21 +502,28 @@ def _install_shared(asset, root, check):
         check()
         if (destination / '.ready').is_file() and (destination / 'espeak-ng-data').is_dir():
             return
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='.espeak-', dir=destination.parent) as temporary:
-            stage = Path(temporary)
-            extract_archive(asset.path, stage / 'extracted')
-            source = resolve_extracted_data_directory(stage / 'extracted')
-            install = stage / 'install'
-            install.mkdir()
-            shutil.copytree(source, install / 'espeak-ng-data')
-            (install / '.ready').write_text('ready\n')
-            check()
-            if destination.exists():
-                shutil.rmtree(destination)
-            os.replace(install, destination)
+        # A loaded model may still read the shared data tree. Repair must not
+        # replace it underneath a lease held by another model or process.
+        with _file_access(root, 'espeak-' + asset.sha256):
+            _replace_shared(asset, destination, check)
     finally:
         lock.release()
+
+
+def _replace_shared(asset, destination, check):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.espeak-', dir=destination.parent) as temporary:
+        stage = Path(temporary)
+        extract_archive(asset.path, stage / 'extracted')
+        source = resolve_extracted_data_directory(stage / 'extracted')
+        install = stage / 'install'
+        install.mkdir()
+        shutil.copytree(source, install / 'espeak-ng-data')
+        (install / '.ready').write_text('ready\n')
+        check()
+        if destination.exists():
+            shutil.rmtree(destination)
+        os.replace(install, destination)
 
 
 def download_model(model_id: str, *, cache_dir: Optional[Path] = None,
@@ -519,12 +593,13 @@ def _download_model(model_id, root, key, on_progress, cancel_event, epoch):
                             raise
                         break
                     if not transfer.stop.is_set():
-                        remaining = max(0, asset.size - transfer.position) if asset.size is not None else None
+                        remaining = (0 if asset.parts else max(0, asset.size - transfer.position)) if asset.size is not None else None
                         transfer.users += 1
                         subscriptions.append((transfer, transfer.received, remaining))
                         break
                 transfer.done.wait(0.02)
         total = None if any(n is None for _, _, n in subscriptions) else sum(n for _, _, n in subscriptions)
+        has_network_work = any(not transfer.asset.parts for transfer, _, _ in subscriptions)
         started = time.monotonic()
         previous_time, previous_bytes, speed = started, 0, None
         last = None
@@ -539,7 +614,7 @@ def _download_model(model_id, root, key, on_progress, cancel_event, epoch):
                 sample = (received - previous_bytes) / elapsed
                 speed = sample if speed is None else 0.25 * sample + 0.75 * speed
                 previous_time, previous_bytes = now, received
-            if received != last:
+            if has_network_work and received != last:
                 _emit(on_progress, ModelProgressEvent(
                     'downloading', received, total,
                     received / total if total else None, speed,
@@ -577,6 +652,16 @@ class AssetLease:
     """
     def __init__(self, key):
         self._ownership = _FileAccess(key[0], _model_lock_name(key[1]), shared=True)
+        self._shared_ownership = []
+        try:
+            for asset in _assets(key[1], key[0]):
+                if asset.shared:
+                    self._shared_ownership.append(_FileAccess(key[0], 'espeak-' + asset.sha256, shared=True))
+        except BaseException:
+            for ownership in self._shared_ownership:
+                ownership.release()
+            self._ownership.release()
+            raise
         self._key = key
         self._released = False
 
@@ -587,6 +672,8 @@ class AssetLease:
             if not self._released:
                 _states[self._key].leases -= 1
                 self._released = True
+                for ownership in self._shared_ownership:
+                    ownership.release()
                 self._ownership.release()
 
 

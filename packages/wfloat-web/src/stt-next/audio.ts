@@ -196,7 +196,7 @@ class FixedRateResampler {
  * Already-normalized PCM is returned directly; other rates allocate one result
  * buffer plus bounded filter state, without another full input/output copy.
  */
-export async function normalizeAudio(snapshot: PcmAudio | Blob): Promise<PcmAudio> {
+export async function normalizeAudio(snapshot: PcmAudio | Blob, targetSampleRate = 16_000): Promise<PcmAudio> {
   let pcm: PcmAudio;
   if (typeof Blob !== 'undefined' && snapshot instanceof Blob) {
     if (!snapshot.size) throw new TypeError('Audio Blob must not be empty');
@@ -214,7 +214,8 @@ export async function normalizeAudio(snapshot: PcmAudio | Blob): Promise<PcmAudi
     validateRate(pcm.sampleRate);
     validateSamples(pcm.samples);
   }
-  if (pcm.sampleRate === 16_000) return pcm;
-  const resampler = new FixedRateResampler(pcm.sampleRate, 16_000);
-  return { samples: resampler.push(pcm.samples, true), sampleRate: 16_000 };
+  validateRate(targetSampleRate);
+  if (pcm.sampleRate === targetSampleRate) return pcm;
+  const resampler = new FixedRateResampler(pcm.sampleRate, targetSampleRate);
+  return { samples: resampler.push(pcm.samples, true), sampleRate: targetSampleRate };
 }

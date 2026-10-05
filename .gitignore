@@ -38,7 +38,16 @@ vendor/sherpa-onnx/build-wasm-simd-speech/
 # Generated web runtime artifacts
 packages/wfloat-web/src/wasm/*.js
 packages/wfloat-web/src/wasm/*.wasm
+packages/wfloat-web/a.out.js
+packages/wfloat-web/a.out.wasm
 
 # Local env files
 .env
 .env.*
+
+# Local model qualification reports (keep reusable test harnesses tracked)
+packages/wfloat-web/tests/stt-next/rollout-evidence.json
+packages/wfloat-web/tests/stt-next/staged-qualification.json
+
+# One-off local STT qualification harness (uses an English-only test corpus)
+packages/wfloat-web/tests/stt-next/staged-qualify.mjs

@@ -2,6 +2,8 @@
 
 On-device text generation, text-to-speech, speech recognition and voice activity detection for React Native. Native modules require a native app build; Expo Go is not supported.
 
+The model tables describe IDs integrated in this branch. Publication and platform qualification are ongoing; inclusion is not a claim of completed testing on every platform.
+
 ## Install
 
 ```sh
@@ -34,6 +36,32 @@ Loaders also download missing assets and accept `signal` and `onProgress`. Verif
 
 ## Speech generation and playback
 
+Additional speech-generation IDs use the existing loader and `voiceId` option:
+
+| Model ID | Language / voice selection |
+| --- | --- |
+| `rhasspy/piper-en_US-lessac-medium` | US English; voice 0. |
+| `rhasspy/piper-en_US-amy-medium` | US English; voice 0. |
+| `rhasspy/piper-en_US-ryan-medium` | US English; voice 0. |
+| `rhasspy/piper-en_GB-alba-medium` | British English; voice 0. |
+| `rhasspy/piper-de_DE-thorsten-medium` | German; voice 0. |
+| `rhasspy/piper-fr_FR-siwis-medium` | French; voice 0. |
+| `rhasspy/piper-en_US-libritts-high` | US English; speaker IDs 0–903. |
+| `hexgrad/Kokoro-82M` | American/British English, Spanish, French, Hindi, Italian, Brazilian Portuguese and Mandarin; named voices or numeric IDs. Japanese excluded. |
+| `KittenML/kitten-tts-nano-0.8` | English; eight voices, 24 kHz. Web, Python and RN bounded smoke checks passed. |
+| `KittenML/kitten-tts-mini-0.8` | English; eight voices, 24 kHz. Web, Python and RN bounded smoke checks passed. |
+
+Kokoro Japanese voices (`jf_*`, `jm_*`, numeric IDs 37–41) are rejected: the current
+frontend routes Han characters through Chinese pronunciation. Piper/Kokoro/Kitten do not
+support reference-audio voice cloning. Shared eSpeak data is downloaded internally.
+
+Kitten voice IDs 0–7 map to `Jasper`, `Bella`, `Bruno`, `Luna`, `Hugo`, `Rosie`,
+`Leo`, and `Kiki`. Kitten requires the updated 0.8 frontend runtime and accepts
+at most 65,536 Unicode codepoints per synthesis call. Limited Web, Python and
+RN iOS/Android smoke checks have passed for Nano and Mini. The iOS runtime
+requires the bundled ONNX Runtime 1.18.1 update for these exports.
+These checks do not establish broad platform or pronunciation-quality coverage.
+
 ```ts
 const playback = speech.speak('Hello.', {
   onPlayback(event) { console.log(event.state, event.highlight); },
@@ -49,7 +77,44 @@ generation.speak({ onPlayback: event => console.log(event.state) });
 
 `generateDialogue()` and `speakDialogue()` accept segments with text and optional voice/emotion/speed settings. Generation retains audio for replay and `result()`; direct speech releases played audio. Call `unload()` when finished with the model.
 
+## Pocket TTS
+
+```ts
+const pocket = await loadTextToSpeech('kyutai/pocket-tts');
+const generation = pocket.generate('Hello.', {
+  referenceAudio: { uri: 'file:///path/to/voice.wav' },
+  temperature: 0.7, seed: 42, inferenceSteps: 5,
+});
+const result = await generation.result();
+generation.dispose();
+await pocket.unload();
+```
+
+Without `referenceAudio`, Pocket uses its bundled `alba` preset (also selectable with `voiceId: 'alba'`). References use the STT audio convention: mono `{ samples: Float32Array, sampleRate }` or an accessible `file://` / Android `content://` URI. File audio is downmixed and all references are normalized to 24 kHz. References longer than 10 seconds reject; they are never truncated.
+
+Controls apply to an operation or individual dialogue segments. A segment's `voiceId` replaces an inherited reference, and a segment's `referenceAudio` replaces an inherited voice. A resolved segment cannot specify both. Temperature defaults to `0.7` and must be zero or a finite float32 value at least `2**-126` (positive subnormal values reject); `inferenceSteps` defaults to `5` and must be a positive int32. `seed` is optional (random by default) and must be an integer from `0` through `2147483647`.
+
+Pocket warns once per model when explicit `emotion`, `intensity`, or `speed` options are ignored. Wfloat TTS rejects `referenceAudio`, validates sampling controls, and warns once when ignoring them. Existing generation, playback, and chunk timeline APIs apply to both models; dispose retained generations to release audio and reference inputs.
+
 ## Text generation
+
+| Model IDs | Behavior |
+| --- | --- |
+| `HuggingFaceTB/SmolLM2-360M-Instruct` | Existing text-generation model. |
+| `Qwen/Qwen3-0.6B`, `Qwen/Qwen3-1.7B` | Embedded thinking template; reasoning enabled unless explicitly disabled. |
+| `Qwen/Qwen3-4B` | Same thinking behavior; limited smoke qualification only (see below). |
+| `google/gemma-3-270m-it`, `google/gemma-3-1b-it` | Embedded Gemma text-chat template. |
+
+Qwen 4B has passed bounded Web, Python and RN iOS/Android generation and
+cached-reload checks at context 2048 with reasoning disabled. These checks do
+not qualify physical-device performance, reasoning, tools, structured output
+or long-context behavior for 4B.
+
+Qwen and Gemma default to a 2048-token context. Model files, quantization and shard
+layout are selected internally; there is no public quantization or shard selector.
+Larger models need more memory even when their downloads are split into shards.
+Qwen sampling defaults follow the reasoning mode; explicit sampling options take
+precedence. Use `reasoning: false` to disable thinking and bound generation with `maxTokensPerRound`.
 
 ```ts
 import { loadLanguageModel } from '@wfloat/react-native-wfloat';
@@ -68,6 +133,31 @@ await model.unload();
 Tools, reasoning callbacks and structured output follow the redesigned web contracts. Structured output and tools cannot be combined in one request. Independent background generation jobs are not promised.
 
 ## Transcribe audio
+
+| Model IDs | Languages / tasks | Live recognition | Optional capabilities |
+| --- | --- | --- | --- |
+| `openai/whisper-tiny-en` | English transcription | Windowed | Segment timestamps |
+| `openai/whisper-tiny`, `openai/whisper-base`, `openai/whisper-small` | Multilingual transcription; translation to English | Windowed | Segment timestamps |
+| `UsefulSensors/moonshine-tiny`, `moonshine-ai/moonshine-base` | English transcription | Windowed | — |
+| `k2-fsa/streaming-zipformer-en` | English transcription | Native incremental | English hotwords |
+| `shaojieli/streaming-zipformer-fr` | French transcription | Native incremental | — |
+| `k2-fsa/streaming-zipformer-zh-en` | Chinese/English transcription | Native incremental | — |
+| `nvidia/parakeet-tdt-0.6b-v3` | Automatic recognition of 25 languages; transcription only | Windowed | — |
+
+These adapters accept complete recordings and live sessions. Windowed live
+recognition reruns offline recognition on bounded overlapping audio; it has
+different latency and cost from native incremental recognition. Zipformer's
+`language` validates compatibility rather than forcing the bilingual decoder.
+
+Parakeet requires omitting `language`; translation, hotwords and word/segment
+timestamp requests are unsupported. Its transport parts are reconstructed
+internally before loading. Word timestamps are unavailable for the listed models;
+segment timestamps are available only for Whisper. Predicted segment endpoints
+are capped to the supplied audio duration (per processing window); text and start
+times are preserved. Invalid or wholly out-of-range timings still fail. Other timing fields must not
+be interpreted as word alignments. Unsupported options reject.
+
+Recognition options belong on `transcribe()` / `createSession()`.
 
 ```ts
 import { loadSpeechToText } from '@wfloat/react-native-wfloat';

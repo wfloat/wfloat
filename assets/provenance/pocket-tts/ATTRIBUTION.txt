@@ -1,0 +1,6 @@
+Pocket TTS by Kyutai. Sherpa ONNX export distributed by csukuangfj2.
+Model export: https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/tree/e715955cf50d18d919d37231513c0e914b83661a
+Model binaries are redistributed unchanged. Original LICENSE and README are included as SOURCE-LICENSE.txt and SOURCE-README.md; their inconsistent licensing statements have not been resolved.
+Alba preset: Alba MacKenna, Casual recording, distributed by Kyutai, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+Source: https://huggingface.co/kyutai/tts-voices/blob/323332d33f997de8394f24a193e1a76df720e01a/alba-mackenna/casual.wav
+Modified by Wfloat: first five seconds, mono 24 kHz, PCM16 WAV. No endorsement implied.

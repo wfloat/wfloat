@@ -241,6 +241,68 @@ static NSMutableSet<NSString *> *ProcessEspeakPins(void) {
     for (NSString *p in @[partial, meta, verified]) if ([fm fileExistsAtPath:p]) Check([fm removeItemAtPath:p error:&error], error);
     return NSNull.null;
   }
+  if ([op isEqualToString:@"assetAssemble"]) {
+    NSString *hash = c[@"sha256"];
+    if (![hash isKindOfClass:NSString.class] || hash.length != 64 ||
+        [hash rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"] invertedSet]].location != NSNotFound ||
+        ![c[@"sizeBytes"] isKindOfClass:NSNumber.class] || [c[@"sizeBytes"] doubleValue] < 0 ||
+        ![c[@"parts"] isKindOfClass:NSArray.class] || ![c[@"parts"] count]) WFNextFail(@"Invalid assembly manifest");
+    uint64_t size = [c[@"sizeBytes"] unsignedLongLongValue];
+    NSError *error = nil;
+    NSDictionary *identity = @{@"sha256":hash.lowercaseString, @"sizeBytes":@(size)};
+    if (cancelled()) WFNextFail(@"Cancelled");
+    if ([self verify:path size:size hash:hash cancelled:cancelled]) {
+      Check([[WFNextJSON(identity) dataUsingEncoding:NSUTF8StringEncoding] writeToFile:verified options:NSDataWritingAtomic error:&error], error);
+      [_pendingDeletes removeObject:path]; return @{@"path":path};
+    }
+    if ([self isPinned:path]) WFNextFail(@"Cannot replace a loaded asset");
+    NSFileHandle *output = nil;
+    @try {
+      Check([fm createFileAtPath:partial contents:nil attributes:nil], nil);
+      output = [NSFileHandle fileHandleForWritingAtPath:partial];
+      if (!output) WFNextFail(@"Cannot open assembly staging file");
+      CC_SHA256_CTX digest; CC_SHA256_Init(&digest);
+      uint64_t total = 0;
+      for (NSDictionary *part in c[@"parts"]) {
+        NSString *source = [self path:part[@"key"]];
+        if ([source isEqual:path] || [_pendingDeletes containsObject:source] ||
+            ![part[@"sizeBytes"] isKindOfClass:NSNumber.class] || [part[@"sizeBytes"] doubleValue] < 0 ||
+            [part[@"sizeBytes"] unsignedLongLongValue] > size - total) WFNextFail(@"Invalid/deleted assembly part");
+        uint64_t expected = [part[@"sizeBytes"] unsignedLongLongValue], count = 0;
+        CC_SHA256_CTX partDigest; CC_SHA256_Init(&partDigest);
+        NSFileHandle *input = [NSFileHandle fileHandleForReadingAtPath:source];
+        if (!input) WFNextFail(@"Missing assembly part");
+        @try {
+          while (true) {
+            @autoreleasepool {
+              if (cancelled()) WFNextFail(@"Cancelled");
+              NSData *chunk = [input readDataOfLength:65536];
+              if (!chunk.length) break;
+              if (chunk.length > expected - count) WFNextFail(@"Part exceeds declared size");
+              [output writeData:chunk];
+              CC_SHA256_Update(&digest, chunk.bytes, (CC_LONG)chunk.length);
+              CC_SHA256_Update(&partDigest, chunk.bytes, (CC_LONG)chunk.length);
+              count += chunk.length; total += chunk.length;
+            }
+          }
+        } @finally { [input closeFile]; }
+        unsigned char result[CC_SHA256_DIGEST_LENGTH]; CC_SHA256_Final(result, &partDigest);
+        NSMutableString *actual = [NSMutableString new];
+        for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) [actual appendFormat:@"%02x", result[i]];
+        if (count != expected || ![actual isEqual:[part[@"sha256"] lowercaseString]]) WFNextFail(@"Assembly part integrity failed");
+      }
+      unsigned char result[CC_SHA256_DIGEST_LENGTH]; CC_SHA256_Final(result, &digest);
+      NSMutableString *actual = [NSMutableString new];
+      for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) [actual appendFormat:@"%02x", result[i]];
+      if (total != size || ![actual isEqual:hash.lowercaseString]) WFNextFail(@"Assembly integrity failed");
+      [output synchronizeFile]; [output closeFile]; output = nil;
+      if (cancelled()) WFNextFail(@"Cancelled");
+      if (rename(partial.fileSystemRepresentation, path.fileSystemRepresentation)) WFNextFail(@"Cannot publish assembled asset");
+      Check([[WFNextJSON(identity) dataUsingEncoding:NSUTF8StringEncoding] writeToFile:verified options:NSDataWritingAtomic error:&error], error);
+      [_pendingDeletes removeObject:path];
+      return @{@"path":path};
+    } @finally { [output closeFile]; [fm removeItemAtPath:partial error:nil]; }
+  }
   NSURL *url = [NSURL URLWithString:c[@"url"] ?: @""];
   NSString *hash = c[@"sha256"];
   if (![@[@"http", @"https"] containsObject:url.scheme.lowercaseString] || !url.host.length ||

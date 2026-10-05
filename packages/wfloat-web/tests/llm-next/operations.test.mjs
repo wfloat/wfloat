@@ -262,3 +262,49 @@ test('stop matching is invariant to token-fragment boundaries',()=>{
   }
  }
 });
+
+for (const id of ['Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B', 'Qwen/Qwen3-4B']) {
+ test(`${id} sampling follows reasoning mode and preserves caller controls`, async () => {
+  const requests=[], counts=[];
+  const m=new LanguageModel({contextSize:2048,
+   async *generateRound(request){requests.push(request);yield done();},
+   async countInputTokens(request){counts.push(request);return 12;},
+   prepareSchema(schema){return {jsonSchema:schema,parse:async v=>v};},async unload(){}
+  },id);
+  for(const reasoning of [undefined,true,false]){
+   const options=Object.freeze({reasoning,temperature:undefined});
+   await m.generate([],options).result();
+   const request=requests.at(-1);
+   assert.equal(request.reasoning,reasoning);
+   assert.deepEqual([request.temperature,request.topP,request.topK,request.minP],reasoning===false?[0.7,0.8,20,0]:[0.6,0.95,20,0]);
+   await m.countInputTokens([],{reasoning});assert.equal(counts.at(-1).reasoning,request.reasoning);
+  }
+  const explicit=Object.freeze({reasoning:false,temperature:0,topP:0,topK:0,minP:0.2,repetitionPenalty:1.1,presencePenalty:0.3,frequencyPenalty:0.4,seed:0});
+  await m.generate([],explicit).result();
+  for(const [key,value] of Object.entries(explicit))assert.equal(requests.at(-1)[key],value);
+  await m.generate([],{topK:42}).result();assert.equal(requests.at(-1).topK,42);assert.equal(requests.at(-1).temperature,0.6);
+  assert.throws(()=>m.generate([],{temperature:NaN}),/finite/);
+  assert.throws(()=>m.generate([],{reasoning:'false'}),/boolean/);
+  await m.unload();
+ });
+}
+test('Gemma and existing models retain native sampling defaults and explicit reasoning',async()=>{
+ for(const id of ['google/gemma-3-270m-it','google/gemma-3-1b-it','HuggingFaceTB/SmolLM2-360M-Instruct']){
+  let request;
+  const m=new LanguageModel({contextSize:2048,async *generateRound(r){request=r;yield done();},async countInputTokens(){return 1;},async unload(){}},id);
+  await m.generate([]).result();
+  for(const key of ['temperature','topP','topK','minP','reasoning'])assert.equal(request[key],undefined);
+  await m.generate([],{reasoning:false,temperature:0.4}).result();assert.equal(request.reasoning,false);assert.equal(request.temperature,0.4);
+  await m.unload();
+ }
+});
+test('Qwen defaults and tools survive managed continuation without changing the public request',async()=>{
+ const requests=[];
+ const m=new LanguageModel({contextSize:2048,prepareSchema(s){return {jsonSchema:s,parse:async v=>v};},async countInputTokens(){return 1;},async unload(){},
+  async *generateRound(r){requests.push(r);if(requests.length===1)yield call('qwen-call','lookup',{city:'Paris'});else yield text('Ready');yield done();}
+ },'Qwen/Qwen3-0.6B');
+ const result=await m.generate([{role:'user',content:'Lookup'}],{reasoning:false,tools:{lookup:{inputSchema:{type:'object'},execute:async()=>({ok:true})}}}).result();
+ assert.equal(result.text,'Ready');assert.equal(requests.length,2);
+ for(const r of requests){assert.equal(r.reasoning,false);assert.equal(r.temperature,0.7);assert.equal(r.topP,0.8);assert.ok(r.tools.lookup);}
+ assert.equal(requests[1].messages.at(-1).role,'tool');await m.unload();
+});

@@ -1,19 +1,28 @@
 import type { TranscriptData, TranscriptSegment, TranscriptWord } from './types';
 
+// Do not manufacture spaces inside scripts normally written without them.
+const unspaced = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+const units = (text: string) => [...text.matchAll(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]\p{M}*|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]+/gu)];
+
 export function joinText(a: string, b: string): string {
   if (!a) return b.trim();
   if (!b) return a.trim();
-  return `${a.trimEnd()} ${b.trimStart()}`;
+  const left = a.trimEnd(), right = b.trimStart();
+  if (!left) return right;
+  if (!right) return left;
+  const separator = unspaced.test(left.replace(/\p{M}+$/u, '').match(/.$/u)?.[0] ?? '') || unspaced.test([...right][0] ?? '') || /[。！？、，：；「」『』）】]$/.test(left) || /^[。！？、，：；」』）】]/.test(right) ? '' : ' ';
+  return left + separator + right;
 }
 /** Reconcile only text attributable to the actual retained audio overlap.
  * The reference is recognized from that short overlap itself, not guessed from
  * the entire transcript. This bounds removal even for repeated phrases. */
 export function overlapText(previous: string, next: string, reference: string): { text: string; droppedWords: number } {
   if (!previous) return { text: next.trim(), droppedWords: 0 };
-  const before = previous.trim().split(/\s+/).filter(Boolean);
-  const after = next.trim().split(/\s+/).filter(Boolean);
-  const key = (word: string) => word.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  const anchor = reference.trim().split(/\s+/).filter(Boolean).map(key).filter(Boolean);
+  const key = (word: string) => word.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]/gu, '');
+  const beforeUnits = units(previous).filter(unit => key(unit[0]));
+  const before = beforeUnits.map(unit => unit[0]);
+  const after = units(next).map(unit => unit[0]).filter(key);
+  const anchor = units(reference).map(unit => key(unit[0])).filter(Boolean);
   if (!anchor.length) return { text: joinText(previous, next), droppedWords: 0 };
   const distance = (a: string[], b: string[]) => {
     let row = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -51,7 +60,8 @@ export function overlapText(previous: string, next: string, reference: string): 
   const oldCount = find(before, true), newCount = find(after, false);
   if (oldCount && newCount) {
     // Keep the newer recognition of the overlap (including spelling revisions).
-    return { text: joinText(before.slice(0, -oldCount).join(' '), next), droppedWords: oldCount };
+    const prefix = previous.slice(0, beforeUnits[beforeUnits.length - oldCount]!.index);
+    return { text: /\s$/.test(prefix) ? prefix + next.trimStart() : joinText(prefix, next), droppedWords: oldCount };
   }
   // A cut through a word can make the short reference unreliable. Prefer
   // possible repetition to deleting new speech without matching both sides.

@@ -75,7 +75,7 @@ export type { SchemaInput, JSONSchema, InferSchema, InferSchemaInput } from './s
 export { SchemaConfigurationError } from './schema/adapter.js';
 export { loadTextToSpeech, TextToSpeechModel } from './tts-next/index.js';
 export type {
-  LoadTextToSpeechOptions, SpeechHighlight, SpeechTiming, SpeechAudio, SpeechChunk,
+  LoadTextToSpeechOptions, ReferenceAudio, SpeechHighlight, SpeechTiming, SpeechAudio, SpeechChunk,
   SpeechResult, PlaybackEvent, PlaybackOptions, SynthesisOptions, SpeechSegment,
   GenerateOptions, SpeakOptions, SpeechHandle, SpeechGeneration,
 } from './tts-next/index.js';

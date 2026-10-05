@@ -1107,7 +1107,7 @@ class CoreStt:
             num_threads=1,
             debug=0,
             max_active_paths=4,
-            tail_paddings=0,
+            tail_paddings=-1,
             enable_token_timestamps=1 if enable_token_timestamps else 0,
             enable_segment_timestamps=1 if enable_segment_timestamps else 0,
             hotwords_score=1.5,
@@ -1136,6 +1136,8 @@ class CoreStt:
         """Configure a serialized online operation using the pinned BPE scores."""
         from ._recognition import _zipformer_vocabulary
         phrases = tuple(hotwords or ())
+        if phrases and self._config_bytes["model_id"] != b"k2-fsa/streaming-zipformer-en":
+            raise ValueError("Verified hotword BPE scores are available only for the registered English Zipformer")
         if phrases == self._configured_hotwords:
             return
         if not hasattr(self._lib, "wfloat_stt_model_configure_hotwords"):

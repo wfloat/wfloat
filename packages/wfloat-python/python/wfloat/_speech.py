@@ -2,7 +2,7 @@
 
 Timing uses milliseconds on the complete recording; text offsets are Python
 string indices within the original dialogue segment. Streaming requires the
-native prepare_wfloat_text/generate unit API. Whole-result-only backends remain
+native family-specific bounded unit adapter. Whole-result-only backends remain
 usable for blocking generation, but cannot satisfy the streaming contract.
 """
 from __future__ import annotations
@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import ctypes
 import math
+import warnings
 from numbers import Real
 from pathlib import Path
 from threading import Event, Lock
@@ -57,6 +58,11 @@ class SpeechSegment:
     intensity: Optional[float] = None
     speed: Optional[float] = None
     pause_after_ms: Optional[float] = None
+    temperature: Optional[float] = None
+    seed: Optional[int] = None
+    inference_steps: Optional[int] = None
+    reference_audio: Any = None
+    sample_rate: Optional[int] = None
 
 
 def _number(value, name, default, *, positive=False, maximum=None):
@@ -98,7 +104,7 @@ def _pause_samples(milliseconds, rate):
     return math.floor(count + 0.5)
 
 
-def _segments(inputs, rate, voice_id, emotion, intensity, speed, gap):
+def _segments(inputs, rate, voice_id, emotion, intensity, speed, gap, resolve_voice=_sid):
     if isinstance(inputs, (str, bytes, Mapping)):
         raise TypeError("segments must be a sequence of speech segments.")
     inputs = list(inputs)
@@ -107,7 +113,7 @@ def _segments(inputs, rate, voice_id, emotion, intensity, speed, gap):
     gap = _number(gap, "pause_between_segments_ms", 0)
     _pause_samples(gap, rate)
     # Validate defaults even when individual segments override them.
-    _sid(voice_id)
+    resolve_voice(voice_id)
     if emotion is not None:
         if not isinstance(emotion, str):
             raise TypeError("emotion must be a string.")
@@ -130,7 +136,7 @@ def _segments(inputs, rate, voice_id, emotion, intensity, speed, gap):
         if not segment.text.strip():
             raise ValueError("Speech text must not be blank.")
         segment.voice_id = voice_id if segment.voice_id is None else segment.voice_id
-        _sid(segment.voice_id)
+        resolve_voice(segment.voice_id)
         segment.emotion = emotion if segment.emotion is None else segment.emotion
         if segment.emotion is None:
             segment.emotion = "neutral"
@@ -219,11 +225,16 @@ class SpeechStream:
         native = self._model._legacy._native_tts
         rate = self._model.sample_rate
         sample_count = 0
-        unit_api = callable(getattr(native, "prepare_wfloat_text", None)) and callable(getattr(native, "generate", None))
+        pocket = self._model._pocket
+        unit_api = pocket or callable(getattr(native, "prepare_wfloat_text", None)) and callable(getattr(native, "generate", None))
         for index, segment in enumerate(self._segments):
             self._check()
             if unit_api:
-                prepared = native.prepare_wfloat_text(segment.text, segment.emotion, segment.intensity)
+                if pocket:
+                    from ._pocket import prepare_text
+                    prepared = prepare_text(segment.text)
+                else:
+                    prepared = native.prepare_wfloat_text(segment.text, segment.emotion, segment.intensity)
                 self._check()
                 if (not prepared.text or len(prepared.text) != len(prepared.text_clean)
                         or "".join(prepared.text) != segment.text
@@ -232,7 +243,8 @@ class SpeechStream:
                 cursor = 0
                 for raw, clean in zip(prepared.text, prepared.text_clean):
                     self._check()
-                    generated = native.generate(clean, _sid(segment.voice_id), segment.speed)
+                    generated = (native.generate_pocket(clean, segment) if pocket else
+                                 native.generate(clean, self._model._voice_id(segment.voice_id), segment.speed))
                     self._check()
                     audio = self._audio(generated)
                     start = sample_count / rate * 1000
@@ -288,6 +300,9 @@ class TextToSpeechModel:
         self._asset_lease = asset_lease
         self._legacy = legacy_model
         self.model_name = legacy_model.model_name
+        self._pocket = getattr(legacy_model._native_tts, 'family', None) == 'pocket'
+        self._standard = getattr(legacy_model._native_tts, "family", None) in ("piper", "kokoro", "kitten")
+        self._voice_id = legacy_model._native_tts.voice_id if self._standard else _sid
         self.sample_rate = legacy_model.sample_rate
         self.num_speakers = legacy_model.num_speakers
         if not isinstance(self.sample_rate, int) or self.sample_rate <= 0:
@@ -339,13 +354,51 @@ class TextToSpeechModel:
                 self._asset_lease.release()
                 self._asset_lease = None
 
-    def _create(self, segments, voice_id, emotion, intensity, speed, pause_between_segments_ms, cancel_event, whole_result):
+    def _create(self, segments, voice_id, emotion, intensity, speed, pause_between_segments_ms, cancel_event, whole_result, temperature=None, seed=None, inference_steps=None, reference_audio=None, sample_rate=None):
         self._assert_open()
         if cancel_event is not None and not isinstance(cancel_event, Event):
             raise TypeError("cancel_event must be a threading.Event.")
-        snapshot = _segments(segments, self.sample_rate, voice_id, emotion, intensity, speed, pause_between_segments_ms)
+        if self._pocket:
+            from ._pocket import resolve_segments
+            snapshot = resolve_segments(segments, self.sample_rate, voice_id, emotion, intensity, speed,
+                pause_between_segments_ms, temperature, seed, inference_steps, reference_audio, sample_rate)
+        else:
+            if self._standard:
+                segments = list(segments) if not isinstance(segments, (str, bytes, Mapping)) else segments
+                explicit_controls = {name for name, value in [('emotion', emotion), ('intensity', intensity)] if value is not None}
+                if isinstance(segments, list):
+                    for source in segments:
+                        for name in ('emotion', 'intensity'):
+                            value = source.get(name) if isinstance(source, Mapping) else getattr(source, name, None)
+                            if value is not None:
+                                explicit_controls.add(name)
+            snapshot = _segments(segments, self.sample_rate, voice_id, emotion, intensity, speed, pause_between_segments_ms, self._voice_id)
+            if self._standard:
+                from ._tts_families import validate_text
+                for segment in snapshot:
+                    validate_text(self._legacy._native_tts.family, segment.text)
+                for name in sorted(explicit_controls):
+                    warnings.warn(f'{self.model_name} does not support {name}; the explicit option is ignored.', UserWarning, stacklevel=3)
+            if reference_audio is not None or sample_rate is not None or any(
+                    segment.reference_audio is not None or segment.sample_rate is not None for segment in snapshot):
+                raise ValueError('reference_audio and sample_rate require a Pocket TTS model.')
+            from ._pocket import temperature as validate_temperature, integer
+            explicit = set()
+            for source in [SpeechSegment('', temperature=temperature, seed=seed, inference_steps=inference_steps), *snapshot]:
+                if source.temperature is not None:
+                    validate_temperature(source.temperature)
+                    explicit.add('temperature')
+                if source.seed is not None:
+                    integer(source.seed, 'seed', 0)
+                    explicit.add('seed')
+                if source.inference_steps is not None:
+                    integer(source.inference_steps, 'inference_steps', 1)
+                    explicit.add('inference_steps')
+            for name in sorted(explicit):
+                warnings.warn(f'Wfloat TTS does not support {name}; the explicit option is ignored.',
+                              UserWarning, stacklevel=3)
         native = self._legacy._native_tts
-        if not whole_result and not (callable(getattr(native, "prepare_wfloat_text", None)) and callable(getattr(native, "generate", None))):
+        if not self._pocket and not whole_result and not (callable(getattr(native, "prepare_wfloat_text", None)) and callable(getattr(native, "generate", None))):
             raise NotImplementedError("Native TTS requires prepare_wfloat_text/generate unit APIs for bounded streaming.")
         stream = SpeechStream(self, snapshot, cancel_event, whole_result=whole_result)
         self._streams.add(stream)
@@ -357,11 +410,18 @@ class TextToSpeechModel:
         emotion: Optional[str] = None,
         intensity: Optional[float] = None,
         speed: Optional[float] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        inference_steps: Optional[int] = None,
+        reference_audio: Any = None,
+        sample_rate: Optional[int] = None,
         pause_between_segments_ms: Optional[float] = 0,
         cancel_event: Optional[Event] = None,
     ) -> SpeechStream:
         return self.generate_dialogue_stream([SpeechSegment(text)], voice_id=voice_id, emotion=emotion,
-            intensity=intensity, speed=speed, pause_between_segments_ms=pause_between_segments_ms, cancel_event=cancel_event)
+            intensity=intensity, speed=speed, pause_between_segments_ms=pause_between_segments_ms, cancel_event=cancel_event,
+            temperature=temperature, seed=seed, inference_steps=inference_steps,
+            reference_audio=reference_audio, sample_rate=sample_rate)
 
     def generate_dialogue_stream(
         self, segments: Iterable[Union[SpeechSegment, Mapping[str, Any]]], *,
@@ -369,10 +429,15 @@ class TextToSpeechModel:
         emotion: Optional[str] = None,
         intensity: Optional[float] = None,
         speed: Optional[float] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        inference_steps: Optional[int] = None,
+        reference_audio: Any = None,
+        sample_rate: Optional[int] = None,
         pause_between_segments_ms: Optional[float] = 0,
         cancel_event: Optional[Event] = None,
     ) -> SpeechStream:
-        return self._create(segments, voice_id, emotion, intensity, speed, pause_between_segments_ms, cancel_event, False)
+        return self._create(segments, voice_id, emotion, intensity, speed, pause_between_segments_ms, cancel_event, False, temperature, seed, inference_steps, reference_audio, sample_rate)
 
     def generate(
         self, text: str, *,
@@ -380,11 +445,18 @@ class TextToSpeechModel:
         emotion: Optional[str] = None,
         intensity: Optional[float] = None,
         speed: Optional[float] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        inference_steps: Optional[int] = None,
+        reference_audio: Any = None,
+        sample_rate: Optional[int] = None,
         pause_between_segments_ms: Optional[float] = 0,
         cancel_event: Optional[Event] = None,
     ) -> SpeechResult:
         return self.generate_dialogue([SpeechSegment(text)], voice_id=voice_id, emotion=emotion,
-            intensity=intensity, speed=speed, pause_between_segments_ms=pause_between_segments_ms, cancel_event=cancel_event)
+            intensity=intensity, speed=speed, pause_between_segments_ms=pause_between_segments_ms, cancel_event=cancel_event,
+            temperature=temperature, seed=seed, inference_steps=inference_steps,
+            reference_audio=reference_audio, sample_rate=sample_rate)
 
     def generate_dialogue(
         self, segments: Iterable[Union[SpeechSegment, Mapping[str, Any]]], *,
@@ -392,10 +464,15 @@ class TextToSpeechModel:
         emotion: Optional[str] = None,
         intensity: Optional[float] = None,
         speed: Optional[float] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        inference_steps: Optional[int] = None,
+        reference_audio: Any = None,
+        sample_rate: Optional[int] = None,
         pause_between_segments_ms: Optional[float] = 0,
         cancel_event: Optional[Event] = None,
     ) -> SpeechResult:
-        stream = self._create(segments, voice_id, emotion, intensity, speed, pause_between_segments_ms, cancel_event, True)
+        stream = self._create(segments, voice_id, emotion, intensity, speed, pause_between_segments_ms, cancel_event, True, temperature, seed, inference_steps, reference_audio, sample_rate)
         arrays, timeline = [], []
         with stream:
             for chunk in stream:
@@ -411,8 +488,13 @@ def load_text_to_speech(
     cancel_event: Optional[Event] = None,
 ) -> TextToSpeechModel:
     """Load cached assets, reporting progress inline; unload preserves files."""
+    from ._tts_families import PIPER, KOKORO, KITTEN, load_cached as load_standard
+
     def initialize(lease):
-        legacy = _legacy_load(model_id, cache_dir=cache_dir, force_download=False)
+        from ._pocket import MODEL_ID, load_cached
+        legacy = (load_standard(model_id, cache_dir) if model_id in PIPER or model_id == KOKORO or model_id in KITTEN else
+                  load_cached(cache_dir) if model_id == MODEL_ID else
+                  _legacy_load(model_id, cache_dir=cache_dir, force_download=False))
         try:
             return TextToSpeechModel(legacy, asset_lease=lease)
         except BaseException:

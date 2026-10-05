@@ -382,6 +382,13 @@ class LanguageModel:
 
     def _create_stream(self, messages, options, cancel_event):
         self._ensure_open()
+        if self.model_id in {'Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B', 'Qwen/Qwen3-4B'}:
+            # Match Web defaults and the embedded template's default thinking mode.
+            thinking = options['reasoning'] is not False
+            defaults = {'temperature': 0.6 if thinking else 0.7,
+                        'top_p': 0.95 if thinking else 0.8, 'top_k': 20, 'min_p': 0}
+            options = {**options, **{key: value for key, value in defaults.items()
+                                     if options[key] is None}}
         event = CancellationEvent(cancel_event)
         input_messages = _messages(messages)
         schemas, output = _prepare(options, explicit_max_rounds=_explicit_max_rounds.get())

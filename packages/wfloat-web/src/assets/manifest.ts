@@ -1,4 +1,5 @@
 import { MODEL_ASSETS, REGISTRY_ORIGIN, SHARED_ASSETS } from "../worker/generatedModelUrls.js";
+import { isComposite, compositeParts } from "./composite.js";
 import type { AssetManifestEntry } from "./types.js";
 
 export type AssetModelId = keyof typeof MODEL_ASSETS;
@@ -23,7 +24,9 @@ export function configureRuntimeAssets(family: RuntimeFamily, assets: readonly O
 }
 export function getModelRuntimeFamily(id: string): RuntimeFamily {
   if (!Object.prototype.hasOwnProperty.call(MODEL_ASSETS, id)) throw new Error(`Unknown model: ${id}`);
-  return id === "HuggingFaceTB/SmolLM2-360M-Instruct" ? "llama" : "speech";
+  const record = MODEL_ASSETS[id as AssetModelId];
+  const family = 'family' in record ? record.family : undefined;
+  return ["smollm", "gemma3", "qwen3"].includes(family ?? "") ? "llama" : "speech";
 }
 function entry(asset: RegistryAsset, shared: boolean): AssetManifestEntry {
   return { url: new URL(asset.path, REGISTRY_ORIGIN).href, sha256: asset.sha256,
@@ -33,9 +36,12 @@ function entry(asset: RegistryAsset, shared: boolean): AssetManifestEntry {
 export function getModelAssetManifest(id: string): readonly AssetManifestEntry[] {
   getModelRuntimeFamily(id);
   const records = MODEL_ASSETS[id as AssetModelId];
-  const assets = Object.values(records).filter((value): value is RegistryAsset =>
-    typeof value === "object" && "path" in value).map(value => entry(value, false));
-  if (id === "wfloat/wfloat-tts") assets.push(entry(SHARED_ASSETS.espeak_ng_data_zip, true));
+  const assets: AssetManifestEntry[] = [];
+  for (const value of Object.values(records)) {
+    if (isComposite(value)) assets.push(...compositeParts(value).map(part => entry(part, false)));
+    else if (typeof value === "object" && "path" in value) assets.push(entry(value, false));
+  }
+  if (id === "wfloat/wfloat-tts" || ("family" in records && ["piper", "kokoro", "kitten"].includes(records.family))) assets.push(entry(SHARED_ASSETS.espeak_ng_data_zip, true));
   return assets;
 }
 /** Includes required runtime dependencies; fail rather than claim an incomplete predownload. */

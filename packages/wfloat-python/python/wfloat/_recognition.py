@@ -18,9 +18,12 @@ from typing import Optional
 
 import numpy as np
 
+from ._assets import PARAKEET_TDT_MODEL_ID
 from ._audio import Audio, normalize_audio, _StreamingResampler
 from ._operations import CancellationEvent, ModelLifecycle
 from ._stt_load import load_stt_model
+from ._stt_contracts import (MULTILINGUAL_WHISPER, WHISPER_MODELS, MOONSHINE_V2,
+                             ZIPFORMER_LANGUAGES, validate_options)
 from ._zipformer_vocabulary import _ZIPFORMER_VOCABULARY
 
 
@@ -167,8 +170,19 @@ class _TaskModel(ModelLifecycle):
             self._condition.notify_all()
 
 
+# Han and kana do not require inserted word separators. Keep native spelling
+# and punctuation; this is text reconciliation, not inferred word alignment.
+_CJK = r'\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\U00020000-\U0002fa1f'
+_TEXT_PIECES = re.compile('[' + _CJK + ']|[^\\s' + _CJK + ']+')
+_CJK_BOUNDARY = re.compile('[' + _CJK + r'\u3000-\u303f\uff01-\uff65' + ']')
+
+
 def _join(a, b):
-    return ' '.join(x.strip() for x in (a, b) if x.strip())
+    a, b = a.strip(), b.strip()
+    if not a or not b:
+        return a or b
+    separator = '' if _CJK_BOUNDARY.fullmatch(a[-1]) and _CJK_BOUNDARY.fullmatch(b[0]) else ' '
+    return a + separator + b
 
 
 def _overlap(previous, current, reference):
@@ -178,8 +192,11 @@ def _overlap(previous, current, reference):
     """
     def key(word):
         return ''.join(c for c in word.lower() if c.isalnum())
-    before, after = previous.split(), current.split()
-    anchor = [key(w) for w in reference.split() if key(w)]
+    def pieces(text):
+        return [match for match in _TEXT_PIECES.finditer(text) if key(match[0])]
+    before_spans = pieces(previous)
+    before, after = [m[0] for m in before_spans], [m[0] for m in pieces(current)]
+    anchor = [key(m[0]) for m in pieces(reference)]
     if not anchor:
         return _join(previous, current)
     allowance = 0 if len(anchor) < 3 else max(1, len(anchor) // 3)
@@ -204,7 +221,7 @@ def _overlap(previous, current, reference):
                         best, score = count, edits
         return best
     old, new = find(before, True), find(after, False)
-    return _join(' '.join(before[:-old]), current) if old and new else _join(previous, current)
+    return _join(previous[:before_spans[-old].start()], current) if old and new else _join(previous, current)
 
 
 class SpeechToTextModel(_TaskModel):
@@ -216,10 +233,7 @@ class SpeechToTextModel(_TaskModel):
         self._segment_timestamps = segment_timestamps
 
     def _options(self, language, task, timestamps, hotwords):
-        if language not in (None, 'en'):
-            raise ValueError('The currently enabled recognition assets support English only')
-        if task not in (None, 'transcribe'):
-            raise ValueError('Translation is not supported by the current recognition assets')
+        language = validate_options(self.model_id, language, task)
         if timestamps not in (None, 'segment', 'word'):
             raise ValueError('timestamps must be segment or word')
         if timestamps == 'word':
@@ -229,9 +243,11 @@ class SpeechToTextModel(_TaskModel):
         if hotwords is not None:
             if not isinstance(hotwords, (list, tuple)) or any(not isinstance(w, str) or not w.strip() for w in hotwords):
                 raise TypeError('hotwords must be a sequence of nonempty strings')
-            if not self._online:
-                raise ValueError('Hotwords are supported only by streaming Zipformer')
+            if not self._online or self.model_id in ZIPFORMER_LANGUAGES and self.model_id != 'k2-fsa/streaming-zipformer-en':
+                raise ValueError('Hotwords are supported only by the registered English Zipformer')
             hotwords = _normalize_hotwords(hotwords)
+        if self.model_id in ZIPFORMER_LANGUAGES:
+            language = None  # Validate compatibility without promising forced recognition.
         return dict(language=language, task=task, hotwords=hotwords)
 
     def _decode(self, samples, options, offset=0, timestamps=None):
@@ -240,9 +256,27 @@ class SpeechToTextModel(_TaskModel):
         raw = self._native.transcribe_result(model_id=self.model_id, samples=samples,
             sample_rate=self.sample_rate, **options)
         segments = None
-        if timestamps == 'segment' and raw.segments:
-            segments = [TranscriptSegment(s.text, TranscriptTiming(
-                offset + s.start_sec * 1000, offset + (s.start_sec + s.duration_sec) * 1000)) for s in raw.segments]
+        if timestamps == 'segment':
+            if raw.text.strip() and not raw.segments:
+                raise RuntimeError('Native recognition did not return requested segment timestamps')
+            if raw.segments:
+                segments = []
+                duration_ms = len(samples) / self.sample_rate * 1000
+                for s in raw.segments:
+                    if (not isinstance(s.text, str)
+                            or isinstance(s.start_sec, bool) or not isinstance(s.start_sec, (int, float))
+                            or isinstance(s.duration_sec, bool) or not isinstance(s.duration_sec, (int, float))):
+                        raise RuntimeError('Native recognition returned invalid segment timing')
+                    start, end = s.start_sec * 1000, (s.start_sec + s.duration_sec) * 1000
+                    if (not math.isfinite(start) or not math.isfinite(end) or start < 0
+                            or end < start or (s.text.strip() and end == start)):
+                        raise RuntimeError('Native recognition returned invalid or unclosed segment timing')
+                    # Bound valid endpoints to this decode window before applying
+                    # the recording offset; never fabricate an out-of-range span.
+                    end = min(end, duration_ms)
+                    if start > duration_ms or (s.text.strip() and end <= start):
+                        raise RuntimeError('Native recognition returned out-of-range segment timing')
+                    segments.append(TranscriptSegment(s.text, TranscriptTiming(offset + start, offset + end)))
         return PartialTranscript(raw.text.strip(), segments)
 
     def transcribe(self, audio, *, sample_rate=None, language=None, task='transcribe',
@@ -515,14 +549,16 @@ class TranscriptionSession:
 
 
 _MODELS = {'openai/whisper-tiny-en': False, 'UsefulSensors/moonshine-tiny': False,
-           'k2-fsa/streaming-zipformer-en': True}
+           **{model: True for model in ZIPFORMER_LANGUAGES},
+           **{model: False for model in MULTILINGUAL_WHISPER},
+           MOONSHINE_V2: False, PARAKEET_TDT_MODEL_ID: False}
 
 
 def _load(model_id, cls, cache_dir, on_progress, cancel_event):
     from ._lifecycle import load_with_lifecycle
     if model_id not in _MODELS:
-        raise ValueError('This recognition surface currently supports Whisper tiny.en, Moonshine tiny, and streaming Zipformer en')
-    whisper = model_id == 'openai/whisper-tiny-en'
+        raise ValueError(f'Unsupported recognition model: {model_id}')
+    whisper = model_id in WHISPER_MODELS
     def initialize(lease):
         legacy = load_stt_model(model_id, cache_dir=cache_dir, force_download=False,
                                 enable_segment_timestamps=whisper)

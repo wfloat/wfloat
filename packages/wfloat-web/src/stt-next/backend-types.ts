@@ -14,7 +14,7 @@ export interface SpeechToTextBackend {
 export type WorkerAssets = {
   wasm: Uint8Array; tokens: Uint8Array; encoder: Uint8Array;
   decoder?: Uint8Array; joiner?: Uint8Array; preprocessor?: Uint8Array;
-  uncached_decoder?: Uint8Array; cached_decoder?: Uint8Array;
+  uncached_decoder?: Uint8Array; cached_decoder?: Uint8Array; merged_decoder?: Uint8Array;
 };
 export type WorkerRequest = { id: number } & (
   | { type: 'init'; modelId: string; assets: WorkerAssets }

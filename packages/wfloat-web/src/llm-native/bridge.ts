@@ -39,6 +39,8 @@ class WorkerBackend implements NativeBackend {
         const transfer = new Set<ArrayBuffer>();
         if (command.type === 'load') {
           if (command.options.model instanceof ArrayBuffer) transfer.add(command.options.model);
+          for (const file of command.options.modelFiles ?? [])
+            if (file.data instanceof ArrayBuffer) transfer.add(file.data);
           const wasm = command.options.wasmBinary?.buffer;
           if (wasm instanceof ArrayBuffer) transfer.add(wasm);
         }

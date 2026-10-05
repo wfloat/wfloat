@@ -92,6 +92,43 @@ fun main() {
     check(File(path).readBytes().contentEquals(bytes))
     check(runCatching { assets.stat("../escape", null, null) }.isFailure)
 
+    fun digest(value: ByteArray) = MessageDigest.getInstance("SHA-256").digest(value).joinToString("") { "%02x".format(it) }
+    val left = bytes.copyOfRange(0, 100001); val right = bytes.copyOfRange(100001, bytes.size)
+    val assetRoot = File(temporary, "wfloat-next")
+    File(assetRoot, "left").writeBytes(left); File(assetRoot, "right").writeBytes(right)
+    val assembly = JSONObject().put("key", "encoder").put("sizeBytes", bytes.size).put("sha256", hash)
+      .put("parts", org.json.JSONArray().put(JSONObject().put("key", "left").put("sizeBytes", left.size).put("sha256", digest(left)))
+        .put(JSONObject().put("key", "right").put("sizeBytes", right.size).put("sha256", digest(right))))
+    val encoder = File(assets.assemble(assembly, cancelled).getString("path"))
+    check(encoder.readBytes().contentEquals(bytes))
+    check(assets.stat("encoder", hash, bytes.size.toLong()) is JSONObject)
+    File(assetRoot, "left").delete() // Whole cache reuse does not need transport parts.
+    check(assets.assemble(assembly, cancelled).getString("path") == encoder.path)
+    assets.pin(listOf(encoder.path)); assets.delete("encoder")
+    check(encoder.exists() && assets.stat("encoder", hash, bytes.size.toLong()) == JSONObject.NULL)
+    assets.assemble(assembly, cancelled); assets.unpin(listOf(encoder.path))
+    check(encoder.exists()) // Verified reload rescinds deferred deletion.
+    assets.pin(listOf(encoder.path)); assets.delete("encoder"); assets.unpin(listOf(encoder.path))
+    check(!encoder.exists())
+    File(assetRoot, "left").writeBytes(left)
+    val corrupted = right.copyOf(); corrupted[0] = (corrupted[0].toInt() xor 1).toByte()
+    File(assetRoot, "right").writeBytes(corrupted)
+    check(runCatching { assets.assemble(assembly, cancelled) }.isFailure)
+    check(!encoder.exists() && !File(assetRoot, "encoder.partial").exists())
+    File(assetRoot, "right").writeBytes(right)
+    assembly.put("sha256", "0".repeat(64))
+    check(runCatching { assets.assemble(assembly, cancelled) }.isFailure)
+    check(!encoder.exists() && !File(assetRoot, "encoder.partial").exists())
+    assembly.put("sha256", hash); cancelled.set(true)
+    check(runCatching { assets.assemble(assembly, cancelled) }.isFailure)
+    cancelled.set(false); assets.assemble(assembly, cancelled)
+    encoder.writeBytes(ByteArray(bytes.size))
+    check(assets.stat("encoder", hash, bytes.size.toLong()) == JSONObject.NULL)
+    assets.assemble(assembly, cancelled)
+    check(encoder.readBytes().contentEquals(bytes))
+    assets.delete("encoder"); assets.delete("left"); assets.delete("right")
+    check(!encoder.exists() && !File(assetRoot, "encoder.verified").exists())
+
     fun archive(name: String, entry: String): File = File(temporary, name).also { f ->
       ZipOutputStream(f.outputStream()).use { zip -> zip.putNextEntry(ZipEntry(entry)); zip.write("data".toByteArray()); zip.closeEntry() }
     }

@@ -34,3 +34,41 @@ audio buffer, and applies no duration/threshold policy. Creation returns null,
 reset returns 0, and scoring returns NaN on recoverable native errors; runtime
 aborts remain fatal. Inference failure poisons the scorer until reset. These
 additive browser exports leave existing Sherpa C API layouts unchanged.
+
+Kitten metadata version 8 has a local frontend/style/tail overlay; see
+[Kitten 0.8 contract and evidence](WFLOAT_KITTEN_08.md). It accepts
+raw text and performs pinned upstream normalization/chunking internally. The
+Web adapter is wired; native/WASM frontend differential tests and rebuilt
+Nano/Mini WASM smokes pass. Device qualification remains separate. Other
+Kitten versions retain their previous behavior.
+
+The iOS build pins the published ONNX Runtime 1.18.1 static XCFramework and
+checks SHA-256 for downloaded and cached archives. This replaces 1.17.1, whose
+ONNX domain-version validation rejects Kitten's `ai.onnx.ml` opset-5 import.
+Version selection is refreshed even on cache hits. The existing flat-library
+layout and iOS 13 engine target are retained; no model/SDK changes or validation
+bypass are involved. Archive verification and binary minimums are documented in
+[the Kitten integration notes](WFLOAT_KITTEN_08.md#ios-onnx-runtime-compatibility).
+
+### VITS session compatibility with ORT 1.18.1
+
+The local `offline-tts-vits-session-options.h` overlay disables memory-pattern
+reuse for VITS sessions only when the linked runtime reports exactly `1.18.1`.
+Both filesystem and asset-manager constructors apply it before session creation.
+Graph optimization, the CPU arena, model assets, validation, and other model
+families retain their existing behavior. Other ORT versions are unchanged.
+
+The trigger was repeated generation with the unchanged LibriTTS-high export:
+the first call succeeded, but subsequent calls failed at `Reshape_5227` or an
+upstream `GatherElements` node, including when repeating the same speaker.
+Durations can change with input values and random samples despite identical
+input shapes. A six-call `903,903,0,903,0,903` direct-runtime probe passed on
+ORT 1.17.1 and on ORT 1.18.1 with memory patterns disabled; ORT 1.18.1 with
+default, Basic, or Extended graph optimization failed on reuse. This isolates
+memory-pattern reuse as the trigger, not the precise underlying kernel defect.
+The rebuilt public SDK passed twelve repeated/mixed-speaker calls across initial
+load and cached reload. To reproduce, load LibriTTS-high and generate the same
+sentence with speakers `903,903,0,903,0,903`, checking finite, nonempty audio;
+unload, load from cache, and repeat. Use the unmodified model and default graph
+optimization/CPU arena settings. Machine-local build and qualification reports
+are excluded from the public source tree.

@@ -60,6 +60,7 @@ class WfloatNextModule(context: ReactApplicationContext) : NativeWfloatNextSpec(
         val c = parsed
         val result: Any = when (val op = c.getString("op")) {
           "assetDownload" -> assets.download(c, cancelled) { event(requestId, it) }
+          "assetAssemble" -> assets.assemble(c, cancelled)
           "assetStat" -> assets.stat(c.getString("key"), if (c.has("sha256")) c.getString("sha256") else null, if (c.has("sizeBytes")) c.getLong("sizeBytes") else null)
           "assetDelete" -> { assets.delete(c.getString("key")); JSONObject.NULL }
           "prepareEspeak" -> assets.prepareEspeak(c, cancelled)

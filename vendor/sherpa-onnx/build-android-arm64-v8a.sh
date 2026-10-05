@@ -198,7 +198,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" 
 # Please use -DANDROID_PLATFORM=android-27 if you want to use Android NNAPI
 
 # make VERBOSE=1 -j4
-make -j4
+make -j"${WFLOAT_BUILD_JOBS:-4}"
 make install/strip
 if [ "$BUILD_SHARED_LIBS" == ON ]; then
   cp -fv "$SHERPA_ONNXRUNTIME_LIB_DIR/libonnxruntime.so" install/lib

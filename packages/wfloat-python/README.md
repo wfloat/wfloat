@@ -5,6 +5,8 @@ The Python surface is synchronous: ordinary calls return results, streams use `f
 and live recognition sessions accept application-supplied audio. Wfloat does not open
 microphones or play sound in this release.
 
+The model tables describe IDs integrated in this branch. Publication and platform qualification are ongoing; inclusion is not a claim of completed testing on every platform.
+
 ## Installation
 
 ```sh
@@ -18,6 +20,24 @@ Schema does not require it. Native model runtimes are bundled in platform wheels
 A source checkout requires a native build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Language generation
+
+| Model IDs | Behavior |
+| --- | --- |
+| `HuggingFaceTB/SmolLM2-360M-Instruct` | Existing text-generation model. |
+| `Qwen/Qwen3-0.6B`, `Qwen/Qwen3-1.7B` | Embedded thinking template; reasoning enabled unless explicitly disabled. |
+| `Qwen/Qwen3-4B` | Same thinking behavior; limited smoke qualification only (see below). |
+| `google/gemma-3-270m-it`, `google/gemma-3-1b-it` | Embedded Gemma text-chat template. |
+
+Qwen 4B has passed bounded Web, Python and RN iOS/Android generation and
+cached-reload checks at context 2048 with reasoning disabled. These checks do
+not qualify physical-device performance, reasoning, tools, structured output
+or long-context behavior for 4B.
+
+Qwen and Gemma default to a 2048-token context. Model files, quantization and shard
+layout are selected internally; there is no public quantization or shard selector.
+Larger models need more memory even when their downloads are split into shards.
+Qwen sampling defaults follow the reasoning mode; explicit sampling options take
+precedence. Use `reasoning=False` to disable thinking and bound generation with `max_tokens_per_round`.
 
 ```python
 from wfloat import load_language_model
@@ -33,6 +53,17 @@ with load_language_model("HuggingFaceTB/SmolLM2-360M-Instruct") as model:
 The main input can be positional or named. Configuration arguments are keyword-only.
 `unload()` releases a model explicitly; the model context manager does the same on
 exit. Unloading does not delete downloaded model files.
+
+Gemma 3 1B uses the same API: `load_language_model("google/gemma-3-1b-it")`.
+It defaults to a 2048-token context and the model's embedded chat template;
+`context_size` and `chat_template` remain optional overrides. The SDK downloads
+and verifies both native GGUF shards before loading, and keeps their canonical
+sibling filenames in the cache.
+
+Gemma downloads also include its terms (`gemma-terms.html`), prohibited-use policy
+(`gemma-prohibited-use-policy.html`), `NOTICE.txt`, and `provenance.json` alongside
+the shards. These accompanying documents describe the model's terms and source;
+they do not replace the Python package license.
 
 ### Streaming
 
@@ -114,6 +145,32 @@ keywords are rejected explicitly rather than silently ignored.
 
 ## Speech generation
 
+Additional speech-generation IDs use the existing loader and `voice_id` option:
+
+| Model ID | Language / voice selection |
+| --- | --- |
+| `rhasspy/piper-en_US-lessac-medium` | US English; voice 0. |
+| `rhasspy/piper-en_US-amy-medium` | US English; voice 0. |
+| `rhasspy/piper-en_US-ryan-medium` | US English; voice 0. |
+| `rhasspy/piper-en_GB-alba-medium` | British English; voice 0. |
+| `rhasspy/piper-de_DE-thorsten-medium` | German; voice 0. |
+| `rhasspy/piper-fr_FR-siwis-medium` | French; voice 0. |
+| `rhasspy/piper-en_US-libritts-high` | US English; speaker IDs 0–903. |
+| `hexgrad/Kokoro-82M` | American/British English, Spanish, French, Hindi, Italian, Brazilian Portuguese and Mandarin; named voices or numeric IDs. Japanese excluded. |
+| `KittenML/kitten-tts-nano-0.8` | English; eight named voices or IDs 0–7; 24 kHz output. |
+| `KittenML/kitten-tts-mini-0.8` | English; eight named voices or IDs 0–7; 24 kHz output. |
+
+Kokoro Japanese voices (`jf_*`, `jm_*`, numeric IDs 37–41) are rejected: the current
+frontend routes Han characters through Chinese pronunciation. Piper/Kokoro/Kitten do not
+support reference-audio voice cloning. Shared eSpeak data is downloaded internally.
+
+Kitten voice IDs 0–7 map to `Jasper`, `Bella`, `Bruno`, `Luna`, `Hugo`, `Rosie`,
+`Leo`, and `Kiki`. Kitten requires the updated 0.8 frontend runtime and accepts
+at most 65,536 Unicode codepoints per synthesis call. Limited Web, Python and
+RN iOS/Android smoke checks have passed for Nano and Mini. The iOS runtime
+requires the bundled ONNX Runtime 1.18.1 update for these exports.
+These checks do not establish broad platform or pronunciation-quality coverage.
+
 ```python
 from wfloat import load_text_to_speech
 
@@ -134,6 +191,42 @@ with tts.generate_stream("First sentence. Second sentence.") as stream:
         consume_audio(chunk.audio.samples, chunk.audio.sample_rate)
         # chunk.start_ms and chunk.timeline locate its audio/text.
 ```
+
+### Pocket TTS
+
+```python
+with load_text_to_speech("kyutai/pocket-tts") as tts:
+    result = tts.generate("Hello from Pocket.", temperature=0.7,
+                          inference_steps=5, seed=42)
+    cloned = tts.generate("A reference voice.", reference_audio="reference.wav")
+```
+
+Pocket defaults to the bundled `alba` reference, temperature `0.7`, five inference
+steps, and a random seed. `temperature` must be finite, nonnegative and
+representable as float32. Positive temperatures below `2**-126` are rejected to
+avoid native parsing fallback; zero is valid. `inference_steps` must be a positive signed int32;
+`seed`, when supplied, must be a nonnegative signed int32.
+
+`reference_audio` uses the transcription audio convention: an `Audio`, a PCM WAV
+path, or NumPy samples with `sample_rate`. References are copied, downmixed and
+resampled to mono 24 kHz. Empty references and references longer than 10 seconds
+are rejected, never truncated. `sample_rate` describes the reference input only.
+The preset selector accepts `voice_id="alba"`.
+
+These options also work on `generate_stream()`, `generate_dialogue()` and
+`generate_dialogue_stream()`, and on individual `SpeechSegment` objects or segment
+mappings. Segment controls inherit operation defaults. A segment's explicit
+`voice_id` or `reference_audio` replaces the operation's voice selection; selecting
+both for the same resolved segment raises an error. Explicit `emotion`, `intensity`
+and `speed` options warn because Pocket does not support them. Wfloat TTS retains
+its existing controls. On a Wfloat model, explicit `temperature`, `seed` and
+`inference_steps` are validated, then warn and have no effect; `reference_audio`
+and `sample_rate` are rejected.
+
+Pocket prepares units of about 200 characters at whitespace/punctuation, with a
+Unicode-safe fallback, without Wfloat's phonemizer. Timelines preserve the original
+text and Python string offsets at unit granularity. Cancellation is checked between
+native units; a unit already synthesizing finishes before cancellation takes effect.
 
 ## Transcription and VAD
 
@@ -169,11 +262,32 @@ with load_streaming_speech_to_text("openai/whisper-tiny-en") as model:
         session.cancel()  # harmless after finish; cleans up on early exit
 ```
 
-Whisper live transcription uses bounded recording windows; it is not a natively
-streaming recognizer. Word timestamps require verified backend support and are
-currently rejected; segment timings are available where supported.
-The registered English Zipformer supports `hotwords=["Wfloat", "speech recognition"]`
-on `transcribe()` and `create_session()`. Other models reject unsupported hotwords.
+| Model IDs | Languages / tasks | Live recognition | Optional capabilities |
+| --- | --- | --- | --- |
+| `openai/whisper-tiny-en` | English transcription | Windowed | Segment timestamps |
+| `openai/whisper-tiny`, `openai/whisper-base`, `openai/whisper-small` | Multilingual transcription; translation to English | Windowed | Segment timestamps |
+| `UsefulSensors/moonshine-tiny`, `moonshine-ai/moonshine-base` | English transcription | Windowed | — |
+| `k2-fsa/streaming-zipformer-en` | English transcription | Native incremental | English hotwords |
+| `shaojieli/streaming-zipformer-fr` | French transcription | Native incremental | — |
+| `k2-fsa/streaming-zipformer-zh-en` | Chinese/English transcription | Native incremental | — |
+| `nvidia/parakeet-tdt-0.6b-v3` | Automatic recognition of 25 languages; transcription only | Windowed | — |
+
+These adapters accept complete recordings and live sessions. Windowed live
+recognition reruns offline recognition on bounded overlapping audio; it has
+different latency and cost from native incremental recognition. Zipformer's
+`language` validates compatibility rather than forcing the bilingual decoder.
+
+Parakeet requires omitting `language`; translation, hotwords and word/segment
+timestamp requests are unsupported. Its transport parts are reconstructed
+internally before loading. Word timestamps are unavailable for the listed models;
+segment timestamps are available only for Whisper. Predicted segment endpoints
+are capped to the supplied audio duration (per processing window); text and start
+times are preserved. Invalid or wholly out-of-range timings still fail. Other timing fields must not
+be interpreted as word alignments. Unsupported options reject.
+
+Recognition options belong on `transcribe()` / `create_session()`. Only
+`k2-fsa/streaming-zipformer-en` accepts `hotwords`, for example
+`hotwords=["Wfloat", "speech recognition"]`.
 
 VAD `detect(..., return_audio=True)` returns detected clips for complete audio.
 Live VAD delivers completed clips without retaining all of them in its final timing

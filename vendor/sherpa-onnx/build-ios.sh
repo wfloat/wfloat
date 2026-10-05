@@ -5,7 +5,9 @@ dir=build-ios
 mkdir -p "$dir"
 cd "$dir"
 
-onnxruntime_version=1.17.1
+# Keep this archive/layout pin in sync with WFLOAT_KITTEN_08.md.
+onnxruntime_version=1.18.1
+onnxruntime_sha256=52a82ca181186234a667a52e53f643bbb5845abe2ee47d3b1f0b0e69cf21da3d
 onnxruntime_dir="ios-onnxruntime/$onnxruntime_version"
 github_host=github.com
 
@@ -13,18 +15,37 @@ if [[ "${SHERPA_ONNX_GITHUB_MIRROW:-}" == "true" ]]; then
   github_host=hub.nuaa.cf
 fi
 
-if [[ ! -f "$onnxruntime_dir/onnxruntime.xcframework/ios-arm64/onnxruntime.a" ]]; then
-  mkdir -p "$onnxruntime_dir"
-  pushd "$onnxruntime_dir"
-  archive_name="onnxruntime.xcframework-${onnxruntime_version}.tar.bz2"
-  archive_url="https://${github_host}/csukuangfj/onnxruntime-libs/releases/download/v${onnxruntime_version}/${archive_name}"
-  curl -L --fail --retry 3 -o "$archive_name" "$archive_url"
-  tar xvf "$archive_name"
-  rm "$archive_name"
-  cd ..
-  ln -sfn "$onnxruntime_version/onnxruntime.xcframework" onnxruntime.xcframework
-  popd
+mkdir -p "$onnxruntime_dir"
+archive_name="onnxruntime.xcframework-${onnxruntime_version}.tar.bz2"
+archive_path="$onnxruntime_dir/$archive_name"
+archive_url="https://${github_host}/csukuangfj/onnxruntime-libs/releases/download/v${onnxruntime_version}/${archive_name}"
+if [[ ! -f "$archive_path" ]]; then
+  curl -L --fail --retry 3 -o "$archive_path.partial" "$archive_url"
+  printf '%s  %s\n' "$onnxruntime_sha256" "$archive_path.partial" | shasum -a 256 -c -
+  mv "$archive_path.partial" "$archive_path"
 fi
+# Verify cached downloads too; retain the archive for reproducible offline reuse.
+printf '%s  %s\n' "$onnxruntime_sha256" "$archive_path" | shasum -a 256 -c -
+checksum_marker="$onnxruntime_dir/.verified-archive-sha256"
+if [[ ! -f "$onnxruntime_dir/onnxruntime.xcframework/ios-arm64/onnxruntime.a" ]] ||
+   [[ ! -f "$checksum_marker" ]] ||
+   [[ "$(cat "$checksum_marker")" != "$onnxruntime_sha256" ]]; then
+  extract_dir="$(mktemp -d "$onnxruntime_dir/.extract.XXXXXX")"
+  tar xjf "$archive_path" -C "$extract_dir"
+  for library in ios-arm64 ios-arm64_x86_64-simulator; do
+    test -f "$extract_dir/onnxruntime.xcframework/$library/onnxruntime.a"
+  done
+  test -f "$extract_dir/onnxruntime.xcframework/Headers/onnxruntime_c_api.h"
+  if [[ -e "$onnxruntime_dir/onnxruntime.xcframework" ]]; then
+    mv "$onnxruntime_dir/onnxruntime.xcframework" "$extract_dir/previous.xcframework"
+  fi
+  mv "$extract_dir/onnxruntime.xcframework" "$onnxruntime_dir/onnxruntime.xcframework"
+  printf '%s\n' "$onnxruntime_sha256" > "$checksum_marker"
+  # Keep any previous extraction available for recovery.
+  rmdir "$extract_dir" 2>/dev/null || true
+fi
+# Always select the requested version, including when its cache was already hot.
+ln -sfn "$onnxruntime_version/onnxruntime.xcframework" ios-onnxruntime/onnxruntime.xcframework
 
 echo "Building for simulator (x86_64)"
 export SHERPA_ONNXRUNTIME_LIB_DIR="$PWD/ios-onnxruntime/onnxruntime.xcframework/ios-arm64_x86_64-simulator"
@@ -55,7 +76,7 @@ cmake \
   -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF \
   -DDEPLOYMENT_TARGET=13.0 \
   -B build/simulator_x86_64
-cmake --build build/simulator_x86_64 -j 4
+cmake --build build/simulator_x86_64 --parallel "${WFLOAT_BUILD_JOBS:-4}"
 
 echo "Building for simulator (arm64)"
 cmake \
@@ -82,7 +103,7 @@ cmake \
   -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF \
   -DDEPLOYMENT_TARGET=13.0 \
   -B build/simulator_arm64
-cmake --build build/simulator_arm64 -j 4
+cmake --build build/simulator_arm64 --parallel "${WFLOAT_BUILD_JOBS:-4}"
 
 echo "Building for arm64"
 export SHERPA_ONNXRUNTIME_LIB_DIR="$PWD/ios-onnxruntime/onnxruntime.xcframework/ios-arm64"
@@ -110,7 +131,7 @@ cmake \
   -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF \
   -DDEPLOYMENT_TARGET=13.0 \
   -B build/os64
-cmake --build build/os64 -j 4
+cmake --build build/os64 --parallel "${WFLOAT_BUILD_JOBS:-4}"
 
 # Install headers into one stable include root used by the xcframework output.
 cmake --build build/os64 --target install

@@ -19,6 +19,7 @@ struct wfloat_tts_model {
   std::string family_name;
   uint64_t feature_flags = WFLOAT_TTS_FEATURE_NONE;
   wfloat_tts_family_t family = WFLOAT_TTS_FAMILY_UNKNOWN;
+  float silence_scale = 0.2f;
   std::unique_ptr<sherpa_onnx::OfflineTts> tts;
 };
 
@@ -439,8 +440,14 @@ wfloat_status_t AppendGeneratedChunk(
 }
 
 sherpa_onnx::GenerationConfig BuildGenerationConfig(
+    const wfloat_tts_model_t *model,
     const wfloat_tts_synthesize_options_t *options) {
   sherpa_onnx::GenerationConfig cfg;
+  // Kitten's raw-text frontend consumes the per-generation field directly.
+  // Preserve the existing generation defaults for every other family.
+  if (model->family == WFLOAT_TTS_FAMILY_KITTEN) {
+    cfg.silence_scale = model->silence_scale;
+  }
   cfg.speed = options ? DefaultPositive(options->speed, kDefaultSpeed) : kDefaultSpeed;
   cfg.sid = options ? options->sid : 0;
   cfg.num_steps = options && options->num_steps > 0 ? options->num_steps : 5;
@@ -476,7 +483,7 @@ wfloat_status_t SynthesizeGeneric(
   EmitProgress(progress, WFLOAT_TTS_PROGRESS_STAGE_PREPARING, 0.0f, 0, 1,
                text.c_str(), 0, static_cast<int32_t>(text.size()));
 
-  sherpa_onnx::GenerationConfig cfg = BuildGenerationConfig(options);
+  sherpa_onnx::GenerationConfig cfg = BuildGenerationConfig(model, options);
   bool callback_cancelled = false;
   auto callback = [progress, &text, &callback_cancelled](
                       const float *, int32_t, float callback_progress) -> int32_t {
@@ -717,7 +724,7 @@ wfloat_status_t SynthesizeDialogue(
         }
       }
     } else {
-      sherpa_onnx::GenerationConfig cfg;
+      sherpa_onnx::GenerationConfig cfg = BuildGenerationConfig(model, nullptr);
       cfg.sid = plan.sid;
       cfg.speed = plan.speed;
 
@@ -784,6 +791,7 @@ wfloat_status_t wfloat_tts_model_create(
     model->model_id = IsNullOrEmpty(config->model_id) ? "unknown" : config->model_id;
     model->backend = "sherpa-onnx";
     model->family = config->family;
+    model->silence_scale = sherpa_config.silence_scale;
     model->family_name = FamilyName(config->family);
     model->feature_flags = FeatureFlagsForFamily(config->family);
     model->tts = std::make_unique<sherpa_onnx::OfflineTts>(sherpa_config);

@@ -60,7 +60,7 @@ async function replay(path, exports, marker, disallow = /$^/) {
   await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
 }
 await replay('llm-next/operations.test.mjs', `export * from './llm-next/model.ts';export * from './llm-next/util.ts';export {SchemaValidationError} from './schema/adapter.ts';`, 'const text =', /spawnSync/);
-await replay('tts-next/tts-next.test.mjs', `export * from './tts-next/model.ts';export * from './tts-next/backend.ts';`, 'const sleep =', /WebAudioPlayback|AudioContext|SherpaTextToSpeechBackend|installEspeak|ensureHeapViews/);
+await replay('tts-next/tts-next.test.mjs', `export * from './tts-next/model.ts';export * from './tts-next/backend.ts';`, 'const sleep =', /WebAudioPlayback|AudioContext|SherpaTextToSpeechBackend|installEspeak|ensureHeapViews|validatePocketSegment|preparePocket/);
 await replay('stt-next/operations.test.mjs', `export * from './stt-next/model.ts';`, 'const gate =', /AudioContext|new Blob|new File|AudioBuffer|getChannelData/);
 await replay('stt-next/audio.test.mjs', `export * from './stt-next/audio.ts';`, "test('PCM ownership", /AudioBuffer|new Blob/);
 await replay('vad-next/operations.test.mjs', `export * from './vad-next/model.ts';export * from './vad-next/segmenter.ts';`, 'const turn=');
@@ -176,6 +176,10 @@ test('RN 0.76 Hermes executes Babel async-generator LLM rounds and public TTS au
       const result=await model.generate([{role:'user',content:'hello'}]).result();
       check(result.text==='Hermes works','Native LLM round failed');
       check(result.stopReason==='complete','Unexpected LLM stop reason');
+      let cancelledNative;
+      cancelledNative=model.generate([{role:'user',content:'cancel native'}],{onText(){cancelledNative.cancel();}});
+      check((await cancelledNative.result()).stopReason==='cancelled','Native bridge cancellation failed');
+      check((await model.generate([{role:'user',content:'reuse'}]).result()).text==='Hermes works','Native bridge reuse after cancel failed');
       await model.unload();
       let op;
       const cancelling=new LanguageModel({contextSize:128,async countInputTokens(){return 1;},prepareSchema(){throw new Error('unused');},async unload(){},async *generateRound(){yield {type:'text',text:'cancel'};await new Promise(()=>{});}},'fixture');
@@ -202,10 +206,18 @@ test('RN 0.76 Hermes executes Babel async-generator LLM rounds and public TTS au
     globalThis.queueMicrotask=function(fn){Promise.resolve().then(fn);};
     globalThis.AbortController=function(){this.signal={aborted:false,listeners:[],addEventListener:function(type,fn){this.listeners.push(fn);},removeEventListener:function(type,fn){this.listeners=this.listeners.filter(function(item){return item!==fn;});}};};
     AbortController.prototype.abort=function(){if(this.signal.aborted)return;this.signal.aborted=true;this.signal.listeners.slice().forEach(function(fn){fn();});};
+    var nativeRound=0;
     globalThis.__wfloatTestTransport={uniqueId:function(){return 'model';},subscribe:function(){return function(){};},request:function(c,options){
       if(c.op==='load')return Promise.resolve({contextSize:128});
       if(c.op==='count')return Promise.resolve(1);
-      if(c.op==='generateRound'){options.onEvent({type:'text',text:'Hermes works'});options.onEvent({type:'done',stopReason:'complete',inputTokens:1,outputTokens:2,cachedInputTokens:0});}
+      if(c.op==='generateRound'){
+        nativeRound++;
+        if(nativeRound===2)return new Promise(function(resolve,reject){
+          options.signal.addEventListener('abort',function(){Promise.resolve().then(function(){reject(new Error('cancelled native'));});});
+          Promise.resolve().then(function(){options.onEvent({type:'text',text:'cancel now'});});
+        });
+        options.onEvent({type:'text',text:'Hermes works'});options.onEvent({type:'done',stopReason:'complete',inputTokens:1,outputTokens:2,cachedInputTokens:0});
+      }
       return Promise.resolve(null);
     }};
   `;
@@ -532,4 +544,177 @@ for(const osPause of [false,true])test((osPause?'OS interruption':'Explicit paus
     assert.equal(lease,true);assert.equal(calls.filter(c=>c.op==='playbackPrepare').length,2);
   }finally{pendingSynthesis.resolve();reprepared.resolve();speech.cancel();await model.unload();}
   assert.equal(lease,false);
+});
+
+const pocket = await import(await bundle(`
+  export { NativePocketTextToSpeechBackend, NativeTextToSpeechBackend, validatePocketSegment, validateWfloatSegment } from './tts-next/backend';
+  export { normalizeReferenceAudio } from './tts-next/pocket-audio';
+  export { TextToSpeechModel } from './tts-next/model';
+`));
+test('Pocket validates controls, reference duration, and unsupported options', () => {
+  for (const temperature of [-1, NaN, Infinity, 1e40, 1e-40, 1e-50, Number.MIN_VALUE, '0.7']) assert.throws(() => pocket.validatePocketSegment({text:'x',temperature}));
+  for (const seed of [-1, 0.5, 2147483648, NaN]) assert.throws(() => pocket.validatePocketSegment({text:'x',seed}));
+  for (const inferenceSteps of [0, -1, 0.5, 2147483648]) assert.throws(() => pocket.validatePocketSegment({text:'x',inferenceSteps}));
+  pocket.validatePocketSegment({text:'x',temperature:0,seed:2147483647,inferenceSteps:1});
+  pocket.validatePocketSegment({text:'x',temperature:2**-126});
+  assert.throws(() => pocket.validatePocketSegment({text:'x',voiceId:'alba',referenceAudio:{uri:'file:///voice.wav'}}));
+  assert.throws(() => pocket.validatePocketSegment({text:'x',voiceId:0}));
+  assert.throws(() => pocket.validatePocketSegment({text:'x',referenceAudio:{samples:new Float32Array(240001),sampleRate:24000}}));
+  const warnings=[], previous=console.warn;
+  try { console.warn=message=>warnings.push(message); const backend=new pocket.NativePocketTextToSpeechBackend({},24000); backend.validate({text:'x',speed:1,emotion:'neutral',intensity:0.5}); backend.validate({text:'x',speed:2}); }
+  finally { console.warn=previous; }
+  assert.equal(warnings.length,1);
+});
+test('Pocket snapshots inputs, resolves alternate voice overrides, and forwards per-segment controls', async () => {
+  const nativeCalls=[];
+  const instance={async call(op,fields) {
+    nativeCalls.push({op,...fields});
+    return op==='prepare' ? [{text:fields.text,textStart:0,textEnd:fields.text.length}] : {samples:[0.1,0.2],sampleRate:24000};
+  },async unload(){}};
+  const model=new pocket.TextToSpeechModel(new pocket.NativePocketTextToSpeechBackend(instance,24000),()=>{throw Error('No playback expected');});
+  try {
+    const samples=new Float32Array([0.25,0.5]);
+    const job=model.generateDialogue([{text:'one',referenceAudio:{samples,sampleRate:24000},seed:0,temperature:0,inferenceSteps:2},{text:'two'}],{voiceId:'alba',seed:7});
+    samples.fill(1);
+    const result=await job.result();
+    const synthesis=nativeCalls.filter(c=>c.op==='synthesize');
+    assert.equal(synthesis[0].voiceId,undefined);
+    assert.deepEqual(synthesis[0].referenceAudio.samples,[0.25,0.5]);
+    assert.equal(synthesis[0].seed,0); assert.equal(synthesis[0].temperature,0); assert.equal(synthesis[0].inferenceSteps,2);
+    assert.equal(synthesis[1].voiceId,'alba'); assert.equal(synthesis[1].referenceAudio,undefined);
+    assert.equal(synthesis[1].seed,7); assert.equal(synthesis[1].temperature,0.7); assert.equal(synthesis[1].inferenceSteps,5);
+    assert.equal(result.timeline.length,2);
+    await model.generateDialogue([{text:'three',voiceId:'alba'}],{referenceAudio:{uri:'file:///unused.wav'}}).result();
+    assert.equal(nativeCalls.at(-1).referenceAudio,undefined);
+    assert.throws(()=>model.generate('bad',{voiceId:'alba',referenceAudio:{uri:'file:///voice.wav'}}));
+    await model.generate('default').result();
+    assert.equal(nativeCalls.at(-1).referenceAudio,undefined); assert.equal(nativeCalls.at(-1).seed,undefined);
+  } finally { await model.unload(); }
+});
+test('Pocket reference normalizes PCM and decoded mono URI to 24kHz without truncation',async()=>{
+  const pcm=await pocket.normalizeReferenceAudio({samples:new Float32Array(16000).fill(0.5),sampleRate:16000});
+  assert.equal(pcm.samples.length,24000); assert.equal(pcm.sampleRate,24000);
+  const previous=respond;
+  try {
+    respond=async c=>{ assert.equal(c.op,'decodeAudio'); return {samples:Array(48000).fill(0.25),sampleRate:48000}; };
+    assert.equal((await pocket.normalizeReferenceAudio({uri:'file:///voice.wav'})).samples.length,24000);
+    respond=async()=>({samples:Array(160001).fill(0),sampleRate:16000});
+    await assert.rejects(pocket.normalizeReferenceAudio({uri:'file:///long.wav'}),/10 seconds/);
+  } finally { respond=previous; }
+});
+
+test('Pocket registry manifest includes its reference without eSpeak',async()=>{
+  const {modelManifest}=await import(await bundle(`export { modelManifest } from './assets/index';`));
+  const manifest=modelManifest('kyutai/pocket-tts');
+  assert.equal(manifest.family,'pocket'); assert.equal(manifest.task,'tts');
+  assert.deepEqual(manifest.assets.map(a=>a.name).sort(),['lm_main','lm_flow','decoder','encoder','text_conditioner','vocab_json','token_scores_json','reference_audio'].sort());
+  assert.ok(!manifest.assets.some(a=>a.name==='espeak_data'));
+  assert.ok(modelManifest('wfloat/wfloat-tts').assets.some(a=>a.name==='espeak_data'));
+});
+test('Disposing Pocket generation releases retained input PCM',async()=>{
+  const model=new pocket.TextToSpeechModel({sampleRate:24000,validate(){},async prepare(){throw Error('Disposed generation must not start');},async unload(){}},()=>{});
+  const job=model.generate('hello',{referenceAudio:{samples:new Float32Array(24000),sampleRate:24000}});
+  assert.equal(job.segments.length,1);
+  job.dispose(); assert.equal(job.segments.length,0);
+  await model.unload();
+});
+
+test('Wfloat rejects references, validates sampling, and warns once without forwarding Pocket controls',async()=>{
+  const nativeCalls=[], warnings=[];
+  const instance={async call(op,fields){nativeCalls.push({op,...fields});return op==='prepare'?[{text:fields.text,textStart:0,textEnd:fields.text.length}]:{samples:[0.1],sampleRate:22050};},async unload(){}};
+  const backend=new pocket.NativeTextToSpeechBackend(instance,22050);
+  const model=new pocket.TextToSpeechModel(backend,()=>{});
+  const previous=console.warn;console.warn=message=>warnings.push(message);
+  try {
+    assert.throws(()=>model.generate('hello',{referenceAudio:{samples:new Float32Array([.1]),sampleRate:24000}}),/does not support referenceAudio/);
+    for(const options of [{temperature:-1},{temperature:1e40},{temperature:1e-50},{temperature:1e-40},{temperature:NaN},{seed:-1},{seed:0.5},{seed:2147483648},{inferenceSteps:0},{inferenceSteps:2147483648}]) assert.throws(()=>model.generate('hello',options));
+    assert.equal(nativeCalls.length,0);assert.equal(warnings.length,0);
+    await model.generateDialogue([{text:'one',seed:42},{text:'two',temperature:0,inferenceSteps:2}],{voiceId:'wise_elder_woman',speed:1.5}).result();
+    await model.generate('again',{temperature:0.7,seed:0,inferenceSteps:5}).result();
+    assert.equal(warnings.length,1);
+    for(const call of nativeCalls) for(const key of ['temperature','seed','inferenceSteps','referenceAudio']) assert.equal(key in call,false);
+    assert.equal(nativeCalls.find(c=>c.op==='synthesize').voiceId,13);
+    assert.equal(nativeCalls.find(c=>c.op==='synthesize').speed,1.5);
+    new pocket.NativeTextToSpeechBackend(instance,22050).validate({text:'other model',seed:0});
+    assert.equal(warnings.length,2);
+    pocket.validateWfloatSegment({text:'tiny representable',temperature:2**-126});
+  } finally { console.warn=previous;await model.unload(); }
+});
+
+test('RN dialogue snapshots and normalizes each shared reference once per operation',async()=>{
+  const samples=new Float32Array([0.25,0.5]);let reads=0,normalizations=0;
+  const reference={get samples(){reads++;return samples;},sampleRate:16000};
+  const received=[];
+  const instance={async call(op,fields){
+    if(op==='prepare')return [{text:fields.text,textStart:0,textEnd:fields.text.length}];
+    received.push(fields.referenceAudio.samples);
+    return {samples:[0.1],sampleRate:24000};
+  },async unload(){}};
+  const backend=new pocket.NativePocketTextToSpeechBackend(instance,24000);
+  const cacheSet=backend.references.set.bind(backend.references);
+  backend.references.set=(key,value)=>{normalizations++;return cacheSet(key,value);};
+  const model=new pocket.TextToSpeechModel(backend,()=>{});
+  try {
+    const segments=Array.from({length:100},(_,i)=>({text:'hello',...(i%2?{referenceAudio:reference}:{})}));
+    const job=model.generateDialogue(segments,{referenceAudio:reference});
+    assert.equal(reads,1,'Caller PCM is read and copied only once');
+    const owned=job.segments[0].referenceAudio;
+    assert.notEqual(owned,reference);assert.notEqual(owned.samples,samples);
+    assert.ok(job.segments.every(segment=>segment.referenceAudio===owned));
+    assert.deepEqual(Array.from(samples),[0.25,0.5]);
+    samples.fill(0.75);
+    await job.result();
+    assert.equal(normalizations,1);assert.equal(received.length,100);
+    assert.ok(received.every(pcm=>pcm.length===3&&pcm[0]===0.25));
+    assert.deepEqual(Array.from(samples),[0.75,0.75]);
+    job.dispose();assert.equal(job.segments.length,0);
+    const next=model.generate('new operation',{referenceAudio:reference});
+    assert.notEqual(next.segments[0].referenceAudio,owned);
+    await next.result();assert.equal(reads,2);assert.equal(normalizations,2);
+    assert.equal(received.at(-1)[0],0.75);next.dispose();
+    assert.equal(backend.references.has(owned),true);
+    await model.unload();assert.equal(backend.references.has(owned),false);
+  }finally{await model.unload();}
+});
+test('RN shared URI reference decodes once per dialogue and captures URI identity',async()=>{
+  const previous=respond;let decodes=0;
+  respond=async command=>{assert.equal(command.op,'decodeAudio');assert.equal(command.uri,'file:///original.wav');decodes++;return {samples:[0.25],sampleRate:24000};};
+  const instance={async call(op,fields){return op==='prepare'?[{text:fields.text,textStart:0,textEnd:fields.text.length}]:{samples:[0.1],sampleRate:24000};},async unload(){}};
+  const model=new pocket.TextToSpeechModel(new pocket.NativePocketTextToSpeechBackend(instance,24000),()=>{});
+  try {
+    const reference={uri:'file:///original.wav'};
+    const job=model.generateDialogue(Array.from({length:100},()=>({text:'hello'})),{referenceAudio:reference});
+    reference.uri='file:///changed.wav';await job.result();assert.equal(decodes,1);job.dispose();
+  }finally{respond=previous;await model.unload();}
+});
+
+test('Gemma registry routes to LLM and retains both shards and required accompanying files',async()=>{
+  const {modelManifest}=await import(await bundle(`export { modelManifest } from './assets/index';`));
+  const manifest=modelManifest('google/gemma-3-1b-it');
+  assert.equal(manifest.family,'gemma3'); assert.equal(manifest.task,'llm');
+  assert.deepEqual(manifest.assets.map(a=>a.name).sort(),['model_shard_00001','model_shard_00002','model_terms','model_policy','model_notice','model_provenance'].sort());
+  assert.equal(new Set(manifest.assets.map(a=>a.key)).size,6);
+});
+
+test('native cancellation retains exclusivity until acknowledgement, then permits reuse',async()=>{
+  const acknowledged=gate();let cancelled=false,rounds=0;
+  respond=async(c,options)=>{
+    if(c.op==='load')return {contextSize:128};
+    if(c.op!=='generateRound')return null;
+    if(++rounds===1){
+      options.onEvent({type:'text',text:'first'});
+      await new Promise(resolve=>options.signal.addEventListener('abort',()=>{cancelled=true;acknowledged.promise.then(resolve);},{once:true}));
+    }else options.onEvent({type:'done',stopReason:'complete',inputTokens:1,outputTokens:0,cachedInputTokens:0});
+    return null;
+  };
+  const backend=await createNativeBackend({modelId:'fixture',paths:{model:'fixture.gguf'},contextSize:128});
+  const round=backend.generateRound({messages:[]})[Symbol.asyncIterator]();
+  assert.equal((await round.next()).value.text,'first');
+  const closing=round.return();
+  await until(()=>cancelled);
+  await assert.rejects(backend.generateRound({messages:[]})[Symbol.asyncIterator]().next(),/already active/);
+  assert.equal(rounds,1);
+  acknowledged.resolve();await closing;
+  for await(const event of backend.generateRound({messages:[]}))assert.equal(event.type,'done');
+  assert.equal(rounds,2);await backend.unload();
 });

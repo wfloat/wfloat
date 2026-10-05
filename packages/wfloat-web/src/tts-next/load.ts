@@ -1,3 +1,4 @@
+import { standardModel, standardConfig } from './families.js';
 import { acquireModelAssetLease, downloadModel } from '../assets/index.js';
 import { checkAbort, notify, type DownloadModelOptions } from '../assets/types.js';
 import { readAsset } from '../assets/store.js';
@@ -8,7 +9,8 @@ import { TextToSpeechModel } from './model.js';
 
 export type LoadTextToSpeechOptions = DownloadModelOptions;
 export async function loadTextToSpeech(id: string, options: LoadTextToSpeechOptions = {}): Promise<TextToSpeechModel> {
-  if (id !== 'wfloat/wfloat-tts') throw new Error(`Unsupported TTS model: ${id}`);
+  const standard = standardModel(id);
+  if (!standard && id !== 'wfloat/wfloat-tts' && id !== 'kyutai/pocket-tts') throw new Error(`Unsupported TTS model: ${id}`);
   const lease = await acquireModelAssetLease(id, { signal: options.signal });
   let backend: SherpaTextToSpeechBackend | undefined;
   const abort = () => { void backend?.unload(); };
@@ -19,16 +21,40 @@ export async function loadTextToSpeech(id: string, options: LoadTextToSpeechOpti
     } });
     checkAbort(lease.signal);
     notify(options.onProgress, { phase: 'loading' });
-    const assets = MODEL_ASSETS['wfloat/wfloat-tts'];
     const read = (url: string) => readAsset(url, { signal: lease.signal });
-    // Sequential reads avoid unbounded parallel disk buffers on low-memory devices.
     const wasm = await read(SHERPA_WASM_URL);
-    const model = await read(REGISTRY_ORIGIN + assets.model_onnx.path);
-    const tokens = await read(REGISTRY_ORIGIN + assets.model_tokens.path);
-    const espeak = await read(REGISTRY_ORIGIN + SHARED_ASSETS.espeak_ng_data_zip.path);
+    let workerAssets: import('./backend.js').WorkerAssets;
+    if (id === 'kyutai/pocket-tts') {
+      const files: Record<string, Uint8Array> = {};
+      for (const [name, asset] of Object.entries(MODEL_ASSETS[id])) {
+        if (typeof asset === 'object') files[name] = await read(REGISTRY_ORIGIN + asset.path);
+      }
+      workerAssets = { family: 'pocket', wasm, files };
+    } else if (standard) {
+      // The parent owns registry generation and shared-dependency registration.
+      const record = (MODEL_ASSETS as Record<string, Record<string, unknown>>)[id];
+      const required = standard.family === 'piper' ? ['model_onnx', 'model_tokens', 'model_config'] :
+        standard.family === 'kitten' ? ['model_onnx', 'model_tokens', 'model_voices'] :
+        ['model_onnx', 'model_tokens', 'model_voices', 'lexicon_zh', 'rule_date_zh', 'rule_number_zh', 'rule_phone_zh'];
+      const files: Record<string, Uint8Array> = {};
+      for (const key of required) {
+        const asset = record?.[key];
+        if (!asset || typeof asset !== 'object' || !('path' in asset) || typeof asset.path !== 'string') throw new Error(`Missing TTS asset ${id}/${key}`);
+        files[key] = await read(REGISTRY_ORIGIN + asset.path);
+      }
+      const config = standardConfig(id, files.model_config);
+      const espeak = await read(REGISTRY_ORIGIN + SHARED_ASSETS.espeak_ng_data_zip.path);
+      workerAssets = { family: config.family, config, wasm, files, espeak };
+    } else {
+      const assets = MODEL_ASSETS['wfloat/wfloat-tts'];
+      const model = await read(REGISTRY_ORIGIN + assets.model_onnx.path);
+      const tokens = await read(REGISTRY_ORIGIN + assets.model_tokens.path);
+      const espeak = await read(REGISTRY_ORIGIN + SHARED_ASSETS.espeak_ng_data_zip.path);
+      workerAssets = { wasm, model, tokens, espeak };
+    }
     checkAbort(lease.signal);
     backend = new SherpaTextToSpeechBackend(new Worker(new URL('./tts-worker.js', import.meta.url), { type: 'module' }));
-    await backend.initialize({ wasm, model, tokens, espeak });
+    await backend.initialize(workerAssets);
     await lease.assertCurrent();
     checkAbort(lease.signal);
     const result = new TextToSpeechModel(backend);

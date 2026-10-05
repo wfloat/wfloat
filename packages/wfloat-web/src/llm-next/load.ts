@@ -1,4 +1,5 @@
-import { acquireModelAssetLease, downloadModel, getModelAssetManifest, getModelRuntimeFamily } from '../assets/index.js';
+import { acquireModelAssetLease, downloadModel, getModelRuntimeFamily } from '../assets/index.js';
+import { getLanguageModelFiles } from './assets.js';
 import { readAsset } from '../assets/store.js';
 import { checkAbort, notify, type DownloadModelOptions } from '../assets/types.js';
 import { LLAMA_WASM_URL } from '../runtime/urls.js';
@@ -15,15 +16,20 @@ export async function loadLanguageModel(id: string, options: LoadLanguageModelOp
   const contextSize = options.contextSize ?? 2048;
   if (!Number.isSafeInteger(contextSize) || contextSize < 1) throw new TypeError('contextSize must be a positive integer.');
   if (options.numThreads !== undefined && options.numThreads !== 1) throw new TypeError('This web runtime is single-threaded; numThreads must be 1.');
+  const files = getLanguageModelFiles(id);
   const lease = await acquireModelAssetLease(id, { signal: options.signal });
   let backend: Awaited<ReturnType<typeof createLanguageNativeBackend>> | undefined;
   try {
     await downloadModel(id, { ...options, signal: lease.signal, onProgress: event => { if (event.phase !== 'ready') notify(options.onProgress, event); } });
     notify(options.onProgress, { phase: 'loading' });
-    const modelAsset = getModelAssetManifest(id).find(asset => !asset.shared)!;
-    const [model, wasmBinary] = await Promise.all([readAsset(modelAsset.url, { signal: lease.signal }), readAsset(LLAMA_WASM_URL, { signal: lease.signal })]);
+    const modelFiles: Array<{ name: string; data: ArrayBuffer }> = [];
+    for (const file of files) {
+      const bytes = await readAsset(file.url, { signal: lease.signal });
+      modelFiles.push({ name: file.name, data: bytes.buffer as ArrayBuffer });
+    }
+    const wasmBinary = await readAsset(LLAMA_WASM_URL, { signal: lease.signal });
     checkAbort(lease.signal);
-    backend = await createLanguageNativeBackend({ model: model.buffer as ArrayBuffer, wasmBinary, wasmUrl: LLAMA_WASM_URL, contextSize, numThreads: options.numThreads, signal: lease.signal });
+    backend = await createLanguageNativeBackend({ ...(modelFiles.length === 1 ? { model: modelFiles[0]!.data } : { modelFiles }), wasmBinary, wasmUrl: LLAMA_WASM_URL, contextSize, numThreads: options.numThreads, signal: lease.signal });
     await lease.assertCurrent();
     // Schema conversion and native preflight are prerequisites of each operation.
     const native = backend;

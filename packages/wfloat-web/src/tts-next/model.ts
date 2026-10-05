@@ -1,3 +1,4 @@
+import { snapshotAudio } from '../stt-next/audio.js';
 import type { TextToSpeechBackend, PreparedUnit } from './backend-types.js';
 import type { GenerateOptions, PlaybackEvent, PlaybackOptions, SpeakOptions, SpeechAudio, SpeechChunk, SpeechGeneration, SpeechHandle, SpeechHighlight, SpeechResult, SpeechSegment } from './types.js';
 import { asError, closedError, deferred, notify } from './internal.js';
@@ -36,12 +37,23 @@ export class TextToSpeechModel {
     const gap = options.pauseBetweenSegmentsMs ?? 0;
     validatePause(gap, this.backend.sampleRate);
     let pauseSamples = 0;
+    const references = new Map<NonNullable<SpeechSegment['referenceAudio']>, ReturnType<typeof snapshotAudio>>();
+    const snapshotReference = (source: SpeechSegment['referenceAudio']) => {
+      if (source === undefined) return undefined;
+      let value = references.get(source);
+      if (!value) { value = snapshotAudio(source); references.set(source, value); }
+      return value;
+    };
     const snapshot = Array.from(segments, (input, index) => {
       if (!Object.prototype.hasOwnProperty.call(segments, index)) throw new TypeError('Dialogue segments must be a dense array.');
       if (!input || typeof input.text !== 'string' || !input.text.trim()) throw new TypeError('Speech text must not be blank.');
       const segment: SpeechSegment = {
         text: input.text,
-        voiceId: input.voiceId ?? options.voiceId,
+        voiceId: input.voiceId ?? (input.referenceAudio === undefined ? options.voiceId : undefined),
+        referenceAudio: snapshotReference(input.referenceAudio ?? (input.voiceId === undefined ? options.referenceAudio : undefined)),
+        temperature: input.temperature ?? options.temperature,
+        seed: input.seed ?? options.seed,
+        inferenceSteps: input.inferenceSteps ?? options.inferenceSteps,
         emotion: input.emotion ?? options.emotion,
         intensity: input.intensity ?? options.intensity,
         speed: input.speed ?? options.speed,
@@ -254,6 +266,7 @@ class Generation implements SpeechGeneration {
     if (!this.done && !this.error) this.completion.reject(closedError());
     for (const child of [...this.children]) child.cancel();
     this.chunks.length = 0;
+    this.segments.length = 0;
     this.units = undefined;
     this.assembly = undefined;
     this.signal();

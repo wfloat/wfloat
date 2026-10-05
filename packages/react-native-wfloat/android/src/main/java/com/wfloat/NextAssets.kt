@@ -159,6 +159,86 @@ internal class NextAssets(context: Context) {
       } finally { staging.deleteRecursively() }
     }
   }
+  /** Same publication/pin lock as downloads; parts never cross the JS bridge. */
+  fun assemble(c: JSONObject, cancelled: AtomicBoolean): JSONObject {
+    val key = c.getString("key")
+    return synchronized(locks.getOrPut(key) { Any() }) {
+      synchronized(this) assembly@{
+        val destination = file(key)
+        val size = c.getLong("sizeBytes")
+        val hash = c.getString("sha256").lowercase()
+        require(size >= 0 && hash.matches(Regex("[0-9a-f]{64}"))) { "Invalid assembly size/hash" }
+        fun checkCancelled() { if (cancelled.get()) throw CancellationException("Assembly cancelled") }
+        checkCancelled()
+        fun writeMarker() {
+          val temporary = File(root, "$key.verified.partial")
+          try {
+            FileOutputStream(temporary).use { output ->
+              output.write(JSONObject().put("sizeBytes", size).put("sha256", hash).toString().toByteArray()); output.fd.sync()
+            }
+            check(temporary.renameTo(File(root, "$key.verified"))) { "Cannot publish assembly marker" }
+          } finally { temporary.delete() }
+        }
+        if (destination.isFile && destination.length() == size) {
+          val digest = MessageDigest.getInstance("SHA-256")
+          destination.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) {
+              checkCancelled()
+              val n = input.read(buffer); if (n < 0) break
+              digest.update(buffer, 0, n)
+            }
+          }
+          if (digest.digest().joinToString("") { "%02x".format(it) } == hash) {
+            checkCancelled(); writeMarker(); deleted.remove(destination.absolutePath)
+            return@assembly JSONObject().put("path", destination.absolutePath)
+          }
+        }
+        check(!isPinned(destination.absolutePath)) { "Cannot replace a loaded asset" }
+        val parts = c.getJSONArray("parts")
+        require(parts.length() > 0) { "Assembly requires parts" }
+        val staging = File(root, "$key.partial")
+        val marker = File(root, "$key.verified.partial")
+        try {
+          val digest = MessageDigest.getInstance("SHA-256")
+          var total = 0L
+          FileOutputStream(staging).use { output ->
+            val buffer = ByteArray(65536)
+            for (i in 0 until parts.length()) {
+              checkCancelled()
+              val part = parts.getJSONObject(i)
+              val source = file(part.getString("key"))
+              require(source != destination && source.absolutePath !in deleted) { "Invalid/deleted assembly part" }
+              val expectedSize = part.getLong("sizeBytes")
+              require(expectedSize >= 0 && expectedSize <= size - total) { "Invalid part size" }
+              val partDigest = MessageDigest.getInstance("SHA-256")
+              var count = 0L
+              source.inputStream().use { input ->
+                while (true) {
+                  checkCancelled()
+                  val n = input.read(buffer); if (n < 0) break
+                  require(n <= expectedSize - count) { "Part exceeds declared size" }
+                  output.write(buffer, 0, n); digest.update(buffer, 0, n); partDigest.update(buffer, 0, n)
+                  count += n; total += n
+                }
+              }
+              require(count == expectedSize && partDigest.digest().joinToString("") { "%02x".format(it) } == part.getString("sha256").lowercase()) { "Assembly part integrity failed" }
+            }
+            require(total == size && digest.digest().joinToString("") { "%02x".format(it) } == hash) { "Assembly integrity failed" }
+            output.fd.sync()
+          }
+          FileOutputStream(marker).use { output ->
+            output.write(JSONObject().put("sizeBytes", size).put("sha256", hash).toString().toByteArray()); output.fd.sync()
+          }
+          checkCancelled()
+          check(staging.renameTo(destination)) { "Cannot publish assembled asset" }
+          check(marker.renameTo(File(root, "$key.verified"))) { "Cannot publish assembly marker" }
+          deleted.remove(destination.absolutePath)
+          JSONObject().put("path", destination.absolutePath)
+        } finally { staging.delete(); marker.delete() }
+      }
+    }
+  }
   fun download(c: JSONObject, cancelled: AtomicBoolean, emit: (JSONObject) -> Unit): JSONObject {
     val key = c.getString("key")
     return synchronized(locks.getOrPut(key) { Any() }) {

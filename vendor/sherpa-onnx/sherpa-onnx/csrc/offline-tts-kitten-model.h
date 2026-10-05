@@ -24,9 +24,12 @@ class OfflineTtsKittenModel {
   OfflineTtsKittenModel(Manager *mgr, const OfflineTtsModelConfig &config);
 
   // @params x An int64 tensor of shape (1, num_tokens)
+  // @param normalized_text_length Unicode codepoints in the normalized input
+  // chunk, required for version 8; ignored by legacy exports.
   // @return Return a float32 tensor containing the
   //         samples of shape (num_samples,)
-  Ort::Value Run(Ort::Value x, int64_t sid = 0, float speed = 1.0) const;
+  Ort::Value Run(Ort::Value x, int64_t sid = 0, float speed = 1.0,
+                 int64_t normalized_text_length = -1) const;
 
   const OfflineTtsKittenModelMetaData &GetMetaData() const;
 
