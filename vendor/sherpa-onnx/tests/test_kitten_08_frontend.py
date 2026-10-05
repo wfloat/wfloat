@@ -76,6 +76,34 @@ class KittenFrontendTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def test_windows_rpc_small_macro(self):
+        # Windows RPC headers define `small` as `char`. Keep the macro active
+        # while compiling our number helpers, after standard headers are loaded.
+        source = pathlib.Path(self.tmp.name) / 'windows-macro.cc'
+        source.write_text(r'''#include <cassert>
+#include <cmath>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include "sherpa-onnx/csrc/offline-tts-kitten-text-unicode.h"
+#define small char
+#include "sherpa-onnx/csrc/offline-tts-kitten-numbers.h"
+int main() {
+  using sherpa_onnx::kitten_text::Number;
+  assert(Number(1900) == U"nineteen hundred");
+  assert(Number(2000) == U"two thousand");
+  assert(Number(123) == U"one hundred twenty-three");
+}
+''')
+        binary = str(source.with_suffix(''))
+        subprocess.run(['clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                        '-I', str(ROOT), str(source), '-o', binary], check=True)
+        subprocess.run([binary], check=True)
+
     @unittest.skipUnless(unicodedata.unidata_version == "16.0.0",
                          "Exhaustive comparison requires pinned Unicode 16.0.0")
     def test_unicode_word_and_space_match_python(self):

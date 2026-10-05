@@ -64,10 +64,10 @@ inline Text Number(const Text &raw) {
   if (negative) n.erase(0, 1);
   Text out;
   if (n.size() <= 4) {
-    int small = std::stoi(n);
-    if (small >= 100 && small <= 9999 && small % 100 == 0 &&
-        small % 1000 != 0 && small / 100 < 20)
-      out = Digit(small / 100) + U" hundred";
+    int value = std::stoi(n);
+    if (value >= 100 && value <= 9999 && value % 100 == 0 &&
+        value % 1000 != 0 && value / 100 < 20)
+      out = Digit(value / 100) + U" hundred";
   }
   if (out.empty()) {
     static const Text scale[] = {U"", U"thousand", U"million", U"billion", U"trillion"};

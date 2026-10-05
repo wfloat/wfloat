@@ -40,7 +40,7 @@ class Core:
         assert config.num_threads == 1 and config.provider == b'cpu'
         assert config.max_num_sentences == 1 and config.length_scale > 0
         if config.family == 6:
-            assert config.voices_path == b'/staged/model_voices'
+            assert config.voices_path == str(Path('/staged') / 'model_voices').encode()
             assert not config.lexicon_path and not config.lang and not config.rule_fsts and not config.rule_fars
         self.events.append(('create', config.family, config.rule_fsts, config.lexicon_path,
                             config.noise_scale, config.noise_scale_w, config.max_num_sentences))
@@ -130,8 +130,9 @@ def test_all_kokoro_voice_routes_and_japanese_gate():
         creates = [e for e in core.events if e[0] == 'create']
         assert len(creates) == 3  # non-Chinese -> Chinese -> em_santa
         assert creates[0][2] == creates[-1][2] == b''
-        assert creates[1][2] == b'/staged/rule_date_zh,/staged/rule_number_zh,/staged/rule_phone_zh'
-        assert all(e[3] == b'/staged/lexicon_zh' for e in creates)
+        assert creates[1][2] == ','.join(str(Path('/staged') / key) for key in
+            ('rule_date_zh', 'rule_number_zh', 'rule_phone_zh')).encode()
+        assert all(e[3] == str(Path('/staged') / 'lexicon_zh').encode() for e in creates)
     for i, event in enumerate(core.events):
         if event[0] == 'create' and i:
             assert core.events[i - 1] == ('destroy',)
