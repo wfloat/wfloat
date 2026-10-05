@@ -38,6 +38,8 @@ export function auditPack(paths) {
     'android/generated/java/com/wfloat/NativeWfloatSpec.java',
     'android/generated/java/com/wfloat/NativeWfloatNextSpec.java',
     'android/generated/jni/CMakeLists.txt',
+    'android/build.gradle', 'android/gradle.properties', 'android/consumer-rules.pro',
+    'android/src/main/AndroidManifest.xml', 'android/src/main/AndroidManifestNew.xml',
     'README.md', 'LEGACY_API.md', 'CONTRIBUTING.md',
     'android/AndroidManifest.background.example.xml',
     'scripts/NATIVE-BUILD.md', 'scripts/THIRD-PARTY-NOTICES.txt',

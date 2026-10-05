@@ -64,7 +64,7 @@
     "!android/**/*.md",
     "!ios/**/*.md",
     "!ios/build*",
-    "!android/build*",
+    "!android/build*/**",
     "!**/*.log",
     "!**/*.tgz",
     "LEGACY_API.md",
