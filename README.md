@@ -1,38 +1,25 @@
-# wfloat
+# Wfloat
 
-Wfloat monorepo for shared native infrastructure, backend integrations, and
-platform SDKs.
+Wfloat provides on-device AI SDKs for Web, React Native, and Python. It supports language models, text-to-speech, speech-to-text, and voice activity detection.
 
-## Docs
+## Get started
 
-Current model IDs, capabilities and platform limitations are listed in the
-[Web API](packages/wfloat-web/API.md),
-[React Native README](packages/react-native-wfloat/README.md) and
-[Python README](packages/wfloat-python/README.md). Registry inclusion alone does
-not establish platform qualification.
+| SDK | Package | Installation |
+| --- | --- | --- |
+| Web | [`@wfloat/wfloat-web`](https://www.npmjs.com/package/@wfloat/wfloat-web) | [Browsers](https://wfloat.com/docs/how-to/installation?platform=web) |
+| React Native | [`@wfloat/react-native-wfloat`](https://www.npmjs.com/package/@wfloat/react-native-wfloat) | [iOS and Android](https://wfloat.com/docs/how-to/installation?platform=react-native) |
+| Python | [`wfloat`](https://pypi.org/project/wfloat/) | [macOS, Windows, and Linux](https://wfloat.com/docs/how-to/installation?platform=python) |
 
-Private model notes may live outside this public repo in local development
-checkouts. When present, the short reference is expected at
-`../docs/MODELS.md`.
+[Supported models and examples](https://wfloat.com/models) · [API documentation](https://wfloat.com/docs)
 
-## Top-Level Layout
+## This repository
 
-```text
-wfloat/
-  CMakeLists.txt
-  examples/
-  native/wfloat-core/
-  packages/
-  tools/onnxruntime-build/
-  vendor/
-```
+- [`packages/`](packages/): platform SDKs. Each package includes development instructions in its `CONTRIBUTING.md`.
+- [`native/wfloat-core/`](native/wfloat-core/): shared native runtime.
+- [`vendor/`](vendor/): inference engines, including llama.cpp and sherpa-onnx.
+- [`assets/registry.json`](assets/registry.json): model asset registry.
+- [`docs/`](docs/): Markdown used by the website documentation.
 
-[`tools/onnxruntime-build/`](tools/onnxruntime-build/README.md) builds and publishes the
-pinned ONNX Runtime artifacts used by Wfloat and Sherpa.
+## License
 
-## Current Native Status
-
-- `native/wfloat-core/` has the first shared TTS ABI draft
-- `vendor/sherpa-onnx/` is wired into the top-level CMake build
-- Linux `wfloat-core-shared` builds successfully and can be loaded by the
-  Python wrapper through `WFLOAT_CORE_LIBRARY`
+Wfloat is [MIT licensed](LICENSE). Models and third-party components have their own licenses; see the [model catalog](https://wfloat.com/models) and bundled license notices.
